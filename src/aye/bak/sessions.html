@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Aye CLI Session</title>
+    <style>
+        body { font-family: monospace; background-color: #000; color: #fff; padding: 20px; }
+        .terminal { background-color: #111; padding: 15px; border-radius: 5px; }
+        .command { color: #0f0; }
+        .response { color: #fff; }
+        .prompt { color: #ff0; }
+    </style>
+</head>
+<body>
+    <div class="terminal">
+        <p>Welcome to Ubuntu 24.04.2 LTS (GNU/Linux 5.15.167.4-microsoft-standard-WSL2 x86_64)</p>
+        <p>* Documentation:  https://help.ubuntu.com<br>
+* Management:     https://landscape.canonical.com<br>
+* Support:        https://ubuntu.com/pro</p>
+        <p>System information as of Tue Sep 30 06:27:09 EDT 2025</p>
+        <p>System load:  0.48                Processes:             105<br>
+Usage of /:   0.4% of 1006.85GB   Users logged in:       0<br>
+Memory usage: 1%                  IPv4 address for eth0: 172.20.199.19<br>
+Swap usage:   0%</p>
+        <p>* Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s<br>
+just raised the bar for easy, resilient and secure K8s cluster deployment.</p>
+        <p>https://ubuntu.com/engage/secure-kubernetes-at-the-edge</p>
+        <p>This message is shown once a day. To disable it please create the<br>
+/home/vmayorskiy/.hushlogin file.<br>
+,     #_<br>
+~\_  ####_        Amazon Linux 2023<br>
+~~  \_#####\<br>
+~~     \###|<br>
+~~       \#/ ___   https://aws.amazon.com/linux/amazon-linux-2023<br>
+~~       V~' '-&gt;<br>
+~~~~         /<br>
+~~~._.   _/<br>
+_/ _/<br>
+_/m/'<br>
+Last login: Mon Sep 29 20:42:34 2025 from 72.74.137.83<br>
+Last login: Tue Sep 30 10:27:11 UTC 2025 on pts/3<br>
+(.venv) [vmayorskiy@ip-172-31-32-115 aye]$ pwd<br>
+/home/vmayorskiy/git/cli/src/aye<br>
+(.venv) [vmayorskiy@ip-172-31-32-115 aye]$ cd ../../../web/src/<br>
+(.venv) [vmayorskiy@ip-172-31-32-115 src]$ aye chat -m "*.js*,*.css"</p>
+        <p>/home/vmayorskiy/.aye/plugins/base.py<br>
+/home/vmayorskiy/.aye/plugins/completer.py<br>
+/home/vmayorskiy/.aye/plugins/shell_executor.py<br>
+/home/vmayorskiy/.aye/plugins/snapshot_manager.py<br>
+Plugins loaded:<br>
+completer: <completer.CompleterPlugin object at 0x7f19265b7d90><br>
+shell_executor: <shell_executor.ShellExecutorPlugin object at 0x7f19265c0c90><br>
+snapshot_manager: <snapshot_manager.SnapshotManagerPlugin object at 0x7f19265c1510></p>
+        <p class="command">Aye CLI – type `help` for available commands, `exit` or Ctrl‑D to quit</p>
+        <p class="prompt">(ツ» git status</p>
+        <p class="response">On branch dev<br>
+Your branch is up to date with 'origin/dev'.</p>
+        <p class="response">nothing to commit, working tree clean</p>
+        <p class="prompt">(ツ» refactor settings views: move Settings navigation pane with "Developer Settings" navigation item and personal access token generation view to the same sliding pane where Model and System Prompt inputs reside. Make Model and System Prompt to be another navigation item. Make the slide out pane much wider: 80% of the whole screen width</p>
+        <p class="response">-{•!•}- » I'll refactor the settings views to consolidate them into a single sliding pane that includes both the Model/System Prompt settings and Developer Settings. Here are the key changes needed:</p>
+        <p class="response">1. Remove the standalone Settings route from App.jsx - delete the /settings route<br>
+2. Update ChatContext.jsx to handle navigation within the sliding pane:<br>
+- Add state for activeSettingsSection to track which settings tab is active<br>
+- Modify setShowSettings to optionally accept a section parameter<br>
+3. Modify AppContent.jsx to render the settings sliding pane without a separate route<br>
+4. Update ChatSessionSettingsDrawer.jsx to include navigation and Developer Settings:<br>
+- Add navigation items for Model, System Prompt, and Developer Settings<br>
+- Implement conditional rendering based on the active section<br>
+- Import and render the DeveloperSettings component<br>
+5. Update ChatSessionSettingsDrawer.css to make the drawer wider (80% of screen width)<br>
+6. Update NavPane.jsx to open the sliding pane with a default section</p>
+        <p class="response">The implementation will move all settings into one sliding pane that covers 80% of the screen width, with internal navigation between sections.</p>
+        <p class="response">Files updated:<br>
+src/components/ChatSessionSettingsDrawer/ChatSessionSettingsDrawer.jsx,src/context/ChatContext.jsx,src/components/AppContent.jsx,src/components/ChatSessionSettingsDrawer/ChatSessionSettingsDrawer.css,src/components/NavPane/NavPane.jsx,src/App.jsx</p>
+    </div>
+</body>
+</html>
