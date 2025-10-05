@@ -59,6 +59,11 @@ Unlike GUI-based tools, Aye Chat is built for developers who live in their termi
    ```
 
 ## Usage Examples
+### Authentication
+```bash
+aye auth login    # Configure your token
+aye auth logout   # Remove stored credentials
+```
 
 ### Interactive Chat
 ```bash
@@ -68,16 +73,23 @@ aye chat --file-mask "*.js"       # Work with JavaScript files
 aye chat --file-mask "*.py,*.js"  # Work with multiple file types
 ```
 
-### Authentication
-```bash
-aye auth login    # Configure your token
-aye auth logout   # Remove stored credentials
-```
+In chat mode, you can use these built-in commands:
+- `help` - Show available commands
+- `exit`/`quit` - End chat session
+- `new` - Start a new chat
+- `history` - Show snapshot history
+- `restore` - Restore files from snapshot
+- `diff [file] [snapshot]` - Show differences in files
+- `keep [N]` - Keep only N most recent snapshots
+
+Any other command is treated as a shell command or AI prompt depending on context. Note that for the shell commans, you do not need to add '/' or any other special indicators: just type your command (e.g., "ls -la"). Some shell commands cannot be executed and will return an error or fail silently: these include those that alter terminal view (e.g., text editors) or attempt to switch shell context (e.g., "sudo su - ").
+
+Except for Aye Chat own commands, which are matched and executed first, for each prompt, the tool attempts to find a shell command for the first token, and if successfull - execute it, if not - the prompt is treated as a message to AI.
 
 ### Snapshot Management
 ```bash
-aye snap history               # List all snapshots
-aye snap history src/main.py   # List snapshots for specific file
+aye snap history              # List all snapshots
+aye snap history src/main.py  # List snapshots for specific file
 aye snap restore              # Restore latest snapshot
 aye snap restore 001          # Restore specific snapshot
 aye snap restore 001 file.py  # Restore specific file from snapshot
@@ -92,19 +104,4 @@ aye config get file_mask         # Get current file mask
 aye config set file_mask "*.py"  # Set file mask
 aye config delete file_mask      # Remove file mask setting
 ```
-
-## Command Reference
-
-In chat mode, you can use these built-in commands:
-- `help` - Show available commands
-- `exit`/`quit` - End chat session
-- `new` - Start a new chat
-- `history` - Show snapshot history
-- `restore`/`revert` - Restore files from snapshot
-- `diff [file] [snapshot]` - Show differences in files
-- `keep [N]` - Keep only N most recent snapshots
-
-Any other command is treated as a shell command or AI prompt depending on context. Note that for the shell commans, you do not need to add '/' or any other special indicators: just type your command (e.g., "ls -la"). Some shell commands cannot be executed and will return an error: these include those that alter terminal view (e.g., text editors) or attempt to switch shell context (e.g., "sudo su - ").
-
-For each prompt, Aye Chat attempts to find a command for the first token, and if successfull - execute it, if not - the prompt is treated as a message to AI.
 
