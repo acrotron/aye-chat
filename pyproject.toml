@@ -1,0 +1,45 @@
+[project]
+name = "ayechat"                 # the name that will appear on PyPI
+version = "0.2.1"
+description = "Aye Chat: Terminal-first AI Code Generator"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{name = "Acrotron, Inc.", email = "info@acrotron.com"}]
+
+# Runtime dependencies
+dependencies = [
+    "typer[all]>=0.9.0",          # CLI framework + rich formatting
+    "httpx>=0.27.0",              # HTTP client
+    "keyring>=24.0.0",            # Secure storage for the token
+    "prompt-toolkit>=3.0.0",      # REPL UI
+]
+
+[project.urls]
+Homepage = "https://ayechat.ai"
+Repository = "https://github.com/acrotron/aye-chat"
+Issues = "https://github.com/acrotron/aye-chat/issues"
+
+# Optional development dependencies (tests, linting, etc.)
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",                # test runner
+    "ruff>=0.6",                  # linting/formatter (optional)
+]
+
+# Console script – after installation `aye` will be on the PATH
+[project.scripts]
+aye = "aye.__main__:app"
+
+# -------------------------------------------------
+# Build system configuration – tells setuptools where the code lives
+# -------------------------------------------------
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}          # “src/” is the source root
+packages = ["aye"]                 # the only package we ship
+include-package-data = true
+

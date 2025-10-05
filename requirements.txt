@@ -1,0 +1,5 @@
+typer
+keyring
+prompt_toolkit
+httpx
+
