@@ -1,6 +1,6 @@
 [project]
 name = "ayechat"                 # the name that will appear on PyPI
-version = "0.2.0"
+version = "0.2.1"
 description = "Aye Chat: Terminal-first AI Code Generator"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -14,6 +14,11 @@ dependencies = [
     "keyring>=24.0.0",            # Secure storage for the token
     "prompt-toolkit>=3.0.0",      # REPL UI
 ]
+
+[project.urls]
+Homepage = "https://ayechat.ai"
+Repository = "https://github.com/acrotron/aye-chat"
+Issues = "https://github.com/acrotron/aye-chat/issues"
 
 # Optional development dependencies (tests, linting, etc.)
 [project.optional-dependencies]
