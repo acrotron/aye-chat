@@ -19,7 +19,7 @@ class PluginManager:
 
 
     def _load(self, file: Path):
-        print(file)
+        #print(file)
 
         # Get the full module name including package path
         #module_name = f"plugins.{file.stem}"
@@ -75,9 +75,10 @@ class PluginManager:
                 continue
             self._load(f)
 
-        rprint("[bold cyan]Plugins loaded:[/]")
-        for k, v in self.registry.items():
-            rprint(f"[bold cyan]{k}: {v}[/]")
+        #for k, v in self.registry.items():
+        #    rprint(f"[bold cyan]{k}: {v}")
+        plugins = ", ".join(self.registry.keys())
+        rprint(f"[bold cyan]Plugins loaded: {plugins}[/]")
 
 
     def all(self) -> List[Plugin]:

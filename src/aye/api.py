@@ -7,7 +7,7 @@ from .auth import get_token
 # -------------------------------------------------
 # 👉  EDIT THIS TO POINT TO YOUR SERVICE
 # -------------------------------------------------
-BASE_URL = "https://api.acrotron.com"
+BASE_URL = "https://api.ayechat.ai"
 TIMEOUT = 30.0
 
 
