@@ -82,7 +82,7 @@ In chat mode, you can use these built-in commands:
 - `diff [file] [snapshot]` - Show differences in files
 - `keep [N]` - Keep only N most recent snapshots
 
-Any other command is treated as a shell command or AI prompt depending on context. Note that for the shell commans, you do not need to add '/' or any other special indicators: just type your command (e.g., "ls -la"). Some shell commands cannot be executed and will return an error or fail silently: these include those that alter terminal view (e.g., text editors) or attempt to switch shell context (e.g., "sudo su - ").
+Any other command is treated as a shell command or AI prompt depending on context. Note that for the shell commands, you do not need to add '/' or any other special indicators: just type your command (e.g., "ls -la"). Some shell commands cannot be executed and will return an error or fail silently: these include those that alter terminal view (e.g., text editors) or attempt to switch shell context (e.g., "sudo su - ").
 
 Except for Aye Chat own commands, which are matched and executed first, for each prompt, the tool attempts to find a shell command for the first token, and if successfull - execute it, if not - the prompt is treated as a message to AI.
 
