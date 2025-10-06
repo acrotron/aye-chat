@@ -46,7 +46,7 @@ plugin_manager.discover()
 def chat_repl(conf) -> None:
     # NEW: Download plugins at start of every chat session
     from .download_plugins import fetch_plugins
-    fetch_plugins()
+    #fetch_plugins()
 
     # Get completer from plugin manager
     # Get completer through plugin system
