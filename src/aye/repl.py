@@ -44,6 +44,10 @@ plugin_manager = PluginManager()
 plugin_manager.discover()
     
 def chat_repl(conf) -> None:
+    # NEW: Download plugins at start of every chat session
+    from .download_plugins import fetch_plugins
+    fetch_plugins()
+
     # Get completer from plugin manager
     # Get completer through plugin system
     completer_response = plugin_manager.handle_command("get_completer")
@@ -162,7 +166,7 @@ def chat_repl(conf) -> None:
                         "[red]❌ Unauthorized:[/] the stored token is invalid or missing.\n"
                         "Log in again with `aye auth login` or set a valid "
                         "`AYE_TOKEN` environment variable.\n"
-                        "Obtain your personal access token at https://aye.acrotron.com"
+                        "Obtain your personal access token at https://ayechat.ai"
                     )
                 else:
                     # any other kind of error
@@ -174,7 +178,7 @@ def chat_repl(conf) -> None:
         new_chat_id = result["new_chat_id"]
         if new_chat_id is not None:
             chat_id = new_chat_id
-            chat_id_file.write_text(str(chat_id))
+            chat_id_file.write_text(str(chat_id), encoding="utf-8")
         
         # Print results after the Live context manager has exited
         summary = result["summary"]

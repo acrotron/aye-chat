@@ -40,7 +40,7 @@ def handle_login() -> None:
         if not token:
             rprint("[yellow]No token found - skipping plugin download[/]")
             return
-            
+        
         # Download plugins for this tier
         fetch_plugins()
         #rprint(f"[green]Premium features for {tier} tier ready.[/]")

@@ -22,7 +22,7 @@ def load_config() -> None:
 def save_config() -> None:
     """Save configuration to file."""
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(_config, indent=2))
+    CONFIG_FILE.write_text(json.dumps(_config, indent=2), encoding="utf-8")
 
 
 def get_value(key: str, default: Any = None) -> Any:

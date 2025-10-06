@@ -41,14 +41,14 @@ def delete_token() -> None:
 def login_flow() -> None:
     """
     Small login flow:
-    1. Prompt user to obtain token at https://aye.acrotron.com
+    1. Prompt user to obtain token at https://ayechat.ai
     2. User enters/pastes the token in terminal (hidden input)
     3. Save the token to ~/.ayecfg (if AYE_TOKEN not set)
     """
     #typer.echo(
-    #    "Obtain your personal access token at https://aye.acrotron.com"
+    #    "Obtain your personal access token at https://ayechat.ai
     #)
-    rprint("[yellow]Obtain your personal access token at https://aye.acrotron.com[/]")
+    rprint("[yellow]Obtain your personal access token at https://ayechat.ai[/]")
     token = typer.prompt("Paste your token", hide_input=True)
     store_token(token.strip())
     typer.secho("✅ Token saved.", fg=typer.colors.GREEN)
