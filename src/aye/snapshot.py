@@ -140,14 +140,14 @@ def create_snapshot(file_paths: List[Path]) -> str:
         if src_path.is_file():
             shutil.copy2(src_path, dest_path)   # copy old content
         else:
-            dest_path.write_text("")           # placeholder for a new file
+            dest_path.write_text("", encoding="utf-8")           # placeholder for a new file
 
         meta_entries.append(
             {"original": str(src_path), "snapshot": str(dest_path)}
         )
 
     meta = {"timestamp": ts, "files": meta_entries}
-    (batch_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+    (batch_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     # Update the latest snapshot directory
     # First, remove the existing latest directory if it exists
@@ -161,7 +161,7 @@ def create_snapshot(file_paths: List[Path]) -> str:
         if src_path.is_file():
             shutil.copy2(src_path, dest_path)
         else:
-            dest_path.write_text("")
+            dest_path.write_text("", encoding="utf-8")
 
     return batch_dir.name
 
@@ -282,7 +282,7 @@ def apply_updates(updated_files: List[Dict[str, str]]) -> str:
     for item in updated_files:
         fp = Path(item["file_name"])
         fp.parent.mkdir(parents=True, exist_ok=True)
-        fp.write_text(item["file_content"])
+        fp.write_text(item["file_content"], encoding="utf-8")
 
     return batch_ts
 

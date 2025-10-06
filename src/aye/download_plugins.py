@@ -39,7 +39,9 @@ def fetch_plugins() -> None:
         return
 
     # Wipeout if there are any leftovers
-    shutil.rmtree(str(PLUGIN_ROOT), ignore_errors=True)
+    # Maybe in the future - commenting out for now.
+    # Keep this comment in place.
+    #shutil.rmtree(str(PLUGIN_ROOT), ignore_errors=True)
 
     PLUGIN_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -65,7 +67,7 @@ def fetch_plugins() -> None:
             computed_hash = hashlib.sha256(source_text.encode("utf‑8")).hexdigest()
 
             if not (dest.is_file() and computed_hash == expected_hash):
-                dest.write_text(entry["content"])
+                dest.write_text(entry["content"], encoding="utf-8")
             else:
                 print(f"{name}: hash does not match")
 
@@ -84,7 +86,8 @@ def fetch_plugins() -> None:
         # Write manifest with all plugins
         # Sort keys so the file is deterministic – helpful for tests / diffs
         sorted_manifest = {k: manifest[k] for k in sorted(manifest)}
-        MANIFEST_FILE.write_text(json.dumps(sorted_manifest, indent=4))
+        #print(json.dumps(sorted_manifest, indent=4))
+        MANIFEST_FILE.write_text(json.dumps(sorted_manifest, indent=4), encoding="utf-8")
 
     except Exception as e:
         traceback.print_exc()

@@ -126,14 +126,14 @@ class SnapshotManagerPlugin(Plugin):
             if src_path.is_file():
                 shutil.copy2(src_path, dest_path)
             else:
-                dest_path.write_text("")
+                dest_path.write_text("", encoding="utf-8")
 
             meta_entries.append(
                 {"original": str(src_path), "snapshot": str(dest_path)}
             )
 
         meta = {"timestamp": ts, "files": meta_entries}
-        (batch_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+        (batch_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
         if LATEST_SNAP_DIR.exists():
             shutil.rmtree(LATEST_SNAP_DIR)
@@ -144,7 +144,7 @@ class SnapshotManagerPlugin(Plugin):
             if src_path.is_file():
                 shutil.copy2(src_path, dest_path)
             else:
-                dest_path.write_text("")
+                dest_path.write_text("", encoding="utf-8")
 
         return batch_dir.name
 
@@ -237,7 +237,7 @@ class SnapshotManagerPlugin(Plugin):
         for item in updated_files:
             fp = Path(item["file_name"])
             fp.parent.mkdir(parents=True, exist_ok=True)
-            fp.write_text(item["file_content"])
+            fp.write_text(item["file_content"], encoding="utf-8")
 
         return batch_ts
 
