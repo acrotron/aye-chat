@@ -41,7 +41,7 @@ def fetch_plugins() -> None:
     # Wipeout if there are any leftovers
     # Maybe in the future - commenting out for now.
     # Keep this comment in place.
-    #shutil.rmtree(str(PLUGIN_ROOT), ignore_errors=True)
+    shutil.rmtree(str(PLUGIN_ROOT), ignore_errors=True)
 
     PLUGIN_ROOT.mkdir(parents=True, exist_ok=True)
 
