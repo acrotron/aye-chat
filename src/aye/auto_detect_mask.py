@@ -5,13 +5,11 @@ Detect a sensible file‑mask for the current project.
 
 Features
 --------
-* Respects .gitignore (uses the `pathspec` library).
+* Respects .gitignore and .ayeignore (uses the `pathspec` library).
 * Skips hidden directories and binary files (quick null‑byte test).
-* Counts extensions and builds a glob mask such as
-      "*.js,*.jsx,*.ts"
-  containing the most‑common source extensions.
-* Falls back to a user‑provided default mask when no
-  eligible files are found.
+* Counts extensions from a predefined list of source code extensions
+* Builds a glob mask such as "*.js,*.jsx,*.ts" containing the most‑common source extensions.
+* Falls back to a user‑provided default mask when no eligible files are found.
 
 Install
 -------
@@ -25,22 +23,32 @@ from typing import List, Tuple
 
 import pathspec  # pip install pathspec
 
+# Predefined list of source code extensions to consider
+SOURCE_EXTENSIONS = {
+    'py', 'js', 'jsx', 'ts', 'tsx', 'java', 'c', 'cpp', 'h', 'hpp',
+    'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'kts', 'scala',
+    'html', 'htm', 'css', 'scss', 'sass', 'less',
+    'json', 'xml', 'yaml', 'yml',
+    'md', 'rst', 'txt'
+}
+
 
 def _load_gitignore(root: pathlib.Path) -> pathspec.PathSpec:
     """
     Build a PathSpec that matches patterns from every `.gitignore`
-    file found under *root* (including the top‑level one).
+    and `.ayeignore` file found under *root* (including the top‑level one).
     """
     ignore_files: List[pathlib.Path] = []
     for dirpath, _, filenames in os.walk(root):
-        if ".gitignore" in filenames:
-            ignore_files.append(pathlib.Path(dirpath) / ".gitignore")
+        for ignore_file in [".gitignore", ".ayeignore"]:
+            if ignore_file in filenames:
+                ignore_files.append(pathlib.Path(dirpath) / ignore_file)
 
     # Combine all patterns – `pathspec` can take an iterator of lines.
     patterns = []
     for ig in ignore_files:
         with ig.open("r", encoding="utf-8") as f:
-            patterns.extend(line.rstrip("\n") for line in f if line.strip() and not line.startswith("#"))
+            patterns.extend(line.rstrip() for line in f if line.strip() and not line.strip().startswith("#"))
 
     # `GitIgnoreSpec` implements the same syntax as git.
     return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
@@ -67,8 +75,8 @@ def _detect_top_extensions(
 ) -> Tuple[List[str], Counter]:
     """
     Walk the directory tree, filter with the ignore spec,
-    count file extensions (case‑insensitive) and return the
-    most common ones (up to `max_exts`).
+    count file extensions (case‑insensitive) from predefined source extensions list
+    and return the most common ones (up to `max_exts`).
 
     Returns
     -------
@@ -104,7 +112,8 @@ def _detect_top_extensions(
                 continue
 
             ext = p.suffix.lower().lstrip(".")
-            if ext:                      # skip files without an extension
+            # Only count extensions that are in our predefined source list
+            if ext and ext in SOURCE_EXTENSIONS:
                 ext_counter[ext] += 1
 
     if not ext_counter:
@@ -143,7 +152,7 @@ def auto_detect_mask(
     if not root.is_dir():
         raise ValueError(f"'{project_root}' is not a directory")
 
-    # Load .gitignore patterns (if any)
+    # Load .gitignore and .ayeignore patterns (if any)
     ignored = _load_gitignore(root)
 
     # Find the most common extensions
@@ -202,5 +211,3 @@ if __name__ == "__main__":
         _, counter = _detect_top_extensions(root, ignored, args.max_exts * 10)
         print("\nExtension frequencies:")
         print(json.dumps(counter, indent=2, sort_keys=True))
-
-

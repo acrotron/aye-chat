@@ -1,5 +1,7 @@
 # Custom
 *.swp
+**/*bak
+bak/
 
 # Secrets / credentials (never commit!)
 *.pem

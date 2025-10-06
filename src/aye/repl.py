@@ -55,6 +55,11 @@ def chat_repl(conf) -> None:
         complete_style=CompleteStyle.READLINE_LIKE,   # "readline" style, no menu
         complete_while_typing=False)
 
+    if conf.file_mask is None:
+        response = plugin_manager.handle_command("auto_detect_mask", {"project_root": str(conf.root) if conf.root else "."})
+        conf.file_mask = response["mask"] if response and response.get("mask") else "*.py"
+
+    rprint(f"[bold cyan]Session context: {conf.file_mask}[/]")
     print_welcome_message()
     console = Console()
 
