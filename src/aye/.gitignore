@@ -1,4 +1,5 @@
-bak
+# ignore the bak folder.
+bak/
 
 aye
 set_alias.sh
