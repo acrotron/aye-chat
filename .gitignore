@@ -2,11 +2,12 @@
 *.swp
 **/*bak
 bak/
+.aye*
 
 # Secrets / credentials (never commit!)
 *.pem
 *.key
-*.env
+*.env*
 
 # Snapshot directory (created at runtime)
 .aye/

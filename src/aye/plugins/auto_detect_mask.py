@@ -12,7 +12,7 @@ SOURCE_EXTENSIONS = {
     'py', 'js', 'jsx', 'ts', 'tsx', 'java', 'c', 'cpp', 'h', 'hpp',
     'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'kts', 'scala',
     'html', 'htm', 'css', 'scss', 'sass', 'less',
-    'json', 'xml', 'yaml', 'yml',
+    'json', 'xml', 'yaml', 'yml', 'tf',
     'md', 'rst', 'txt'
 }
 
