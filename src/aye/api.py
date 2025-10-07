@@ -11,7 +11,7 @@ from .auth import get_token
 # -------------------------------------------------
 api_url = os.environ.get("AYE_CHAT_API_URL")
 BASE_URL = api_url if api_url else "https://api.ayechat.ai"
-TIMEOUT = 30.0
+TIMEOUT = 120.0
 
 
 def _auth_headers() -> Dict[str, str]:
@@ -45,11 +45,11 @@ def cli_invoke(user_id="v@acrotron.com", chat_id=-1, message="", source_files={}
         data = resp.json()
 
     # If server already returned the final payload, just return it
-    if resp.status_code != 202 or "response_url" not in data:
-        return data
+    #if resp.status_code != 202 or "response_url" not in data:
+    #    return data
 
     # Otherwise poll the presigned GET URL until the object exists, then download+return it
-    response_url = data["response_url"]
+    response_url = json.loads(data["body"])["response_url"]
     deadline = time.time() + poll_timeout
     last_status = None
 
