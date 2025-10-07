@@ -1,3 +1,4 @@
+import os
 import json
 from typing import Any, Dict
 
@@ -7,7 +8,8 @@ from .auth import get_token
 # -------------------------------------------------
 # 👉  EDIT THIS TO POINT TO YOUR SERVICE
 # -------------------------------------------------
-BASE_URL = "https://api.ayechat.ai"
+api_url = os.environ.get("AYE_CHAT_API_URL")
+BASE_URL = api_url if api_url else "https://api.ayechat.ai"
 TIMEOUT = 30.0
 
 
@@ -26,6 +28,7 @@ def cli_invoke(user_id="v@acrotron.com", chat_id=-1, message="", source_files={}
     with httpx.Client(timeout=TIMEOUT, verify=False) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
         resp.raise_for_status()
+        #print(resp.text)
         return resp.json()
 
 
