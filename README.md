@@ -1,3 +1,5 @@
+[![Pylint](https://github.com/acrotron/aye-chat/actions/workflows/pylint.yml/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/pylint.yml)
+
 # Aye Chat - AI-Powered Terminal Code Generator
 
 Aye Chat is a terminal-first AI coding assistant that helps you generate, modify, and manage code through natural language prompts. It provides both one-shot generation and interactive chat capabilities with built-in snapshot management for safe code modifications.
