@@ -75,7 +75,6 @@ def collect_sources(
         # Skip files that match ignore patterns (relative to the base path)
         rel_path = py_file.relative_to(base_path).as_posix()
         if spec.match_file(rel_path):
-            print(f"File ignored: {rel_path}")
             continue
         
         if not py_file.is_file():
