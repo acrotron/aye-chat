@@ -46,16 +46,22 @@ def _version_callback(value: bool):
 
 @app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         None,
         "--version",
         callback=_version_callback,
         is_eager=True,
         help="Show the version and exit.",
-    )
+    ),
 ):
-    """Root callback to handle global options like --version."""
-    # No action needed – commands are added below.
+    """Root callback to handle global options like --version.
+    If no sub‑command is provided, show a short hint directing the user to the help output.
+    """
+    if ctx.invoked_subcommand is None:
+        # No command was supplied – give a friendly hint.
+        typer.echo("Run 'aye --help' to see available commands.")
+    # No further action needed – commands are added below.
     return
 
 # Create subcommands
