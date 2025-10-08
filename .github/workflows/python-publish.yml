@@ -21,11 +21,18 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
+        with:
+          fetch-depth: 0  # Important: fetch all history for setuptools-scm
+      
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
+      - name: Verify Git tags
+        run: |
+          git tag
+          echo "Latest tag: $(git describe --tags --abbrev=0 2>/dev/null || echo 'No tags found')"
+      
       - name: Build release distributions
         run: |
           # NOTE: put your own distribution build steps here.

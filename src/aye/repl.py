@@ -83,7 +83,7 @@ def chat_repl(conf) -> None:
     # Load chat_id if exists from previous session
     if chat_id_file.exists():
         try:
-            chat_id = int(chat_id_file.read_text().strip())
+            chat_id = int(chat_id_file.read_text(encoding="utf-8").strip())
         except ValueError:
             chat_id_file.unlink(missing_ok=True)  # Clear invalid file
 

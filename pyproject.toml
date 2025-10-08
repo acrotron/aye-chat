@@ -44,3 +44,4 @@ package-dir = {"" = "src"}          # “src/” is the source root
 packages = ["aye"]                 # the only package we ship
 include-package-data = true
 
+[tool.setuptools_scm]

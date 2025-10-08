@@ -78,7 +78,7 @@ def _list_all_snapshots_with_metadata():
         
         meta_path = batches_root / ts / "metadata.json"
         if meta_path.exists():
-            meta = json.loads(meta_path.read_text())
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
             files = [Path(entry["original"]).name for entry in meta["files"]]
             files_str = ",".join(files)
             result.append(f"{formatted_ts}  {files_str}")
@@ -156,7 +156,7 @@ def list_snapshots(file: Path | None = None) -> List[str] | List[tuple[str, str]
         if batch_dir.is_dir() and batch_dir.name != "latest":
             meta_path = batch_dir / "metadata.json"
             if meta_path.exists():
-                meta = json.loads(meta_path.read_text())
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
                 for entry in meta["files"]:
                     if Path(entry["original"]).resolve() == file.resolve():
                         snapshots.append((batch_dir.name, entry["snapshot"]))
@@ -206,7 +206,7 @@ def restore_snapshot(ordinal: str | None = None, file_name: str | None = None) -
         raise ValueError(f"Metadata missing for snapshot {ordinal}")
 
     try:
-        meta = json.loads(meta_file.read_text())
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid metadata for snapshot {ordinal}: {e}")
 

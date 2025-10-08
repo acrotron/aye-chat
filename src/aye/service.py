@@ -103,7 +103,7 @@ def handle_snap_show_cmd(file: Path, ts: str) -> None:
     """Print the contents of a specific snapshot."""
     for snap_ts, snap_path in list_snapshots(file):
         if snap_ts == ts:
-            print(Path(snap_path).read_text())
+            print(Path(snap_path).read_text(encoding="utf-8"))
             return
     rprint("Snapshot not found.", err=True)
 
@@ -229,8 +229,8 @@ def _python_diff_files(file1: Path, file2: Path) -> None:
         from difflib import unified_diff
         
         # Read file contents
-        content1 = file1.read_text().splitlines(keepends=True) if file1.exists() else []
-        content2 = file2.read_text().splitlines(keepends=True) if file2.exists() else []
+        content1 = file1.read_text(encoding="utf-8").splitlines(keepends=True) if file1.exists() else []
+        content2 = file2.read_text(encoding="utf-8").splitlines(keepends=True) if file2.exists() else []
         
         # Generate unified diff
         diff = unified_diff(
@@ -284,7 +284,7 @@ def filter_unchanged_files(updated_files: list) -> list:
             
         # Read current content and compare
         try:
-            current_content = file_path.read_text()
+            current_content = file_path.read_text(encoding="utf-8")
             if current_content != new_content:
                 changed_files.append(item)
         except Exception:

@@ -47,7 +47,7 @@ def fetch_plugins() -> None:
 
     # Load any existing manifest so we can preserve previous timestamps
     try:
-        old_manifest = json.loads(MANIFEST_FILE.read_text())
+        old_manifest = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
     except Exception:
         old_manifest = {}
 
