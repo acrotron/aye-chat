@@ -96,8 +96,14 @@ def chat_repl(conf) -> None:
         if not prompt.strip():
             continue
 
-        # Tokenize input to check for commands
-        tokens = prompt.strip().split()
+        # Tokenize input respecting shell‑style quoting
+        import shlex
+        try:
+            tokens = shlex.split(prompt.strip())
+        except ValueError as e:
+            # shlex raises ValueError on malformed quoting – report and skip
+            rprint(f"[red]Error parsing command:{e}[/]")
+            continue
         first_token = tokens[0].lower() if tokens else ""
 
         # Check for exit commands
@@ -214,6 +220,27 @@ def chat_repl(conf) -> None:
         # Determine which files were actually changed
         updated_files = result.get("updated_files", [])
         updated_files = filter_unchanged_files(updated_files)
+        # ---------------------------------------------------------------------
+        # NEW: Normalise file paths – ensure they are relative to the REPL root
+        # ---------------------------------------------------------------------
+        def _make_paths_relative(files: list[dict], root: Path) -> list[dict]:
+            """Strip *root* from any file_name that already starts with it.
+            This prevents double‑prefixing like `src/aye/src/aye/foo.py`.
+            """
+            root = root.resolve()
+            for f in files:
+                if "file_name" not in f:
+                    continue
+                try:
+                    p = Path(f["file_name"]).resolve()
+                    if p.is_relative_to(root):
+                        f["file_name"] = str(p.relative_to(root))
+                except Exception:
+                    # If the path cannot be resolved or Python <3.9, leave it unchanged
+                    pass
+            return files
+
+        updated_files = _make_paths_relative(updated_files, conf.root)
 
         if not updated_files:
             print_no_files_changed(console)
