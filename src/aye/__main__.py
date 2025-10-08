@@ -41,7 +41,6 @@ def login():
     """
     handle_login()
 
-
 @auth_app.command()
 def logout():
     """
@@ -112,11 +111,10 @@ def history(
     """
     handle_history_cmd(file)
 
-
 @snap_app.command("show")
 def show(
     file: Path = typer.Argument(..., help="File whose snapshot to show"),
-    ordinal: str = typer.Argument(..., help="Ordinal of the snapshot (e.g., 001)"),
+    ordinal: str = typer.Argument(..., help="Snapshot ID of the snapshot (e.g., 001)"),
 ):
     """
     Print the contents of a specific snapshot.
@@ -126,14 +124,13 @@ def show(
     """
     handle_snap_show_cmd(file, ordinal)
 
-
 @snap_app.command("restore")
 def restore(
-    ordinal: str = typer.Argument(None, help="Ordinal of the snapshot to restore (e.g., 001, default: latest)"),
+    ordinal: str = typer.Argument(None, help="Snapshot ID of the snapshot to restore (e.g., 001, default: latest)"),
     file_name: str = typer.Argument(None, help="Specific file to restore from the snapshot"),
 ):
     """
-    Replace all files with the latest snapshot or specified snapshot by ordinal.
+    Replace all files with the latest snapshot or specified snapshot by snapshot ID.
     If file_name is provided, only that file is restored.
     
     Examples:\n
@@ -142,7 +139,6 @@ def restore(
     aye snap restore 001 myfile.py \n
     """
     handle_restore_cmd(ordinal, file_name)
-
 
 # ----------------------------------------------------------------------
 # Snapshot cleanup/pruning commands
@@ -161,7 +157,6 @@ def keep(
     """
     handle_prune_cmd(num)
 
-
 @snap_app.command()
 def cleanup(
     days: int = typer.Option(30, "--days", "-d", help="Delete snapshots older than N days (default: 30)"),
@@ -175,7 +170,6 @@ def cleanup(
     aye snap cleanup -d 14 \n
     """
     handle_cleanup_cmd(days)
-
 
 # ----------------------------------------------------------------------
 # Configuration management commands
@@ -225,4 +219,3 @@ def config(
 
 if __name__ == "__main__":
     app()
-

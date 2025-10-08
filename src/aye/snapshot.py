@@ -7,7 +7,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 
-
 SNAP_ROOT = Path(".aye/snapshots").resolve()
 LATEST_SNAP_DIR = SNAP_ROOT / "latest"
 
@@ -51,7 +50,6 @@ def _get_latest_snapshot_dir() -> Path | None:
     # Sort by ordinal and return the directory with the highest ordinal
     snapshot_dirs.sort(key=lambda x: x[0])
     return snapshot_dirs[-1][1]
-
 
 # ------------------------------------------------------------------
 # Internal helpers
@@ -166,7 +164,7 @@ def create_snapshot(file_paths: List[Path]) -> str:
     return batch_dir.name
 
 
-def list_snapshots(file: Path | None = None) -> List[str]:
+def list_snapshots(file: Path | None = None) -> List[str] | List[tuple[str, str]]:
     """Return all batch-snapshot timestamps, newest first, or snapshots for a specific file."""
     if file is None:
         return _list_all_snapshots_with_metadata()
@@ -182,7 +180,7 @@ def list_snapshots(file: Path | None = None) -> List[str]:
             if meta_path.exists():
                 meta = json.loads(meta_path.read_text())
                 for entry in meta["files"]:
-                    if Path(entry["original"]) == file.resolve():
+                    if Path(entry["original"]).resolve() == file.resolve():
                         snapshots.append((batch_dir.name, entry["snapshot"]))
     snapshots.sort(key=lambda x: x[0], reverse=True)
     return snapshots
@@ -193,7 +191,30 @@ def restore_snapshot(ordinal: str | None = None, file_name: str | None = None) -
     Restore *all* files from a batch snapshot identified by ordinal number.
     If ``ordinal`` is omitted the most recent snapshot is used.
     If ``file_name`` is provided, only that file is restored.
+    New behavior: when ``ordinal`` is ``None`` and ``file_name`` is provided,
+    the function restores the most recent snapshot *for that file*.
     """
+    # ---------------------------------------------------------------------
+    # Case 1: ordinal is None, file_name is provided – restore latest file snap
+    # ---------------------------------------------------------------------
+    if ordinal is None and file_name is not None:
+        # Find the most recent snapshot for this file
+        snapshots = list_snapshots(Path(file_name))
+        if not snapshots:
+            raise ValueError(f"No snapshots found for file '{file_name}'")
+        # snapshots is a list of (batch_dir_name, snapshot_path) sorted newest first
+        _, snapshot_path_str = snapshots[0]
+        snapshot_path = Path(snapshot_path_str)
+        original_path = Path(file_name).resolve()
+        original_path.parent.mkdir(parents=True, exist_ok=True)
+        if not snapshot_path.exists():
+            raise FileNotFoundError(f"Snapshot file missing: {snapshot_path}")
+        shutil.copy2(snapshot_path, original_path)
+        return
+
+    # ---------------------------------------------------------------------
+    # Existing logic – ordinal may be None (latest) or a specific ordinal
+    # ---------------------------------------------------------------------
     if ordinal is None:
         timestamps = list_snapshots()
         if not timestamps:
@@ -353,7 +374,6 @@ def cleanup_snapshots(older_than_days: int = 30) -> int:
 
 def driver():
     list_snapshots()
-
 
 if __name__ == "__main__":
     driver()
