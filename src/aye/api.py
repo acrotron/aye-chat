@@ -26,7 +26,7 @@ def cli_invoke_simple(user_id="v@acrotron.com", chat_id=-1, message="", source_f
 
     url = f"{BASE_URL}/invoke_cli"
 
-    with httpx.Client(timeout=TIMEOUT, verify=False) as client:
+    with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
         resp.raise_for_status()
         #print(resp.text)
@@ -38,7 +38,7 @@ def cli_invoke(user_id="v@acrotron.com", chat_id=-1, message="", source_files={}
     payload = {"user_id": user_id, "chat_id": chat_id, "message": message, "source_files": source_files}
     url = f"{BASE_URL}/invoke_cli"
 
-    with httpx.Client(timeout=TIMEOUT, verify=False) as client:
+    with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
         resp.raise_for_status()
         #print(resp.text)
@@ -75,7 +75,8 @@ def fetch_plugin_manifest():
     """Fetch the plugin manifest from the server."""
     url = f"{BASE_URL}/plugins"
     
-    with httpx.Client(timeout=TIMEOUT, verify=False) as client:
+    # Enforce SSL verification for security
+    with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, headers=_auth_headers())
         resp.raise_for_status()
         return resp.json()
@@ -85,7 +86,8 @@ def fetch_server_time() -> int:
     """Fetch the current server timestamp."""
     url = f"{BASE_URL}/time"
     
-    with httpx.Client(timeout=TIMEOUT, verify=False) as client:
+    # Enforce SSL verification for security
+    with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.get(url)
         resp.raise_for_status()
         return resp.json()['timestamp']

@@ -1,7 +1,7 @@
 import subprocess
 import os
 from typing import Dict, Any, Optional
-from .base import Plugin
+from .plugin_base import Plugin
 
 
 class ShellExecutorPlugin(Plugin):

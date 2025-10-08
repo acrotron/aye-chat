@@ -5,7 +5,7 @@ from typing import List, Tuple, Dict, Any, Optional
 
 import pathspec  # pip install pathspec
 
-from .base import Plugin
+from .plugin_base import Plugin
 
 # Predefined list of source code extensions to consider
 SOURCE_EXTENSIONS = {

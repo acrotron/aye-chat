@@ -2,6 +2,7 @@
 *.swp
 **/*bak
 bak/
+tmp/
 .aye*
 
 # Secrets / credentials (never commit!)

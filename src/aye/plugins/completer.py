@@ -2,7 +2,7 @@ import os
 from prompt_toolkit.document import Document
 from typing import Dict, Any, Optional
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
-from .base import Plugin
+from .plugin_base import Plugin
 
 
 class CmdPathCompleter(Completer):
