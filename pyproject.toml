@@ -1,6 +1,6 @@
 [project]
 name = "ayechat"                 # the name that will appear on PyPI
-version = "0.5.1"
+dynamic = ["version"]
 description = "Aye Chat: Terminal-first AI Code Generator"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -36,7 +36,7 @@ aye = "aye.__main__:app"
 # Build system configuration – tells setuptools where the code lives
 # -------------------------------------------------
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools", "wheel", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
