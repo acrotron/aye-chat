@@ -96,8 +96,14 @@ def chat_repl(conf) -> None:
         if not prompt.strip():
             continue
 
-        # Tokenize input to check for commands
-        tokens = prompt.strip().split()
+        # Tokenize input respecting shell‑style quoting
+        import shlex
+        try:
+            tokens = shlex.split(prompt.strip())
+        except ValueError as e:
+            # shlex raises ValueError on malformed quoting – report and skip
+            rprint(f"[red]Error parsing command:{e}[/]")
+            continue
         first_token = tokens[0].lower() if tokens else ""
 
         # Check for exit commands
