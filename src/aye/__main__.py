@@ -14,7 +14,7 @@ from .service import (
     handle_config_list,
     handle_config_set,
     handle_config_get,
-    handle_config_delete
+    handle_config_delete,
 )
 
 from .config import load_config
@@ -23,6 +23,40 @@ from .config import load_config
 load_config()
 
 app = typer.Typer(help="Aye: AI‑powered coding assistant for the terminal")
+
+# ----------------------------------------------------------------------
+# Version callback (retrieved from package metadata)
+# ----------------------------------------------------------------------
+
+def _get_package_version() -> str:
+    """Return the installed package version using importlib.metadata.
+    Falls back to "0.0.0" if the package metadata cannot be found.
+    """
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+        return version("ayechat")
+    except (ImportError, PackageNotFoundError):
+        return "0.0.0"
+
+
+def _version_callback(value: bool):
+    if value:
+        typer.echo(_get_package_version())
+        raise typer.Exit()
+
+@app.callback(invoke_without_command=True)
+def main(
+    version: bool = typer.Option(
+        None,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the version and exit.",
+    )
+):
+    """Root callback to handle global options like --version."""
+    # No action needed – commands are added below.
+    return
 
 # Create subcommands
 auth_app = typer.Typer(help="Authentication commands")
@@ -143,7 +177,6 @@ def restore(
     """
     handle_restore_cmd(ordinal, file_name)
 
-
 # ----------------------------------------------------------------------
 # Snapshot cleanup/pruning commands
 # ----------------------------------------------------------------------
@@ -225,4 +258,3 @@ def config(
 
 if __name__ == "__main__":
     app()
-
