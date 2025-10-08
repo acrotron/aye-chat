@@ -14,7 +14,7 @@ def load_config() -> None:
     """Load configuration from file if it exists."""
     if CONFIG_FILE.exists():
         try:
-            _config.update(json.loads(CONFIG_FILE.read_text()))
+            _config.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8")))
         except json.JSONDecodeError:
             pass  # Ignore invalid config files
 
