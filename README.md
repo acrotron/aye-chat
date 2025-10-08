@@ -122,13 +122,14 @@ Note that Python 3.14.0, Visual Code and debugpy currently don't work. So we are
     "configurations": [
         {
             "name": "Python: Module",
-            "type": "debugpy", // currently python 3.14.0 and visual code don't work well together. You have to use python 3.13.x
+            "type": "debugpy", // currently python 3.14.0 and visual code don't work well together. You have to use python 3.13.x.
             "request": "launch",
             "module": "aye",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}/src/",
-            "justMyCode": true
-        }
+            "justMyCode": true,
+            "args": [  "--help" ], // adjust/extend for the argument(s) you want to use.
+         }
     ]
 }
 ```
