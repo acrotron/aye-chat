@@ -1,6 +1,7 @@
 [![Pylint](https://github.com/acrotron/aye-chat/actions/workflows/pylint.yml/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/pylint.yml)
 [![Python package](https://github.com/acrotron/aye-chat/actions/workflows/python-package.yml/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/python-package.yml)
 [![CodeQL](https://github.com/acrotron/aye-chat/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/github-code-scanning/codeql)
+[![Dependabot Updates](https://github.com/acrotron/aye-chat/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/dependabot/dependabot-updates)
 
 # Aye Chat - AI-Powered Terminal Code Generator
 
