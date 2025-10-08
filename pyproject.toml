@@ -13,7 +13,7 @@ dependencies = [
     "httpx>=0.27.0",              # HTTP client
     "keyring>=24.0.0",            # Secure storage for the token
     "prompt-toolkit>=3.0.0",      # REPL UI
-    "pathspec>=0.12.1",
+    "pathspec>=0.12.1",           # Utility library for gitignore style pattern matching of file paths.
 ]
 
 [project.urls]
