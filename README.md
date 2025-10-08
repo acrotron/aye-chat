@@ -1,4 +1,5 @@
 [![Pylint](https://github.com/acrotron/aye-chat/actions/workflows/pylint.yml/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/pylint.yml)
+[![Python package](https://github.com/acrotron/aye-chat/actions/workflows/python-package.yml/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/python-package.yml)
 
 # Aye Chat - AI-Powered Terminal Code Generator
 
