@@ -1,3 +1,8 @@
+[![Pylint](https://github.com/acrotron/aye-chat/actions/workflows/pylint.yml/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/pylint.yml)
+[![Python package](https://github.com/acrotron/aye-chat/actions/workflows/python-package.yml/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/python-package.yml)
+[![CodeQL](https://github.com/acrotron/aye-chat/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/github-code-scanning/codeql)
+[![Dependabot Updates](https://github.com/acrotron/aye-chat/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/dependabot/dependabot-updates)
+
 # Aye Chat - AI-Powered Terminal Code Generator
 
 Aye Chat is a terminal-first AI coding assistant that helps you generate, modify, and manage code through natural language prompts. It provides both one-shot generation and interactive chat capabilities with built-in snapshot management for safe code modifications.
@@ -105,3 +110,26 @@ aye config set file_mask "*.py"  # Set file mask
 aye config delete file_mask      # Remove file mask setting
 ```
 
+### Running using Visual Code
+
+Example of launch.json you can use. Store this file under .vscode/
+
+Note that Python 3.14.0, Visual Code and debugpy currently don't work. So we are using Python 3.13.x
+
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Module",
+            "type": "debugpy", // currently python 3.14.0 and visual code don't work well together. You have to use python 3.13.x.
+            "request": "launch",
+            "module": "aye",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/src/",
+            "justMyCode": true,
+            "args": [  "--help" ], // adjust/extend for the argument(s) you want to use.
+         }
+    ]
+}
+```
