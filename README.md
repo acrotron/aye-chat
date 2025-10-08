@@ -110,3 +110,25 @@ aye config set file_mask "*.py"  # Set file mask
 aye config delete file_mask      # Remove file mask setting
 ```
 
+### Running using Visual Code
+
+Example of launch.json you can use. Store this file under .vscode/
+
+Note that Python 3.14.0, Visual Code and debugpy currently don't work. So we are using Python 3.13.x
+
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Module",
+            "type": "debugpy", // currently python 3.14.0 and visual code don't work well together. You have to use python 3.13.x
+            "request": "launch",
+            "module": "aye",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/src/",
+            "justMyCode": true
+        }
+    ]
+}
+```
