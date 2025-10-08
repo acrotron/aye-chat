@@ -30,7 +30,7 @@ from .ui import (
     print_files_updated
 )
 
-from .plugins.manager import PluginManager
+from .plugin_manager import PluginManager
 from .auth import get_token
 
 # Snapshot core utilities
