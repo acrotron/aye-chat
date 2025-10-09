@@ -21,21 +21,9 @@ def _auth_headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def cli_invoke_simple(user_id="v@acrotron.com", chat_id=-1, message="", source_files={}):
-    payload = {"user_id": user_id, "chat_id": chat_id, "message": message, "source_files": source_files}
-
-    url = f"{BASE_URL}/invoke_cli"
-
-    with httpx.Client(timeout=TIMEOUT, verify=True) as client:
-        resp = client.post(url, json=payload, headers=_auth_headers())
-        resp.raise_for_status()
-        #print(resp.text)
-        return resp.json()
-
-
-def cli_invoke(user_id="v@acrotron.com", chat_id=-1, message="", source_files={},
+def cli_invoke(chat_id=-1, message="", source_files={},
                poll_interval=2.0, poll_timeout=120):
-    payload = {"user_id": user_id, "chat_id": chat_id, "message": message, "source_files": source_files}
+    payload = {"chat_id": chat_id, "message": message, "source_files": source_files}
     url = f"{BASE_URL}/invoke_cli"
 
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
@@ -49,7 +37,7 @@ def cli_invoke(user_id="v@acrotron.com", chat_id=-1, message="", source_files={}
     #    return data
 
     # Otherwise poll the presigned GET URL until the object exists, then download+return it
-    response_url = json.loads(data["body"])["response_url"]
+    response_url = data["response_url"]
     deadline = time.time() + poll_timeout
     last_status = None
 
