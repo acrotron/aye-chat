@@ -55,7 +55,6 @@ Unlike GUI-based tools, Aye Chat is built for developers who live in their termi
    ```bash
    aye chat
    ```
-   (Auto-detect to be implemented soon. Currently, using '*.py' mask by default.) This will automatically detect your project's file types and include relevant source files.
 
 4. **One-Shot Generation**:
    ```bash
@@ -108,12 +107,11 @@ aye config get file_mask         # Get current file mask
 aye config set file_mask "*.py"  # Set file mask
 aye config delete file_mask      # Remove file mask setting
 ```
-
 ### Running using Visual Code
 
 Example of launch.json you can use. Store this file under .vscode/
 
-Note that Python 3.14.0, Visual Code and debugpy currently don't work. So we are using Python 3.13.x
+**Note:** Python 3.14.0, Visual Code and debugpy currently don't work. So we are currently using Python 3.13.x
 
 ```json
 {
