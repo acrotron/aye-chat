@@ -99,7 +99,8 @@ def chat_repl(conf) -> None:
         # Tokenize input respecting shell‑style quoting
         import shlex
         try:
-            tokens = shlex.split(prompt.strip())
+            # Use posix=False so single quotes (apostrophes) are treated as normal characters.
+            tokens = shlex.split(prompt.strip(), posix=False)
         except ValueError as e:
             # shlex raises ValueError on malformed quoting – report and skip
             rprint(f"[red]Error parsing command:{e}[/]")
