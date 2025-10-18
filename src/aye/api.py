@@ -28,8 +28,13 @@ def cli_invoke(chat_id=-1, message="", source_files={},
 
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
+        payload = resp.json()
+        error_text = payload.get("error")
+        if error_text:
+            if "Reason: Message must be shorter than" in error_text:
+                error_text = "Source code base is too large. Switch to a subfolder and try to run `aye chat` again."
+            raise Exception(error_text)
         resp.raise_for_status()
-        #print(resp.text)
         data = resp.json()
 
     # If server already returned the final payload, just return it
