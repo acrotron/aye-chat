@@ -11,7 +11,7 @@ from .auth import get_token
 # -------------------------------------------------
 api_url = os.environ.get("AYE_CHAT_API_URL")
 BASE_URL = api_url if api_url else "https://api.ayechat.ai"
-TIMEOUT = 120.0
+TIMEOUT = 180.0
 
 
 def _auth_headers() -> Dict[str, str]:
