@@ -106,7 +106,7 @@ aye config delete file_mask      # Remove file mask setting
 
 Example of launch.json you can use. Store this file under .vscode/
 
-**Note:** Python 3.14.0, Visual Code and debugpy currently don't work. So we are currently using Python 3.13.x
+**Note:** Python 3.14.0, Visual Code and debugpy currently don't work.
 
 ```json
 {
@@ -114,13 +114,13 @@ Example of launch.json you can use. Store this file under .vscode/
     "configurations": [
         {
             "name": "Python: Module",
-            "type": "debugpy", // currently python 3.14.0 and visual code don't work well together. You have to use python 3.13.x.
+            "type": "debugpy",
             "request": "launch",
             "module": "aye",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}/src/",
             "justMyCode": true,
-            "args": [  "--help" ], // adjust/extend for the argument(s) you want to use.
+            "args": [  "--help" ],
          }
     ]
 }
