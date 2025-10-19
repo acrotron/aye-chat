@@ -56,11 +56,6 @@ Unlike GUI-based tools, Aye Chat is built for developers who live in their termi
    aye chat
    ```
 
-4. **One-Shot Generation**:
-   ```bash
-   aye generate "Create a function that reverses a string"
-   ```
-
 ## Usage Examples
 ### Authentication
 ```bash
