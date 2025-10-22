@@ -12,16 +12,17 @@ def print_welcome_message():
 
 def print_help_message():
     rprint("[bold]Available chat commands:[/]")
-    rprint("  exit, quit               - Exit the chat session")
-    rprint("  history                  - Show snapshot history")
-    rprint("  restore, revert          - Restore latest snapshot")
-    rprint("  diff `[file`] `[snapshot`]   - Show diff of file with snapshot")
-    rprint("  keep [N]                 - Keep only N most recent snapshots (10 by default)")
-    rprint("  new                      - Start a new chat session")
-    rprint("  help                     - Show this help message")
-    rprint("")
+    print("  exit, quit, CTRL+D           - Exit the chat session")
+    print("  history                      - Show snapshot history")
+    print("  restore [snapshot_id] [file] - Restore latest snapshot or specified snapshot; optionally for a specific file")
+    print("  diff <file> [snapshot_id]    - Show diff of file with the latest snapshot, or a specified snapshot")
+    print("  keep [N]                     - Keep only N most recent snapshots (10 by default)")
+    print("  new                          - Start a new chat session")
+    print("  model                        - Select a different model. Selection will persists between sessions.")
+    print("  help                         - Show this help message")
+    print("")
     #rprint("Shell commands (e.g., ls, git) are also supported without the leading slash.")
-    rprint("[yellow]If the first word does not match chat or shell command, entire prompt will be sent to LLM for response[/]")
+    rprint("[yellow]If the first word does not match a chat or a shell command, entire prompt will be sent to LLM for response[/]")
     rprint("[yellow]Multiple comma-separated file masks are supported (e.g., \"*.py,*.js\").[/]")
 
 

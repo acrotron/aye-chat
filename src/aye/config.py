@@ -9,6 +9,16 @@ CONFIG_FILE = Path(".aye/config.json").resolve()
 # Private storage – the leading underscore signals "internal".
 _config: Dict[str, Any] = {}
 
+# Models configuration
+MODELS = [
+    {"id": "openai/gpt-oss-120b", "name": "OpenAI: GPT OSS 120b"},
+    {"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1"},
+    {"id": "x-ai/grok-4-fast", "name": "xAI: Grok 4 Fast"},
+    {"id": "qwen/qwen3-coder", "name": "Qwen: Qwen3 Coder"},
+    {"id": "deepseek/deepseek-chat-v3-0324", "name": "DeepSeek: DeepSeek V3 0324"},
+    {"id": "google/gemini-2.0-flash-001", "name": "Google: Gemini 2.0 Flash"}
+]
+
 
 def load_config() -> None:
     """Load configuration from file if it exists."""
@@ -51,3 +61,21 @@ def delete_value(key: str) -> bool:
 def list_config() -> Dict[str, Any]:
     """Return a copy of the current configuration."""
     return _config.copy()
+
+
+def driver() -> None:
+    """Simple driver to demonstrate loading and listing the configuration.
+
+    When executed directly (`python config.py`), this function loads the
+    configuration from ``.aye/config.json`` (if present) and prints the current
+    settings as pretty‑printed JSON to stdout.
+    """
+    load_config()
+    cfg = list_config()
+    # Print the configuration in a readable format; an empty config results in
+    # an empty JSON object.
+    print(json.dumps(cfg, indent=2))
+
+
+if __name__ == "__main__":
+    driver()

@@ -11,7 +11,7 @@ from .auth import get_token
 # -------------------------------------------------
 api_url = os.environ.get("AYE_CHAT_API_URL")
 BASE_URL = api_url if api_url else "https://api.ayechat.ai"
-TIMEOUT = 180.0
+TIMEOUT = 300.0
 
 
 def _auth_headers() -> Dict[str, str]:
@@ -22,8 +22,11 @@ def _auth_headers() -> Dict[str, str]:
 
 
 def cli_invoke(chat_id=-1, message="", source_files={},
+               model: str | None = None,
                poll_interval=2.0, poll_timeout=120):
     payload = {"chat_id": chat_id, "message": message, "source_files": source_files}
+    if model:
+        payload["model"] = model
     url = f"{BASE_URL}/invoke_cli"
 
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:

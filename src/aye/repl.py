@@ -31,7 +31,7 @@ from .ui import (
 )
 
 from .plugin_manager import PluginManager
-from .auth import get_token
+from .auth import get_token, get_user_config, set_user_config
 
 # Snapshot core utilities
 from .snapshot import (
@@ -41,9 +41,50 @@ from .snapshot import (
     apply_updates
 )
 
+from .config import MODELS
+
 # Initialize plugin manager and get completer
 plugin_manager = PluginManager()
 plugin_manager.discover()
+
+
+def handle_model_command(session, models, conf, tokens):
+    """Handle the 'model' command: display current and list available models for selection."""
+    if len(tokens) > 1:
+        try:
+            num = int(tokens[1])
+            if 1 <= num <= len(models):
+                selected_id = models[num - 1]["id"]
+                conf.selected_model = selected_id
+                set_user_config("selected_model", selected_id)
+                rprint(f"[green]Selected model: {models[num - 1]['name']}[/]")
+            else:
+                rprint("[red]Invalid model number.[/]")
+        except ValueError:
+            rprint("[red]Invalid input. Use a number.[/]")
+    else:
+        current_id = conf.selected_model
+        current_name = next(m['name'] for m in models if m['id'] == current_id)
+        rprint(f"[yellow]Currently selected:[/] {current_name}")
+        rprint("")
+        rprint("[yellow]Available models:[/]")
+        for i, m in enumerate(models, 1):
+            rprint(f"  {i}. {m['name']}")
+        choice = session.prompt("Enter model number to select (or Enter to keep current): ").strip()
+        if not choice:
+            rprint("[yellow]Keeping current model.[/]")
+        else:
+            try:
+                num = int(choice)
+                if 1 <= num <= len(models):
+                    selected_id = models[num - 1]["id"]
+                    conf.selected_model = selected_id
+                    set_user_config("selected_model", selected_id)
+                    rprint(f"[green]Selected: {models[num - 1]['name']}[/]")
+                else:
+                    rprint("[red]Invalid number.[/]")
+            except ValueError:
+                rprint("[red]Invalid input.[/]")
 
 
 def chat_repl(conf) -> None:
@@ -87,6 +128,9 @@ def chat_repl(conf) -> None:
         except ValueError:
             chat_id_file.unlink(missing_ok=True)  # Clear invalid file
 
+    # Models configuration
+    conf.selected_model = get_user_config("selected_model", MODELS[0]["id"])
+
     while True:
         try:
             prompt = session.prompt(print_prompt())
@@ -110,6 +154,11 @@ def chat_repl(conf) -> None:
         # Check for exit commands
         if first_token in {"/exit", "/quit", "exit", "quit", ":q", "/q"}:
             break
+
+        # Model command
+        if first_token == "model":
+            handle_model_command(session, MODELS, conf, tokens)
+            continue
 
         # Diff command (still uses original implementation)
         if first_token in {"/diff", "diff"}:
@@ -192,7 +241,7 @@ def chat_repl(conf) -> None:
         try:
             spinner = Spinner("dots", text="[yellow]Thinking...[/]")
             with console.status(spinner) as status:
-                result = process_chat_message(prompt, chat_id, conf.root, conf.file_mask)
+                result = process_chat_message(prompt, chat_id, conf.root, conf.file_mask, conf.selected_model)
         except Exception as exc:
             if hasattr(exc, "response") and getattr(exc.response, "status_code", None) == 403:
                 from .ui import print_error
