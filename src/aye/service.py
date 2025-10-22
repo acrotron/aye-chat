@@ -121,7 +121,7 @@ def handle_restore_cmd(ts: Optional[str], file_name: Optional[str] = None) -> No
             if file_name:
                 rprint(f"✅ File '{file_name}' restored to latest snapshot")
             else:
-                rprint(f"✅ All files restored to latest snapshot")
+                rprint("✅ All files restored to latest snapshot")
     except Exception as exc:
         rprint(f"Error: {exc}", err=True)
 
@@ -294,11 +294,11 @@ def filter_unchanged_files(updated_files: list) -> list:
     return changed_files
 
 
-def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_mask: str) -> Dict[str, any]:
+def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_mask: str, selected_model: str | None = None) -> Dict[str, any]:
     """Process a chat message and return the response."""
     source_files = collect_sources(root, file_mask)
     
-    resp = cli_invoke(message=prompt, chat_id=chat_id or -1, source_files=source_files)
+    resp = cli_invoke(message=prompt, chat_id=chat_id or -1, source_files=source_files, model=selected_model)
     
     assistant_resp_str = resp.get('assistant_response')
     assistant_resp = json.loads(assistant_resp_str)
