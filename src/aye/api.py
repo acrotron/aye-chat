@@ -54,7 +54,6 @@ def cli_invoke(chat_id=-1, message="", source_files={},
             r = httpx.get(response_url, timeout=TIMEOUT)  # default verify=True
             last_status = r.status_code
             if r.status_code == 200:
-                print(r.json())
                 return r.json()  # same shape as original resp.json()
             if r.status_code in (403, 404):
                 time.sleep(poll_interval)
