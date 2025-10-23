@@ -149,35 +149,38 @@ def chat_repl(conf) -> None:
             # shlex raises ValueError on malformed quoting – report and skip
             rprint(f"[red]Error parsing command:{e}[/]")
             continue
-        first_token = tokens[0].lower() if tokens else ""
+        if not tokens:
+            continue
+        original_first = tokens[0]
+        lowered_first = original_first.lower()
 
         # Check for exit commands
-        if first_token in {"/exit", "/quit", "exit", "quit", ":q", "/q"}:
+        if lowered_first in {"exit", "quit", ":q"}:
             break
 
         # Model command
-        if first_token == "model":
+        if lowered_first == "model":
             handle_model_command(session, MODELS, conf, tokens)
             continue
 
         # Diff command (still uses original implementation)
-        if first_token in {"/diff", "diff"}:
+        if lowered_first == "diff":
             from .service import handle_diff_command
             handle_diff_command(tokens[1:])
             continue
 
         # Snapshot‑related commands – now handled directly via snapshot.py
-        if first_token in {"/history", "history", "/restore", "/revert", "restore", "revert", "/keep", "keep"}:
+        if lowered_first in {"history", "restore", "keep"}:
             args = tokens[1:] if len(tokens) > 1 else []
             try:
-                if first_token in {"/history", "history"}:
+                if lowered_first == "history":
                     snaps = list_snapshots()
                     if snaps:
                         for s in snaps:
                             rprint(s)
                     else:
                         rprint("[yellow]No snapshots found.[/]")
-                elif first_token in {"/restore", "/revert", "restore", "revert"}:
+                elif lowered_first == "restore":
                     # Determine whether the argument is an ordinal or a filename
                     ordinal = None
                     file_name = None
@@ -203,7 +206,7 @@ def chat_repl(conf) -> None:
                             rprint(f"[green]✅ File '{file_name}' restored to latest snapshot.[/]")
                         else:
                             rprint("[green]✅ All files restored to latest snapshot.[/]")
-                elif first_token in {"/keep", "keep"}:
+                elif lowered_first == "keep":
                     keep_count = int(args[0]) if args and args[0].isdigit() else 10
                     deleted = prune_snapshots(keep_count)
                     rprint(f"✅ {deleted} snapshots pruned. {keep_count} most recent kept.")
@@ -212,21 +215,20 @@ def chat_repl(conf) -> None:
             continue
 
         # New chat command
-        if first_token in {"/new", "new"}:
+        if lowered_first == "new":
             chat_id_file.unlink(missing_ok=True)
             chat_id = -1
             console.print("[green]✅ New chat session started.[/]")
             continue
 
         # Help command
-        if first_token in {"/help", "help"}:
+        if lowered_first == "help":
             print_help_message()
             continue
 
         # Shell commands – delegated to plugin system
-        command = first_token.lstrip('/')
         shell_response = plugin_manager.handle_command("execute_shell_command", {
-            "command": command,
+            "command": original_first,
             "args": tokens[1:]
         })
         if shell_response is not None:

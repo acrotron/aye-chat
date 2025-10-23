@@ -122,16 +122,16 @@ def chat(
         None, "--root", "-r", help="Root folder where source files are located."
     ),
     file_mask: str = typer.Option(
-        None, "--file-mask", "-m", help="File mask for source files to include into generation. Comma-separated masks are allowed."
+        None, "--include", "-i", help="Include patterns for source files to include into generation. Comma-separated globs are allowed."
     ),
 ):
     """
-    Start an interactive REPL. Use /exit or Ctrl‑D to leave.
+    Start an interactive REPL. Use exit or Ctrl‑D to leave.
     
     Examples: \n
     aye chat \n
     aye chat --root ./src \n
-    aye chat --file-mask "*.js" --root ./frontend \n
+    aye chat --include "*.js,*.html" --root ./frontend \n
     """
     handle_chat(root, file_mask)
 

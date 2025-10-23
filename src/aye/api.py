@@ -64,7 +64,7 @@ def cli_invoke(chat_id=-1, message="", source_files={},
             time.sleep(poll_interval)
             continue
 
-    raise TimeoutError(f"Timed out waiting for response object from LLM (last status={last_status})")
+    raise TimeoutError(f"Timed out waiting for response object from LLM")
 
 
 def fetch_plugin_manifest():
