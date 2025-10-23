@@ -126,7 +126,7 @@ def chat(
     ),
 ):
     """
-    Start an interactive REPL. Use /exit or Ctrl‑D to leave.
+    Start an interactive REPL. Use exit or Ctrl‑D to leave.
     
     Examples: \n
     aye chat \n
