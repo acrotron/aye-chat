@@ -90,8 +90,7 @@ def fetch_plugins() -> None:
         MANIFEST_FILE.write_text(json.dumps(sorted_manifest, indent=4), encoding="utf-8")
 
     except Exception as e:
-        traceback.print_exc()
-        raise RuntimeError(f"Failed to fetch plugins: {e}")
+        raise RuntimeError(f"{e}")
 
 
 def driver() -> None:

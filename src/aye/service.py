@@ -46,7 +46,7 @@ def handle_login() -> None:
         #rprint(f"[green]Premium features for {tier} tier ready.[/]")
         
     except Exception as e:
-        rprint(f"[yellow]Warning: Could not download plugins - {e}[/]")
+        rprint(f"[red]Error: Could not download plugins - {e}[/]")
 
 
 def handle_logout() -> None:

@@ -74,6 +74,13 @@ def fetch_plugin_manifest():
     # Enforce SSL verification for security
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, headers=_auth_headers())
+        if resp.status_code == 400:
+            try:
+                data = resp.json()
+                if isinstance(data, dict) and "error" in data:
+                    raise Exception(data["error"])
+            except (json.JSONDecodeError, ValueError):
+                pass  # Not valid JSON or not a dict with 'error'
         resp.raise_for_status()
         return resp.json()
 
