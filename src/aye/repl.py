@@ -3,6 +3,7 @@ import sys
 import subprocess
 from pathlib import Path
 from typing import Optional
+import traceback
 
 import typer
 from prompt_toolkit import PromptSession
@@ -246,6 +247,7 @@ def chat_repl(conf) -> None:
                 result = process_chat_message(prompt, chat_id, conf.root, conf.file_mask, conf.selected_model)
         except Exception as exc:
             if hasattr(exc, "response") and getattr(exc.response, "status_code", None) == 403:
+                traceback.print_exc()
                 from .ui import print_error
                 print_error(
                     "[red]❌ Unauthorized:[/] the stored token is invalid or missing.\n"

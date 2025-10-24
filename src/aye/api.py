@@ -21,6 +21,41 @@ def _auth_headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _check_response(resp: httpx.Response) -> Dict[str, Any]:
+    """Validate an HTTP response.
+
+    * Raises for non‑2xx status codes.
+    * If the response body is JSON and contains an ``error`` key, prints the
+      error message and raises ``Exception`` with that message.
+    * If parsing JSON fails, falls back to raw text for the error message.
+    Returns the parsed JSON payload for successful calls.
+    """
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        # Try to extract a JSON error message, otherwise use text.
+        try:
+            err_json = resp.json()
+            err_msg = err_json.get("error") or resp.text
+        except Exception:
+            err_msg = resp.text
+        print(f"Error: {err_msg}")
+        raise Exception(err_msg) from exc
+
+    # Successful status – still check for an error field in the payload.
+    try:
+        payload = resp.json()
+    except json.JSONDecodeError:
+        # Not JSON – return empty dict.
+        return {}
+
+    if isinstance(payload, dict) and "error" in payload:
+        err_msg = payload["error"]
+        print(f"Error: {err_msg}")
+        raise Exception(err_msg)
+    return payload
+
+
 def cli_invoke(chat_id=-1, message="", source_files={},
                model: str | None = None,
                poll_interval=2.0, poll_timeout=120):
@@ -31,18 +66,12 @@ def cli_invoke(chat_id=-1, message="", source_files={},
 
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
-        payload = resp.json()
-        error_text = payload.get("error")
-        if error_text:
-            if "Reason: Message must be shorter than" in error_text:
-                error_text = "Source code base is too large. Switch to a subfolder and try to run `aye chat` again."
-            raise Exception(error_text)
-        resp.raise_for_status()
-        data = resp.json()
+        data = _check_response(resp)
 
     # If server already returned the final payload, just return it
-    #if resp.status_code != 202 or "response_url" not in data:
-    #    return data
+    # (previous logic kept for compatibility)
+    # if resp.status_code != 202 or "response_url" not in data:
+    #     return data
 
     # Otherwise poll the presigned GET URL until the object exists, then download+return it
     response_url = data["response_url"]
@@ -58,7 +87,7 @@ def cli_invoke(chat_id=-1, message="", source_files={},
             if r.status_code in (403, 404):
                 time.sleep(poll_interval)
                 continue
-            r.raise_for_status()  # other non-2xx errors are unexpected
+            r.raise_for_status()  # other non‑2xx errors are unexpected
         except httpx.RequestError:
             # transient network issue; retry
             time.sleep(poll_interval)
@@ -70,20 +99,25 @@ def cli_invoke(chat_id=-1, message="", source_files={},
 def fetch_plugin_manifest():
     """Fetch the plugin manifest from the server."""
     url = f"{BASE_URL}/plugins"
-    
-    # Enforce SSL verification for security
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, headers=_auth_headers())
-        resp.raise_for_status()
+        _check_response(resp)  # will raise on error and print the message
         return resp.json()
 
 
 def fetch_server_time() -> int:
     """Fetch the current server timestamp."""
     url = f"{BASE_URL}/time"
-    
-    # Enforce SSL verification for security
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.get(url)
-        resp.raise_for_status()
-        return resp.json()['timestamp']
+        if not resp.ok:
+            # Use the same helper for consistency but avoid raising for 200‑like cases
+            try:
+                _check_response(resp)
+            except Exception:
+                # _check_response already printed the error; re‑raise
+                raise
+        else:
+            # Successful response – still ensure no embedded error field
+            payload = _check_response(resp)
+            return payload['timestamp']
