@@ -7,7 +7,7 @@ from rich import print as rprint
 
 def print_welcome_message():
     """Display the welcome message for the Aye Chat."""
-    rprint("[bold cyan]Aye Chat – type `help` for available commands, `exit` or Ctrl‑D to quit[/]")
+    rprint("[bold cyan]Aye Chat – type `help` for available commands, `exit` or Ctrl-D to quit[/]")
 
 
 def print_help_message():
