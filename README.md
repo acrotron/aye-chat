@@ -2,41 +2,29 @@
 [![CodeQL](https://github.com/acrotron/aye-chat/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/github-code-scanning/codeql)
 [![Dependabot Updates](https://github.com/acrotron/aye-chat/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/dependabot/dependabot-updates)
 
-# Aye Chat - AI-Powered Terminal Code Generator
+# Aye Chat - AI-First development in your terminal
 
-Aye Chat is a terminal-first AI coding assistant that helps you generate, modify, and manage code through natural language prompts. It provides both one-shot generation and interactive chat capabilities with built-in snapshot management for safe code modifications.
+A terminal-native AI assistant that understands your project, edits your files safely, and helps you build faster — without ever leaving your flow.
+
+![Aye Chat demo](https://welcome.ayechat.ai/images/main-flow.gif)
+
+## Conceptual Summary
+
+- 🧭 **Core Philosophy**: Flow first, trust by design, reversibility built-in.
+- ⚙️ **Design Model**: Optimistic editing with automatic safety nets.
+- 🔒 **Privacy Model**: Developer-defined boundaries (.gitignore/.ayeignore).
+- 🧩 **Architecture**: Modular open-source core with plugin-driven extensibility.
+- 🖥️ **Interface Model**: Unified CLI + Web experience with conversation continuity.
+- 💡 **Goal**: Natural-language-driven coding in the developer’s native environment (the terminal).
 
 ## Key Features
 
-### Terminal-First Design
-Unlike GUI-based tools, Aye Chat is built for developers who live in their terminals. All interactions happen through command-line interface with intuitive commands.
+- **Terminal-native experience** — built for developers who live in the CLI.  
+- **Full-file generation and modification** — no copy-pasting between tools.  
+- **Automatic snapshots, diff, and restore** — iterate safely, without Git overhead.  
+- **Smart file awareness** — Aye Chat includes relevant project files automatically.  
+- **Plugin architecture** — extend Aye Chat with your own commands.  
 
-### Intelligent File Detection
-- Automatically detects relevant source file types in your project
-- Respects `.gitignore` and `.ayeignore` patterns to exclude irrelevant files
-- Supports multiple comma-separated file masks (e.g., `"*.py,*.js"`)
-- Skips binary and hidden files for efficient processing
-
-### Safe Code Modification with Snapshots
-- Creates timestamped snapshots of your files before any AI-generated changes
-- "Latest" snapshot tracking for quick restores
-- Interactive diff viewing to compare changes
-- History management with pruning capabilities
-
-### Interactive Chat Experience
-- REPL-based chat interface with command completion
-- Supports both AI prompts and shell commands in the same session
-- Persistent chat sessions that remember context
-- Built-in command help system
-
-### Plugin Architecture
-- Extensible plugin system for additional functionality
-- Automatic plugin downloading based on user's license tier
-- Modular design allowing easy addition of new features
-
-### Configuration Management
-- Persistent configuration storage
-- Support for multiple settings including file masks
 
 ## Quick Start
 
@@ -56,7 +44,7 @@ Unlike GUI-based tools, Aye Chat is built for developers who live in their termi
    aye chat
    ```
 
-## Usage Examples
+## Core Commands
 ### Authentication
 ```bash
 aye auth login    # Configure your token
@@ -66,9 +54,9 @@ aye auth logout   # Remove stored credentials
 ### Interactive Chat
 ```bash
 aye chat                          # Start chat with auto-detected files
-aye chat --root ./src             # Specify project root directory
-aye chat --file-mask "*.js"       # Work with JavaScript files
-aye chat --file-mask "*.py,*.js"  # Work with multiple file types
+aye chat --root ./src             # Specify project root directory          **<<<<<<<<<<<<<<<<<<<<<<<< broke here**
+aye chat --inclue "*.js"          # Work with JavaScript files
+aye chat --include "*.py,*.js"    # Work with multiple file types
 ```
 
 In chat mode, you can use these built-in commands:
