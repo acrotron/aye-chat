@@ -129,7 +129,7 @@ def _is_valid_command(command: str) -> bool:
     except Exception:
         return False
 
-def handle_restore_command(timestamp: str | None = None, file_name: str | None = None) -> None:
+def handle_restore_command(timestamp: str | None = None, file_name: Optional[str] = None) -> None:
     """Handle the restore command logic. """
     try:
         restore_snapshot(timestamp, file_name)
@@ -279,7 +279,7 @@ def filter_unchanged_files(updated_files: list) -> list:
             
     return changed_files
 
-def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_mask: str, selected_model: str | None = None) -> Dict[str, any]:
+def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_mask: str, selected_model: Optional[str] = None) -> Dict[str, any]:
     """Process a chat message and return the response."""
     source_files = collect_sources(root, file_mask)
     rprint(f"[yellow]Included with prompt: {', '.join(source_files.keys())}")
