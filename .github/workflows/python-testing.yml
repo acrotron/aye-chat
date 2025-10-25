@@ -21,6 +21,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
         os: [ubuntu-latest]
         #os: [ubuntu-latest, windows-latest]
 
@@ -33,7 +34,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: ${{ matrix.python-version }}
 
       # Install dependencies (equivalent to pip install -r requirements.txt via pyproject.toml)
       - name: Install dependencies
