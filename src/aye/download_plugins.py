@@ -33,7 +33,7 @@ def _now_ts() -> int:
     return int(time.time())
 
 
-def fetch_plugins() -> None:
+def fetch_plugins(dry_run: bool = True) -> None:
     token = get_token()
     if not token:
         return
@@ -54,7 +54,7 @@ def fetch_plugins() -> None:
     manifest = {}
     try:
         # Use the dedicated API function instead of direct httpx call
-        plugins = fetch_plugin_manifest()
+        plugins = fetch_plugin_manifest(dry_run=dry_run)
 
         #print(plugins)
 

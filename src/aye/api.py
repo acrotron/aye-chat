@@ -58,8 +58,9 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
 
 def cli_invoke(chat_id=-1, message="", source_files={},
                model: str | None = None,
+               dry_run: bool = False,
                poll_interval=2.0, poll_timeout=120):
-    payload = {"chat_id": chat_id, "message": message, "source_files": source_files}
+    payload = {"chat_id": chat_id, "message": message, "source_files": source_files, "dry_run": dry_run}
     if model:
         payload["model"] = model
     url = f"{BASE_URL}/invoke_cli"
@@ -96,20 +97,22 @@ def cli_invoke(chat_id=-1, message="", source_files={},
     raise TimeoutError(f"Timed out waiting for response object from LLM")
 
 
-def fetch_plugin_manifest():
+def fetch_plugin_manifest(dry_run: bool = False):
     """Fetch the plugin manifest from the server."""
     url = f"{BASE_URL}/plugins"
+    payload = {"dry_run": dry_run}
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
-        resp = client.post(url, headers=_auth_headers())
+        resp = client.post(url, json=payload, headers=_auth_headers())
         _check_response(resp)  # will raise on error and print the message
         return resp.json()
 
 
-def fetch_server_time() -> int:
+def fetch_server_time(dry_run: bool = False) -> int:
     """Fetch the current server timestamp."""
     url = f"{BASE_URL}/time"
+    params = {"dry_run": dry_run}
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
-        resp = client.get(url)
+        resp = client.get(url, params=params)
         if not resp.ok:
             # Use the same helper for consistency but avoid raising for 200‑like cases
             try:
@@ -121,3 +124,4 @@ def fetch_server_time() -> int:
             # Successful response – still ensure no embedded error field
             payload = _check_response(resp)
             return payload['timestamp']
+
