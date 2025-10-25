@@ -43,9 +43,9 @@ jobs:
       # Make the script executable (Linux only)
       - name: Make script executable
         if: matrix.os == 'ubuntu-latest'
-        run: chmod +x tests/run_tests.sh
+        run: chmod +x ./run_tests.sh
 
       # Runs the tests script using bash shell for cross-platform compatibility
       - name: Run tests script
         shell: bash
-        run: cd tests && ./run_tests.sh
+        run: ./run_tests.sh
