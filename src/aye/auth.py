@@ -1,7 +1,7 @@
 # auth.py
 import os
 import typer
-from typing import Any
+from typing import Any, Optional
 from pathlib import Path
 from rich import print as rprint
 
@@ -61,7 +61,7 @@ def store_token(token: str) -> None:
     set_user_config("token", token)
 
 
-def get_token() -> str | None:
+def get_token() -> Optional[str]:
     """Return the stored token (env → file)."""
     return get_user_config("token")
 
