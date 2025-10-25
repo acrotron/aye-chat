@@ -171,7 +171,7 @@ def create_snapshot(file_paths: List[Path], prompt: Optional[str] = None) -> str
 
     return batch_dir.name
 
-def list_snapshots(file: Path | None = None) -> Union[List[str], List[tuple[str, str]]]:
+def list_snapshots(file: Optional[Path] = None) -> Union[List[str], List[tuple[str, str]]]:
     """Return all batch-snapshot timestamps, newest first, or snapshots for a specific file."""
     if file is None:
         return _list_all_snapshots_with_metadata()

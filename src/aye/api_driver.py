@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from pathlib import Path
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,8 +29,7 @@ def fetch_plugins() -> None:
     fetch_plugins(dry_run=True)
     print("✅ Plugins fetched and updated.")
 
-
-def chat_invoke(message: str, chat_id: int = -1, model: str | None = None) -> dict:
+def chat_invoke(message: str, chat_id: int = -1, model: Optional[str] = None) -> dict:
     """
     Invoke a chat message on the remote server (/invoke_cli endpoint).
     Returns the response from the LLM.

@@ -129,7 +129,7 @@ def _is_valid_command(command: str) -> bool:
     except Exception:
         return False
 
-def handle_restore_command(timestamp: str | None = None, file_name: Optional[str] = None) -> None:
+def handle_restore_command(timestamp: Optional[str] = None, file_name: Optional[str] = None) -> None:
     """Handle the restore command logic. """
     try:
         restore_snapshot(timestamp, file_name)
