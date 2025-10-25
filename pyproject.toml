@@ -26,6 +26,7 @@ Issues = "https://github.com/acrotron/aye-chat/issues"
 dev = [
     "pytest>=7.0",                # test runner
     "ruff>=0.6",                  # linting/formatter (optional)
+    "coverage>=7.0",              # code coverage
 ]
 
 # Console script – after installation `aye` will be on the PATH
