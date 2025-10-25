@@ -4,12 +4,16 @@ import re
 from rich import print as rprint
 from pathlib import Path
 from rich.console import Console
+from types import SimpleNamespace
 
 from typing import Optional, List, Dict
 
+from .download_plugins import fetch_plugins
+from .auth import get_token, login_flow, delete_token
 from .api import cli_invoke
 from .source_collector import collect_sources
 from .snapshot import restore_snapshot, list_snapshots, create_snapshot, apply_updates
+from .snapshot import prune_snapshots, cleanup_snapshots
 from .config import get_value, set_value, delete_value, list_config
 from .ui import (
     print_assistant_response,
@@ -28,13 +32,9 @@ _diff_console = Console(force_terminal=True, markup=False, color_system="standar
 # Authentication functions (from auth.py)
 def handle_login() -> None:
     """Configure username and token for authenticating with the aye service."""
-    from .auth import login_flow
     login_flow()
     
     # Download plugins based on user's license tier
-    from .download_plugins import fetch_plugins
-    from .auth import get_token
-    
     try:
         token = get_token()
         if not token:
@@ -51,7 +51,6 @@ def handle_login() -> None:
 
 def handle_logout() -> None:
     """Remove the stored aye credentials."""
-    from .auth import delete_token
     delete_token()
     rprint("🔐 Token removed.")
 
@@ -69,12 +68,11 @@ def handle_generate_cmd(prompt: str) -> None:
 # Chat function
 def handle_chat(root: Path, file_mask: str) -> None:
     """Start an interactive REPL. Use /exit or Ctrl‑D to leave."""
-    from types import SimpleNamespace
     from .repl import chat_repl
-    
+
     if root is None:
         root = Path.cwd()
-    
+
     conf = SimpleNamespace()
     conf.root = root
     conf.file_mask = file_mask
@@ -314,7 +312,6 @@ def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_m
 # Snapshot cleanup functions
 def handle_prune_cmd(keep: int = 10) -> None:
     """Delete all but the most recent N snapshots."""
-    from .snapshot import prune_snapshots
     try:
         deleted_count = prune_snapshots(keep)
         if deleted_count > 0:
@@ -327,7 +324,6 @@ def handle_prune_cmd(keep: int = 10) -> None:
 
 def handle_cleanup_cmd(days: int = 30) -> None:
     """Delete snapshots older than N days."""
-    from .snapshot import cleanup_snapshots
     try:
         deleted_count = cleanup_snapshots(days)
         if deleted_count > 0:

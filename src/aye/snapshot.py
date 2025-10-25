@@ -61,26 +61,47 @@ def _ensure_batch_dir(ts: str) -> Path:
 
 
 def _list_all_snapshots_with_metadata():
-    """List all snapshots in descending order with file names from metadata."""
+    """List all snapshots in descending order with file names from metadata.
+    
+    Updated to use the actual directory objects returned by ``SNAP_ROOT.iterdir()``
+    instead of reconstructing paths via ``SNAP_ROOT / ts``. This makes the function
+    compatible with tests that mock ``SNAP_ROOT`` with a ``MagicMock`` – the mock
+    provides ``iterdir()`` yielding real ``Path`` objects, and we operate directly
+    on those objects.
+    """
     batches_root = SNAP_ROOT
     if not batches_root.is_dir():
         return []
 
-    timestamps = [p.name for p in batches_root.iterdir() if p.is_dir() and p.name != "latest"]
-    timestamps.sort(reverse=True)
+    # Collect batch directories (ignore the "latest" helper dir)
+    batch_dirs = [p for p in batches_root.iterdir() if p.is_dir() and p.name != "latest"]
+    # Sort newest first based on the timestamp part after the first underscore
+    batch_dirs.sort(key=lambda p: p.name.split("_", 1)[1] if "_" in p.name else p.name, reverse=True)
+
     result = []
-    for ts in timestamps:
+    for batch_dir in batch_dirs:
+        ts = batch_dir.name
         if "_" in ts:
             ordinal_part, timestamp_part = ts.split("_", 1)
             formatted_ts = f"{ordinal_part} ({timestamp_part})"
         else:
             formatted_ts = ts
         
-        meta_path = batches_root / ts / "metadata.json"
+        meta_path = batch_dir / "metadata.json"
         if meta_path.exists():
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            files = [Path(entry["original"]).name for entry in meta["files"]]
-            files_str = ",".join(files)
+            
+            files = []
+            cwd = Path.cwd()
+            for entry in meta["files"]:
+                original_path_str = entry["original"]
+                try:
+                    # Use relative path if possible, otherwise absolute
+                    files.append(str(Path(original_path_str).relative_to(cwd)))
+                except ValueError:
+                    files.append(original_path_str)
+
+            files_str = ", ".join(files)
             result.append(f"{formatted_ts}  {files_str}")
         else:
             result.append(f"{formatted_ts}  (metadata missing)")
@@ -100,18 +121,12 @@ def create_snapshot(file_paths: List[Path]) -> str:
     if not file_paths:
         raise ValueError("No files supplied for snapshot")
 
-    # Previously the code filtered out files whose content matched the latest
-    # snapshot, which caused ``apply_updates`` to skip writing updates when the
-    # LLM suggested a change for a file that hadn't been modified since the
-    # previous snapshot. The filtering has been removed – every provided path is
-    # considered a changed file for snapshot purposes.
     changed_files: List[Path] = []
     for src_path in file_paths:
         src_path = src_path.resolve()
         if src_path.is_file():
             changed_files.append(src_path)
         else:
-            # Include non‑existent (new) files as well
             changed_files.append(src_path)
     
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
@@ -129,7 +144,6 @@ def create_snapshot(file_paths: List[Path]) -> str:
     meta = {"timestamp": ts, "files": meta_entries}
     (batch_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
-    # Update the latest snapshot directory
     if LATEST_SNAP_DIR.exists():
         shutil.rmtree(LATEST_SNAP_DIR)
     LATEST_SNAP_DIR.mkdir(parents=True, exist_ok=True)
@@ -211,20 +225,24 @@ def restore_snapshot(ordinal: str | None = None, file_name: str | None = None) -
         raise ValueError(f"Invalid metadata for snapshot {ordinal}: {e}")
 
     if file_name is not None:
-        filtered_entries = [entry for entry in meta["files"] if Path(entry["original"]).name == file_name]
+        target_path = Path(file_name).resolve()
+        filtered_entries = [
+            entry for entry in meta["files"]
+            if Path(entry["original"]).resolve() == target_path
+        ]
         if not filtered_entries:
             raise ValueError(f"File '{file_name}' not found in snapshot {ordinal}")
         meta["files"] = filtered_entries
 
     for entry in meta["files"]:
-        original = Path(entry["original"])
-        snapshot_path = Path(entry["snapshot"])
-        if not snapshot_path.exists():
-            print(f"Warning: snapshot file missing – {snapshot_path}")
-            continue
+        original = Path(entry["original"])  # destination on disk
+        snapshot_path = Path(entry["snapshot"])  # stored snapshot file
         try:
             original.parent.mkdir(parents=True, exist_ok=True)
+            # Attempt copy regardless of existence; handle errors gracefully.
             shutil.copy2(snapshot_path, original)
+        except FileNotFoundError:
+            print(f"Warning: snapshot file missing – {snapshot_path}")
         except Exception as e:
             print(f"Warning: failed to restore {original}: {e}")
             continue
@@ -237,9 +255,8 @@ def apply_updates(updated_files: List[Dict[str, str]]) -> str:
     """
     file_paths: List[Path] = [Path(item["file_name"]) for item in updated_files if "file_name" in item and "file_content" in item]
     batch_ts = create_snapshot(file_paths)
-    # Even if ``create_snapshot`` returns an empty string (which it no longer does), we still write the updates.
     for item in updated_files:
-        fp = Path(item["file_name"])
+        fp = Path(item["file_name"]) 
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_text(item["file_content"], encoding="utf-8")
     return batch_ts
