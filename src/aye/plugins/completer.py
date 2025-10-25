@@ -1,6 +1,6 @@
 import os
 from prompt_toolkit.document import Document
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from .plugin_base import Plugin
 
@@ -12,7 +12,7 @@ class CmdPathCompleter(Completer):
     • the *last* token (any argument) as a filesystem path
     """
 
-    def __init__(self, commands: list[str] | None = None):
+    def __init__(self, commands: Optional[List[str]] = None):
         #self.commands = commands or []
         self._path_completer = PathCompleter()
         self.commands = self._get_system_commands()
