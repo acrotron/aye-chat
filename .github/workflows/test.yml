@@ -4,11 +4,11 @@ name: Run Tests
 
 # Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
+  # Triggers the workflow on push or pull request events to main, dev-v, or dev branches
   push:
-    branches: [ "main", "dev", "dev-v" ]
+    branches: [ "main", "dev-v", "dev" ]
   pull_request:
-    branches: [ "main", "dev", "dev-v" ]
+    branches: [ "main", "dev-v", "dev" ]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -24,6 +24,10 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
+
+      # Make the script executable (in case it's not already)
+      - name: Make script executable
+        run: chmod +x run_tests.sh
 
       # Runs a single command using the runners shell
       - name: Run tests script
