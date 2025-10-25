@@ -4,12 +4,16 @@ import re
 from rich import print as rprint
 from pathlib import Path
 from rich.console import Console
+from types import SimpleNamespace
 
 from typing import Optional, List, Dict
 
+from .download_plugins import fetch_plugins
+from .auth import get_token, login_flow, delete_token
 from .api import cli_invoke
 from .source_collector import collect_sources
 from .snapshot import restore_snapshot, list_snapshots, create_snapshot, apply_updates
+from .snapshot import prune_snapshots, cleanup_snapshots
 from .config import get_value, set_value, delete_value, list_config
 from .ui import (
     print_assistant_response,
@@ -28,13 +32,9 @@ _diff_console = Console(force_terminal=True, markup=False, color_system="standar
 # Authentication functions (from auth.py)
 def handle_login() -> None:
     """Configure username and token for authenticating with the aye service."""
-    from .auth import login_flow
     login_flow()
     
     # Download plugins based on user's license tier
-    from .download_plugins import fetch_plugins
-    from .auth import get_token
-    
     try:
         token = get_token()
         if not token:
@@ -48,13 +48,10 @@ def handle_login() -> None:
     except Exception as e:
         rprint(f"[red]Error: Could not download plugins - {e}[/]")
 
-
 def handle_logout() -> None:
     """Remove the stored aye credentials."""
-    from .auth import delete_token
     delete_token()
     rprint("🔐 Token removed.")
-
 
 # One-shot generation function
 def handle_generate_cmd(prompt: str) -> None:
@@ -69,17 +66,15 @@ def handle_generate_cmd(prompt: str) -> None:
 # Chat function
 def handle_chat(root: Path, file_mask: str) -> None:
     """Start an interactive REPL. Use /exit or Ctrl‑D to leave."""
-    from types import SimpleNamespace
     from .repl import chat_repl
-    
+
     if root is None:
         root = Path.cwd()
-    
+
     conf = SimpleNamespace()
     conf.root = root
     conf.file_mask = file_mask
     chat_repl(conf)
-
 
 def process_repl_message(prompt: str, chat_id: Optional[int], root: Path, file_mask: str, chat_id_file: Path, console: Console) -> None:
     """Process a REPL message and handle the response."""
@@ -98,7 +93,6 @@ def handle_history_cmd(file: Optional[Path]) -> None:
     for snapshot in snapshots:
         print(snapshot)
 
-
 def handle_snap_show_cmd(file: Path, ts: str) -> None:
     """Print the contents of a specific snapshot."""
     for snap_ts, snap_path in list_snapshots(file):
@@ -106,7 +100,6 @@ def handle_snap_show_cmd(file: Path, ts: str) -> None:
             print(Path(snap_path).read_text(encoding="utf-8"))
             return
     rprint("Snapshot not found.", err=True)
-
 
 def handle_restore_cmd(ts: Optional[str], file_name: Optional[str] = None) -> None:
     """Replace all files with the latest snapshot or specified snapshot."""
@@ -125,7 +118,6 @@ def handle_restore_cmd(ts: Optional[str], file_name: Optional[str] = None) -> No
     except Exception as exc:
         rprint(f"Error: {exc}", err=True)
 
-
 def _is_valid_command(command: str) -> bool:
     """Check if a command exists in the system using bash's command -v"""
     try:
@@ -137,9 +129,8 @@ def _is_valid_command(command: str) -> bool:
     except Exception:
         return False
 
-
 def handle_restore_command(timestamp: str | None = None, file_name: str | None = None) -> None:
-    """Handle the restore command logic.""" 
+    """Handle the restore command logic. """
     try:
         restore_snapshot(timestamp, file_name)
         if timestamp:
@@ -155,7 +146,6 @@ def handle_restore_command(timestamp: str | None = None, file_name: str | None =
     except Exception as e:
         rprint(f"[red]Error restoring snapshot:[/] {e}")
 
-
 def handle_history_command() -> None:
     """Handle the history command logic."""
     timestamps = list_snapshots()
@@ -165,7 +155,6 @@ def handle_history_command() -> None:
         rprint("[bold]Snapshot History:[/]")
         for ts in timestamps:
             rprint(f"  {ts}")
-
 
 def handle_diff_command(args: list[str]) -> None:
     """Handle the diff command logic according to specified cases."""
@@ -205,23 +194,22 @@ def handle_diff_command(args: list[str]) -> None:
         if snapshot_id in snapshot_paths:
             diff_files(file_path, snapshot_paths[snapshot_id])
         else:
-            rprint(f"[red]Error:[/] Snapshot '{snapshot_id}' not found for file '{file_name}'.")
+            rprint(f"[red]Error:[/] Snapshot '{snapshot_id}' not found for file '{file_name}'.[/]")
 
     elif len(args) == 3:
         # Case 2: Diff between two snapshots
         snap_id1 = args[1]
         snap_id2 = args[2]
         if snap_id1 not in snapshot_paths:
-            rprint(f"[red]Error:[/] Snapshot '{snap_id1}' not found for file '{file_name}'.")
+            rprint(f"[red]Error:[/] Snapshot '{snap_id1}' not found for file '{file_name}'.[/]")
             return
         if snap_id2 not in snapshot_paths:
-            rprint(f"[red]Error:[/] Snapshot '{snap_id2}' not found for file '{file_name}'.")
+            rprint(f"[red]Error:[/] Snapshot '{snap_id2}' not found for file '{file_name}'.[/]")
             return
         diff_files(snapshot_paths[snap_id1], snapshot_paths[snap_id2])
 
     else:
         rprint("[red]Error:[/] Too many arguments for diff command.")
-
 
 def _python_diff_files(file1: Path, file2: Path) -> None:
     """Show diff between two files using Python's difflib."""
@@ -249,7 +237,6 @@ def _python_diff_files(file1: Path, file2: Path) -> None:
     except Exception as e:
         rprint(f"[red]Error running Python diff:[/] {e}")
 
-
 def diff_files(file1: Path, file2: Path) -> None:
     """Show diff between two files using system diff command or Python fallback."""
     try:
@@ -268,7 +255,6 @@ def diff_files(file1: Path, file2: Path) -> None:
         _python_diff_files(file1, file2)
     except Exception as e:
         rprint(f"[red]Error running diff:[/] {e}")
-
 
 def filter_unchanged_files(updated_files: list) -> list:
     """Filter out files from updated_files list if their content hasn't changed compared to on-disk version."""
@@ -293,10 +279,10 @@ def filter_unchanged_files(updated_files: list) -> list:
             
     return changed_files
 
-
 def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_mask: str, selected_model: str | None = None) -> Dict[str, any]:
     """Process a chat message and return the response."""
     source_files = collect_sources(root, file_mask)
+    rprint(f"[yellow]Included with prompt: {', '.join(source_files.keys())}")
     
     resp = cli_invoke(message=prompt, chat_id=chat_id or -1, source_files=source_files, model=selected_model)
     
@@ -308,13 +294,13 @@ def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_m
         "assistant_response": assistant_resp,
         "new_chat_id": resp.get("chat_id"),
         "summary": assistant_resp.get("answer_summary"),
-        "updated_files": assistant_resp.get("source_files", [])
+        "updated_files": assistant_resp.get("source_files", []),
+        "prompt": prompt  # Include prompt for snapshot metadata
     }
 
 # Snapshot cleanup functions
 def handle_prune_cmd(keep: int = 10) -> None:
     """Delete all but the most recent N snapshots."""
-    from .snapshot import prune_snapshots
     try:
         deleted_count = prune_snapshots(keep)
         if deleted_count > 0:
@@ -324,10 +310,8 @@ def handle_prune_cmd(keep: int = 10) -> None:
     except Exception as e:
         rprint(f"[red]Error pruning snapshots:[/] {e}")
 
-
 def handle_cleanup_cmd(days: int = 30) -> None:
     """Delete snapshots older than N days."""
-    from .snapshot import cleanup_snapshots
     try:
         deleted_count = cleanup_snapshots(days)
         if deleted_count > 0:
@@ -349,7 +333,6 @@ def handle_config_list() -> None:
     for key, value in config.items():
         rprint(f"  {key}: {value}")
 
-
 def handle_config_set(key: str, value: str) -> None:
     """Set a configuration value."""
     # Try to parse value as JSON for proper typing
@@ -362,7 +345,6 @@ def handle_config_set(key: str, value: str) -> None:
     set_value(key, parsed_value)
     rprint(f"[green]Configuration '{key}' set to '{value}'.[/]")
 
-
 def handle_config_get(key: str) -> None:
     """Get a configuration value."""
     value = get_value(key)
@@ -371,10 +353,10 @@ def handle_config_get(key: str) -> None:
     else:
         rprint(f"{key}: {value}")
 
-
 def handle_config_delete(key: str) -> None:
     """Delete a configuration value."""
     if delete_value(key):
         rprint(f"[green]Configuration '{key}' deleted.[/]")
     else:
         rprint(f"[yellow]Configuration key '{key}' not found.[/]")
+

@@ -48,7 +48,6 @@ from .config import MODELS
 plugin_manager = PluginManager()
 plugin_manager.discover()
 
-
 def handle_model_command(session, models, conf, tokens):
     """Handle the 'model' command: display current and list available models for selection."""
     if len(tokens) > 1:
@@ -86,7 +85,6 @@ def handle_model_command(session, models, conf, tokens):
                     rprint("[red]Invalid number.[/]")
             except ValueError:
                 rprint("[red]Invalid input.[/]")
-
 
 def chat_repl(conf) -> None:
     # NEW: Download plugins at start of every chat session (commented out to avoid network call during REPL)
@@ -131,6 +129,9 @@ def chat_repl(conf) -> None:
 
     # Models configuration
     conf.selected_model = get_user_config("selected_model", MODELS[0]["id"])
+
+    # Store the last user prompt for snapshot metadata
+    last_prompt = None
 
     while True:
         try:
@@ -240,6 +241,9 @@ def chat_repl(conf) -> None:
                     rprint(shell_response["stdout"])
             continue
 
+        # Store the prompt for snapshot metadata
+        last_prompt = prompt
+
         # Process LLM chat message
         try:
             spinner = Spinner("dots", text="[yellow]Thinking...[/]")
@@ -299,9 +303,9 @@ def chat_repl(conf) -> None:
         if not updated_files:
             print_no_files_changed(console)
         else:
-            # Apply updates directly via snapshot utilities
+            # Apply updates directly via snapshot utilities, passing the prompt
             try:
-                batch_ts = apply_updates(updated_files)
+                batch_ts = apply_updates(updated_files, last_prompt)
                 if batch_ts:
                     file_names = [item.get("file_name") for item in updated_files if "file_name" in item]
                     if file_names:
@@ -311,3 +315,4 @@ def chat_repl(conf) -> None:
 
 if __name__ == "__main__":
     chat_repl()
+

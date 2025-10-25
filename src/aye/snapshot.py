@@ -2,11 +2,10 @@ import json
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 SNAP_ROOT = Path(".aye/snapshots").resolve()
 LATEST_SNAP_DIR = SNAP_ROOT / "latest"
-
 
 def _get_next_ordinal() -> int:
     """Get the next ordinal number by checking existing snapshot directories."""
@@ -24,7 +23,6 @@ def _get_next_ordinal() -> int:
                 continue
     
     return max(ordinals, default=0) + 1
-
 
 def _get_latest_snapshot_dir() -> Path | None:
     """Get the latest snapshot directory by finding the one with the highest ordinal."""
@@ -59,59 +57,89 @@ def _ensure_batch_dir(ts: str) -> Path:
     batch_dir.mkdir(parents=True, exist_ok=True)
     return batch_dir
 
+def _truncate_prompt(prompt: Optional[str], max_length: int = 32) -> str:
+    """Truncate a prompt to max_length characters, adding ellipsis if needed."""
+    if not prompt:
+        return "no prompt".ljust(max_length)
+    prompt = prompt.strip()
+    if len(prompt) <= max_length:
+        return prompt.ljust(max_length)
+    return prompt[:max_length] + "..."
 
 def _list_all_snapshots_with_metadata():
-    """List all snapshots in descending order with file names from metadata."""
+    """List all snapshots in descending order with file names from metadata.
+    
+    Updated to use the actual directory objects returned by ``SNAP_ROOT.iterdir()``
+    instead of reconstructing paths via ``SNAP_ROOT / ts``. This makes the function
+    compatible with tests that mock ``SNAP_ROOT`` with a ``MagicMock`` – the mock
+    provides ``iterdir()`` yielding real ``Path`` objects, and we operate directly
+    on those objects.
+    """
     batches_root = SNAP_ROOT
     if not batches_root.is_dir():
         return []
 
-    timestamps = [p.name for p in batches_root.iterdir() if p.is_dir() and p.name != "latest"]
-    timestamps.sort(reverse=True)
+    # Collect batch directories (ignore the "latest" helper dir)
+    batch_dirs = [p for p in batches_root.iterdir() if p.is_dir() and p.name != "latest"]
+    # Sort newest first based on the timestamp part after the first underscore
+    batch_dirs.sort(key=lambda p: p.name.split("_", 1)[1] if "_" in p.name else p.name, reverse=True)
+
     result = []
-    for ts in timestamps:
+    for batch_dir in batch_dirs:
+        ts = batch_dir.name
         if "_" in ts:
             ordinal_part, timestamp_part = ts.split("_", 1)
-            formatted_ts = f"{ordinal_part} ({timestamp_part})"
         else:
-            formatted_ts = ts
+            ordinal_part = ts
+            timestamp_part = ""
         
-        meta_path = batches_root / ts / "metadata.json"
+        meta_path = batch_dir / "metadata.json"
         if meta_path.exists():
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            files = [Path(entry["original"]).name for entry in meta["files"]]
-            files_str = ",".join(files)
-            result.append(f"{formatted_ts}  {files_str}")
+            
+            # Get the prompt substring
+            prompt_str = _truncate_prompt(meta.get("prompt"))
+            
+            files = []
+            cwd = Path.cwd()
+            for entry in meta["files"]:
+                original_path_str = entry["original"]
+                try:
+                    # Use relative path if possible, otherwise absolute
+                    files.append(str(Path(original_path_str).relative_to(cwd)))
+                except ValueError:
+                    files.append(original_path_str)
+
+            files_str = ", ".join(files)
+            result.append(f"{ordinal_part}  ({prompt_str})  {files_str}")
         else:
-            result.append(f"{formatted_ts}  (metadata missing)")
+            result.append(f"{ordinal_part}  (metadata missing)")
     return result
 
 # ------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------
-def create_snapshot(file_paths: List[Path]) -> str:
+def create_snapshot(file_paths: List[Path], prompt: Optional[str] = None) -> str:
     """Snapshot the **current** contents of the given files.
 
     The function now always creates a snapshot for the supplied files, even if a
     file's content matches the most recent snapshot. This ensures that subsequent
     update logic (e.g., ``apply_updates``) always has a snapshot to compare
     against and that files are written to disk when the LLM requests changes.
+
+    Args:
+        file_paths: List of file paths to snapshot
+        prompt: Optional user prompt that triggered this snapshot
     """
     if not file_paths:
         raise ValueError("No files supplied for snapshot")
 
-    # Previously the code filtered out files whose content matched the latest
-    # snapshot, which caused ``apply_updates`` to skip writing updates when the
-    # LLM suggested a change for a file that hadn't been modified since the
-    # previous snapshot. The filtering has been removed – every provided path is
-    # considered a changed file for snapshot purposes.
     changed_files: List[Path] = []
     for src_path in file_paths:
         src_path = src_path.resolve()
         if src_path.is_file():
             changed_files.append(src_path)
         else:
-            # Include non‑existent (new) files as well
             changed_files.append(src_path)
     
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
@@ -127,9 +155,10 @@ def create_snapshot(file_paths: List[Path]) -> str:
         meta_entries.append({"original": str(src_path), "snapshot": str(dest_path)})
 
     meta = {"timestamp": ts, "files": meta_entries}
+    if prompt:
+        meta["prompt"] = prompt
     (batch_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
-    # Update the latest snapshot directory
     if LATEST_SNAP_DIR.exists():
         shutil.rmtree(LATEST_SNAP_DIR)
     LATEST_SNAP_DIR.mkdir(parents=True, exist_ok=True)
@@ -199,7 +228,7 @@ def restore_snapshot(ordinal: str | None = None, file_name: str | None = None) -
                 batch_dir = dir_path
                 break
     if batch_dir is None:
-        raise ValueError(f"Snapshot with ordinal {ordinal} not found")
+        raise ValueError(f"Snapshot with Id {ordinal} not found")
 
     meta_file = batch_dir / "metadata.json"
     if not meta_file.is_file():
@@ -211,35 +240,42 @@ def restore_snapshot(ordinal: str | None = None, file_name: str | None = None) -
         raise ValueError(f"Invalid metadata for snapshot {ordinal}: {e}")
 
     if file_name is not None:
-        filtered_entries = [entry for entry in meta["files"] if Path(entry["original"]).name == file_name]
+        target_path = Path(file_name).resolve()
+        filtered_entries = [
+            entry for entry in meta["files"]
+            if Path(entry["original"]).resolve() == target_path
+        ]
         if not filtered_entries:
             raise ValueError(f"File '{file_name}' not found in snapshot {ordinal}")
         meta["files"] = filtered_entries
 
     for entry in meta["files"]:
-        original = Path(entry["original"])
-        snapshot_path = Path(entry["snapshot"])
-        if not snapshot_path.exists():
-            print(f"Warning: snapshot file missing – {snapshot_path}")
-            continue
+        original = Path(entry["original"])  # destination on disk
+        snapshot_path = Path(entry["snapshot"])  # stored snapshot file
         try:
             original.parent.mkdir(parents=True, exist_ok=True)
+            # Attempt copy regardless of existence; handle errors gracefully.
             shutil.copy2(snapshot_path, original)
+        except FileNotFoundError:
+            print(f"Warning: snapshot file missing – {snapshot_path}")
         except Exception as e:
             print(f"Warning: failed to restore {original}: {e}")
             continue
 
-def apply_updates(updated_files: List[Dict[str, str]]) -> str:
+def apply_updates(updated_files: List[Dict[str, str]], prompt: Optional[str] = None) -> str:
     """
     1. Take a snapshot of the *current* files.
     2. Write the new contents supplied by the LLM.
     Returns the batch timestamp (useful for UI feedback).
+
+    Args:
+        updated_files: List of dicts with 'file_name' and 'file_content' keys
+        prompt: Optional user prompt that triggered these updates
     """
     file_paths: List[Path] = [Path(item["file_name"]) for item in updated_files if "file_name" in item and "file_content" in item]
-    batch_ts = create_snapshot(file_paths)
-    # Even if ``create_snapshot`` returns an empty string (which it no longer does), we still write the updates.
+    batch_ts = create_snapshot(file_paths, prompt)
     for item in updated_files:
-        fp = Path(item["file_name"])
+        fp = Path(item["file_name"]) 
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_text(item["file_content"], encoding="utf-8")
     return batch_ts
@@ -297,3 +333,4 @@ def driver():
 
 if __name__ == "__main__":
     driver()
+
