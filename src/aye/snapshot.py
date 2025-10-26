@@ -2,7 +2,7 @@ import json
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 SNAP_ROOT = Path(".aye/snapshots").resolve()
 LATEST_SNAP_DIR = SNAP_ROOT / "latest"
@@ -24,7 +24,7 @@ def _get_next_ordinal() -> int:
     
     return max(ordinals, default=0) + 1
 
-def _get_latest_snapshot_dir() -> Path | None:
+def _get_latest_snapshot_dir() -> Optional[Path]:
     """Get the latest snapshot directory by finding the one with the highest ordinal."""
     batches_root = SNAP_ROOT
     if not batches_root.is_dir():
@@ -171,7 +171,7 @@ def create_snapshot(file_paths: List[Path], prompt: Optional[str] = None) -> str
 
     return batch_dir.name
 
-def list_snapshots(file: Path | None = None) -> List[str] | List[tuple[str, str]]:
+def list_snapshots(file: Optional[Path] = None) -> Union[List[str], List[tuple[str, str]]]:
     """Return all batch-snapshot timestamps, newest first, or snapshots for a specific file."""
     if file is None:
         return _list_all_snapshots_with_metadata()
@@ -192,7 +192,7 @@ def list_snapshots(file: Path | None = None) -> List[str] | List[tuple[str, str]
     snapshots.sort(key=lambda x: x[0], reverse=True)
     return snapshots
 
-def restore_snapshot(ordinal: str | None = None, file_name: str | None = None) -> None:
+def restore_snapshot(ordinal: Optional[str] = None, file_name: Optional[str] = None) -> None:
     """
     Restore *all* files from a batch snapshot identified by ordinal number.
     If ``ordinal`` is omitted the most recent snapshot is used.

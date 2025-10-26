@@ -8,22 +8,15 @@ A terminal-native AI assistant that understands your project, edits your files s
 
 ![Aye Chat demo](https://welcome.ayechat.ai/images/main-flow.gif)
 
-## Conceptual Summary
-
-- 🧭 **Core Philosophy**: Flow first, trust by design, reversibility built-in.
-- ⚙️ **Design Model**: Optimistic editing with automatic safety nets.
-- 🔒 **Privacy Model**: Developer-defined boundaries (.gitignore/.ayeignore).
-- 🧩 **Architecture**: Modular open-source core with plugin-driven extensibility.
-- 🖥️ **Interface Model**: Unified CLI + Web experience with conversation continuity.
-- 💡 **Goal**: Natural-language-driven coding in the developer’s native environment (the terminal).
 
 ## Key Features
 
-- **Terminal-native experience** — built for developers who live in the CLI.  
-- **Full-file generation and modification** — no copy-pasting between tools.  
-- **Automatic snapshots, diff, and restore** — iterate safely, without Git overhead.  
-- **Smart file awareness** — Aye Chat includes relevant project files automatically.  
-- **Plugin architecture** — extend Aye Chat with your own commands.  
+- 🖥️ **Terminal-native experience** — built for developers who live in the CLI.  
+- 📁 **Full-file generation and modification** — no copy-pasting between tools.  
+- 🔁 **Automatic snapshots, diff, and restore** — iterate safely, without Git overhead.  
+- 🔒 **Privacy-aware design**: developer-defined boundaries with .gitignore and .ayeignore.
+- 💡 **Smart file awareness** — Aye Chat includes relevant project files automatically.  
+- 🧩 **Plugin architecture** — extend Aye Chat with your own commands.  
 
 
 ## Quick Start

@@ -66,11 +66,7 @@ def main(
 
 # Create subcommands
 auth_app = typer.Typer(help="Authentication commands")
-snap_app = typer.Typer(help="Snapshot management commands")
-
 app.add_typer(auth_app, name="auth")
-app.add_typer(snap_app, name="snap")
-
 # ----------------------------------------------------------------------
 # Authentication commands
 # ----------------------------------------------------------------------
@@ -90,28 +86,6 @@ def logout():
     aye auth logout
     """
     handle_logout()
-
-# ----------------------------------------------------------------------
-# One‑shot generation
-# ----------------------------------------------------------------------
-@app.command()
-def generate(
-    prompt: str = typer.Argument(..., help="Prompt for the LLM"),
-    mode: str = typer.Option(
-        "replace",
-        "--mode",
-        "-m",
-        help="replace | append | insert (default: replace)",
-    ),
-):
-    """
-    Send a single prompt to the backend.
-    
-    Examples: \n
-    aye generate "Create a function that reverses a string" \n
-    aye generate "Add type hints to this function" --mode append \n
-    """
-    handle_generate_cmd(prompt, mode)
 
 # ----------------------------------------------------------------------
 # Interactive REPL (chat) command
@@ -138,6 +112,9 @@ def chat(
 # ----------------------------------------------------------------------
 # Snapshot commands
 # ----------------------------------------------------------------------
+snap_app = typer.Typer(help="Snapshot management commands (EXPERIMENTAL)")
+app.add_typer(snap_app, name="snap")
+
 @snap_app.command("history")
 def history(
     file: Path = typer.Argument(None, help="File to list snapshots for")
@@ -212,6 +189,28 @@ def cleanup(
     handle_cleanup_cmd(days)
 
 # ----------------------------------------------------------------------
+# One‑shot generation
+# ----------------------------------------------------------------------
+#@app.command()
+def generate(
+    prompt: str = typer.Argument(..., help="Prompt for the LLM"),
+    mode: str = typer.Option(
+        "replace",
+        "--mode",
+        "-m",
+        help="replace | append | insert (default: replace)",
+    ),
+):
+    """
+    Send a single prompt to the backend.
+    
+    Examples: \n
+    aye generate "Create a function that reverses a string" \n
+    aye generate "Add type hints to this function" --mode append \n
+    """
+    handle_generate_cmd(prompt, mode)
+
+# ----------------------------------------------------------------------
 # Configuration management commands
 # ----------------------------------------------------------------------
 @app.command()
@@ -221,7 +220,7 @@ def config(
     value: str = typer.Argument(None, help="Configuration value (for set action)"),
 ):
     """
-    Manage configuration values for file masks, root directories, and other settings.
+    Manage configuration values for file masks, root directories, and other settings. (EXPERIMENTAL)
     
     Actions: \n
     - list: Show all configuration values \n
