@@ -60,6 +60,7 @@ In chat mode, you can use these built-in commands:
 - `restore [snapshot_id] [file]` - Restore all files from the latest snapshot or a specified snapshot; optionally for a specific file
 - `keep [N]` - Keep only N most recent snapshots (10 by default)
 - `model` - Select a different model. Selection will persist between sessions.
+- `verbose [on|off]` - Toggle verbose mode to print out list of files included with user prompt (on/off, persists between sessions)
 - `exit`, `quit`, `Ctrl+D` - Exit the chat session
 - `help` - Show available commands
 
