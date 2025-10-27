@@ -279,10 +279,13 @@ def filter_unchanged_files(updated_files: list) -> list:
             
     return changed_files
 
-def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_mask: str, selected_model: Optional[str] = None) -> Dict[str, any]:
+def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_mask: str, selected_model: Optional[str] = None, verbose: bool = False) -> Dict[str, any]:
     """Process a chat message and return the response."""
     source_files = collect_sources(root, file_mask)
-    rprint(f"[yellow]Included with prompt: {', '.join(source_files.keys())}")
+    if verbose:
+        rprint(f"[yellow]Included with prompt: {', '.join(source_files.keys())}")
+    else:
+        rprint("[yellow]Turn on verbose mode to see list of files included with prompt.[/]")
     
     resp = cli_invoke(message=prompt, chat_id=chat_id or -1, source_files=source_files, model=selected_model)
     
@@ -359,4 +362,5 @@ def handle_config_delete(key: str) -> None:
         rprint(f"[green]Configuration '{key}' deleted.[/]")
     else:
         rprint(f"[yellow]Configuration key '{key}' not found.[/]")
+
 
