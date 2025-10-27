@@ -86,6 +86,19 @@ def handle_model_command(session, models, conf, tokens):
             except ValueError:
                 rprint("[red]Invalid input.[/]")
 
+def handle_verbose_command(tokens):
+    """Handle the 'verbose' command: set or display verbose mode."""
+    if len(tokens) > 1:
+        val = tokens[1].lower()
+        if val in ("on", "off"):
+            set_user_config("verbose", val)
+            rprint(f"[green]Verbose mode set to {val.title()}[/]")
+        else:
+            rprint("[red]Usage: verbose on|off[/]")
+    else:
+        current = get_user_config("verbose", "off")
+        rprint(f"[yellow]Verbose mode is {current.title()}[/]")
+
 def chat_repl(conf) -> None:
     # NEW: Download plugins at start of every chat session (commented out to avoid network call during REPL)
     # from .download_plugins import fetch_plugins
@@ -129,6 +142,7 @@ def chat_repl(conf) -> None:
 
     # Models configuration
     conf.selected_model = get_user_config("selected_model", MODELS[0]["id"])
+    conf.verbose = get_user_config("verbose", "off").lower() == "on"
 
     # Store the last user prompt for snapshot metadata
     last_prompt = None
@@ -163,6 +177,12 @@ def chat_repl(conf) -> None:
         # Model command
         if lowered_first == "model":
             handle_model_command(session, MODELS, conf, tokens)
+            continue
+
+        # Verbose command
+        if lowered_first == "verbose":
+            handle_verbose_command(tokens)
+            conf.verbose = get_user_config("verbose", "off").lower() == "on"
             continue
 
         # Diff command (still uses original implementation)
@@ -248,7 +268,7 @@ def chat_repl(conf) -> None:
         try:
             spinner = Spinner("dots", text="[yellow]Thinking...[/]")
             with console.status(spinner) as status:
-                result = process_chat_message(prompt, chat_id, conf.root, conf.file_mask, conf.selected_model)
+                result = process_chat_message(prompt, chat_id, conf.root, conf.file_mask, conf.selected_model, conf.verbose)
         except Exception as exc:
             if hasattr(exc, "response") and getattr(exc.response, "status_code", None) == 403:
                 traceback.print_exc()
@@ -315,4 +335,3 @@ def chat_repl(conf) -> None:
 
 if __name__ == "__main__":
     chat_repl()
-
