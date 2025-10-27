@@ -12,6 +12,5 @@ jobs:
         uses: SethCohen/github-releases-to-discord@v1
         with:
           webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          content: "||@everyone||"
-          footer_title: "Changelog"
+          footer_title: "https://pypi.org/project/ayechat/"
           reduce_headings: true
