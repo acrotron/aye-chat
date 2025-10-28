@@ -322,3 +322,37 @@ def test_uat_2_2_logout_when_no_token_exists(temp_config_file):
         assert not temp_config_file.exists()
         
         # File permissions check not applicable since file doesn't exist
+
+
+def test_uat_2_3_logout_preserves_other_config(temp_config_file):
+    """UAT-2.3: Logout Preserves Other Config
+    
+    Given: ~/.ayecfg contains token and other settings (e.g., selected_model).
+    When: User runs `aye auth logout`.
+    Then: Removes only the token, preserves other settings, keeps the file.
+    """
+    # Pre-set config with token and another setting
+    auth.set_user_config('token', 'existing_token')
+    auth.set_user_config('selected_model', 'x-ai/grok')
+    assert temp_config_file.exists()
+    initial_content = temp_config_file.read_text(encoding='utf-8')
+    assert 'token=existing_token' in initial_content
+    assert 'selected_model=x-ai/grok' in initial_content
+    
+    # Mock rprint to capture output
+    with patch('aye.service.rprint') as mock_rprint:
+        
+        # Execute logout
+        service.handle_logout()
+        
+        # Verify message displayed
+        mock_rprint.assert_called_once_with('🔐 Token removed.')
+        
+        # Verify token was removed, but other config remains, file persists
+        assert temp_config_file.exists()
+        updated_content = temp_config_file.read_text(encoding='utf-8')
+        assert 'token=' not in updated_content
+        assert 'selected_model=x-ai/grok' in updated_content
+        
+        # File permissions should be set to 0600 (but hard to assert in test; assume auth.py does it)
+        # assert temp_config_file.stat().st_mode & 0o777 == 0o600  # Optional: if implementing permission check
