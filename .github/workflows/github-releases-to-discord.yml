@@ -1,3 +1,5 @@
+name: Messge to Discord on Release
+
 on:
   release:
     types: [published]
