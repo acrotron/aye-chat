@@ -356,3 +356,37 @@ def test_uat_2_3_logout_preserves_other_config(temp_config_file):
         
         # File permissions should be set to 0600 (but hard to assert in test; assume auth.py does it)
         # assert temp_config_file.stat().st_mode & 0o777 == 0o600  # Optional: if implementing permission check
+
+
+def test_uat_2_4_logout_with_environment_variable_set(temp_config_file):
+    """UAT-2.4: Logout with Environment Variable Set
+    
+    Given: AYE_TOKEN is set, but no file-based token.
+    When: User runs `aye auth logout`.
+    Then: Displays '🔐 Token removed.' but env var remains (since it doesn't control env vars).
+    """
+    # Set environment variable to override token
+    os.environ['AYE_TOKEN'] = 'env_token'
+    
+    # Ensure no file-based token
+    assert not temp_config_file.exists()
+    
+    # Mock rprint to capture output
+    with patch('aye.service.rprint') as mock_rprint:
+        
+        # Execute logout
+        service.handle_logout()
+        
+        # Verify message displayed
+        mock_rprint.assert_called_once_with('🔐 Token removed.')
+        
+        # Verify env var remains unchanged
+        assert os.environ.get('AYE_TOKEN') == 'env_token'
+        
+        # Verify no file modifications
+        assert not temp_config_file.exists()
+        
+        # File permissions check not applicable since file doesn't exist
+    
+    # Clean up env var
+    del os.environ['AYE_TOKEN']
