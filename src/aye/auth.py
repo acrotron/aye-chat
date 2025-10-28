@@ -4,6 +4,8 @@ import typer
 from typing import Any, Optional
 from pathlib import Path
 from rich import print as rprint
+import hashlib
+import time
 
 SERVICE_NAME = "aye-cli"
 TOKEN_ENV_VAR = "AYE_TOKEN"
@@ -62,8 +64,14 @@ def store_token(token: str) -> None:
 
 
 def get_token() -> Optional[str]:
-    """Return the stored token (env → file)."""
-    return get_user_config("token")
+    """Return the stored token (env → file). If None, generate a demo token."""
+    token = get_user_config("token")
+    if token is None:
+        demo_hash = hashlib.md5(str(time.time()).encode()).hexdigest()[:10]
+        demo_token = "aye_demo_" + demo_hash
+        set_user_config("token", demo_token)
+        return demo_token
+    return token
 
 
 def delete_token() -> None:
@@ -94,3 +102,4 @@ def login_flow() -> None:
     token = typer.prompt("Paste your token", hide_input=True)
     store_token(token.strip())
     typer.secho("✅ Token saved.", fg=typer.colors.GREEN)
+
