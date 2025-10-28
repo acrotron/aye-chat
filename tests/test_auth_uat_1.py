@@ -297,3 +297,28 @@ def test_uat_2_1_successful_logout_when_token_exists(temp_config_file):
         
         # File permissions should be set to 0600 (but hard to assert in test; assume auth.py does it)
         # assert temp_config_file.stat().st_mode & 0o777 == 0o600  # Optional: if implementing permission check
+
+
+def test_uat_2_2_logout_when_no_token_exists(temp_config_file):
+    """UAT-2.2: Logout When No Token Exists
+    
+    Given: No token stored (empty or missing ~/.ayecfg).
+    When: User runs `aye auth logout`.
+    Then: Displays '🔐 Token removed.' (idempotent behavior).
+    """
+    # Ensure no token in config file
+    assert not temp_config_file.exists()  # File does not exist
+    
+    # Mock rprint to capture output
+    with patch('aye.service.rprint') as mock_rprint:
+        
+        # Execute logout
+        service.handle_logout()
+        
+        # Verify message displayed (idempotent)
+        mock_rprint.assert_called_once_with('🔐 Token removed.')
+        
+        # Verify no changes to config file (still does not exist)
+        assert not temp_config_file.exists()
+        
+        # File permissions check not applicable since file doesn't exist
