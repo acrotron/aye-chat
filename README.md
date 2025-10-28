@@ -4,7 +4,24 @@
 
 # Aye Chat: AI-First development in your terminal
 
-A terminal-native AI assistant that understands your project, edits your files safely, and helps you build faster — without ever leaving your flow.
+If you ever try it - you are never going to go back to other tools. (That is, if your native environment is a terminal 🙂) 
+
+It's not just another AI Slop, it's an ecosystem. Give it a try.
+
+## Quick Start
+
+1. **Install the tool**:
+   ```bash
+   pip install ayechat
+   ```
+
+2. **Start Interactive Chat**:
+   ```bash
+   aye chat
+   ```
+
+That's it!
+
 
 ![Aye Chat demo](https://welcome.ayechat.ai/images/main-flow.gif)
 
@@ -18,24 +35,6 @@ A terminal-native AI assistant that understands your project, edits your files s
 - 💡 **Smart file awareness** — Aye Chat includes relevant project files automatically.  
 - 🧩 **Plugin architecture** — extend Aye Chat with your own commands.  
 
-
-## Quick Start
-
-1. **Install the tool**:
-   ```bash
-   pip install ayechat
-   ```
-
-2. **Authenticate**:
-   ```bash
-   aye auth login
-   ```
-   Visit https://ayechat.ai to obtain your personal access token.
-
-3. **Start Interactive Chat**:
-   ```bash
-   aye chat
-   ```
 
 ## Core Commands
 ### Authentication
