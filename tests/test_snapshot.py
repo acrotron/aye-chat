@@ -1,7 +1,7 @@
 import os
 import json
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch, MagicMock, call
@@ -170,7 +170,7 @@ class TestSnapshot(TestCase):
         mock_latest_dir.__str__.return_value = str(self.latest_dir)
 
         # Create mock snapshots with different timestamps
-        old_date = (datetime.utcnow() - timedelta(days=31)).strftime("%Y%m%dT%H%M%S")
+        old_date = (datetime.now(timezone.utc) - timedelta(days=31)).strftime("%Y%m%dT%H%M%S")
         snap_dirs = [
             self.snap_root / f"001_{old_date}",
             self.snap_root / "002_20230102T000000"
