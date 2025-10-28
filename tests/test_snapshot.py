@@ -2,9 +2,9 @@ import os
 import json
 import shutil
 from datetime import datetime, timedelta
-from pathlib import Path, PosixPath
+from pathlib import Path
 from unittest import TestCase
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 import pytest
 
 import aye.snapshot as snapshot
@@ -12,11 +12,13 @@ import aye.snapshot as snapshot
 
 class TestSnapshot(TestCase):
     def setUp(self):
-        self.snap_root = Path("/tmp/mock_snapshots")
+        import tempfile
+        temp_dir = Path(tempfile.gettempdir())
+        self.snap_root = temp_dir / "mock_snapshots"
         self.latest_dir = self.snap_root / "latest"
         self.test_files = [
-            Path("/tmp/test1.py"),
-            Path("/tmp/test2.py")
+            temp_dir / "test1.py",
+            temp_dir / "test2.py"
         ]
 
         # Create test files
@@ -127,9 +129,9 @@ class TestSnapshot(TestCase):
         with patch('shutil.copy2') as mock_copy:
             snapshot.restore_snapshot("001", str(self.test_files[0]))
             mock_copy.assert_called_once_with(  # Also assert args for better verification
-                PosixPath(str(mock_snap_dir / "test1.py")),
+                Path(str(mock_snap_dir / "test1.py")),
                 # Expected snapshot path
-                PosixPath(str(self.test_files[0]))  # Expected original path
+                Path(str(self.test_files[0]))  # Expected original path
             )
 
     @patch('aye.snapshot.SNAP_ROOT')
