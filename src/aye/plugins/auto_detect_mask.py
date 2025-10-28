@@ -14,7 +14,7 @@ SOURCE_EXTENSIONS = {
     'html', 'htm', 'css', 'scss', 'sass', 'less',
     'json', 'xml', 'yaml', 'yml', 'tf', 'sh', 'toml',
     'md', 'rst', 'txt',
-    'sql
+    'sql'
 }
 
 
