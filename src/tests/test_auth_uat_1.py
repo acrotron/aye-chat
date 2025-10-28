@@ -178,3 +178,42 @@ def test_uat_1_4_login_with_network_failure_during_plugin_download(temp_config_f
         
         # File permissions should be set to 0600 (but hard to assert in test; assume auth.py does it)
         # assert temp_config_file.stat().st_mode & 0o777 == 0o600  # Optional: if implementing permission check
+
+
+def test_uat_1_5_login_cancelled_by_user(temp_config_file):
+    """UAT-1.5: Login Cancelled by User
+    
+    Given: No existing token.
+    When: User runs `aye auth login` but cancels the prompt (e.g., Ctrl+C).
+    Then: The system does not store any token and exits without error.
+    """
+    # Mock user input: simulate cancellation by raising KeyboardInterrupt
+    with patch('aye.auth.typer.prompt', side_effect=KeyboardInterrupt) as mock_prompt, \
+         patch('aye.auth.typer.secho') as mock_secho, \
+         patch('aye.service.rprint') as mock_rprint, \
+         patch('aye.service.get_token') as mock_get_token, \
+         patch('aye.service.fetch_plugins') as mock_fetch_plugins:
+        
+        # Ensure no prior token
+        assert not temp_config_file.exists()
+        
+        # Execute full login flow (handle_login calls login_flow + fetch_plugins)
+        # Since cancellation happens in login_flow, it should exit early
+        try:
+            service.handle_login()
+        except KeyboardInterrupt:
+            pass  # Expected when simulating Ctrl+C
+        
+        # Verify prompt was called for token input
+        mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
+        
+        # Verify success message was NOT displayed
+        mock_secho.assert_not_called()
+        
+        # Verify no token was stored in config file
+        assert not temp_config_file.exists()  # File should not be created
+        
+        # Verify plugin download was NOT attempted
+        mock_fetch_plugins.assert_not_called()
+        
+        # File permissions check not applicable since file doesn't exist
