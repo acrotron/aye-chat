@@ -65,7 +65,7 @@ class ShellExecutorPlugin(Plugin):
                 "stdout": e.stdout, "stderr": e.stderr, "returncode": e.returncode
             }
         except FileNotFoundError:
-            return {"error": f"{command} is not installed or not found in PATH."}
+            return None # {"error": f"{command} is not installed or not found in PATH."}
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Handle shell command execution through plugin system."""
@@ -74,7 +74,7 @@ class ShellExecutorPlugin(Plugin):
             args = params.get("args", [])
             
             if not self._is_valid_command(command):
-                return {"error": f"Command '{command}' is not found or not executable."}
+                return None # {"error": f"Command '{command}' is not found or not executable."}
             
             full_cmd_str = self._build_full_cmd(command, args)
             
