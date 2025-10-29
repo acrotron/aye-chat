@@ -256,9 +256,17 @@ def chat_repl(conf) -> None:
         if shell_response is not None:
             if "error" in shell_response:
                 rprint(f"[red]Error:[/] {shell_response['error']}")
+            elif "message" in shell_response:
+                # For interactive commands: print the completion message (output already handled by os.system)
+                # Strike that: be silent on success
+                # rprint(f"[green]{shell_response['message']}[/]")
+                pass
             else:
+                # Non-interactive: print stdout if present
                 if shell_response.get("stdout", "").strip():
                     rprint(shell_response["stdout"])
+                if shell_response.get("stderr", "").strip():
+                    rprint(f"[yellow]{shell_response['stderr']}[/]")
             continue
 
         # Store the prompt for snapshot metadata
