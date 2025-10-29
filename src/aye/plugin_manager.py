@@ -4,12 +4,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from rich import print as rprint
 from .plugin_base import Plugin
+import os
 
-PLUGIN_ROOT = Path.home() / ".aye" / "plugins"
-PATH_ROOT = Path.home() / ".aye"
-sys.path.insert(0, str(PATH_ROOT))
+PLUGIN_ROOT = Path.home() / ".aye" / "plugins" #Removed to package plugins with the app
+PATH_ROOT = Path.home() / ".aye" #Removed to package plugins with the app
 
-#PLUGIN_ROOT = Path("/home/vmayorskiy/git/cli/src/aye/plugins")
+
 
 class PluginManager:
     def __init__(self, tier: str = "free"):
@@ -33,7 +33,7 @@ class PluginManager:
     
         # Set the module name to include package context
         mod.__name__ = module_name
-        mod.__package__ = "plugins"
+        mod.__package__ = "aye.plugins" #Updated to reflect new package structure
     
         sys.modules[module_name] = mod
         spec.loader.exec_module(mod)
@@ -68,9 +68,11 @@ class PluginManager:
         return True
 
     def discover(self) -> None:
-        if not PLUGIN_ROOT.is_dir():
+        #Updated plugin discovery to use the package
+        plugin_dir = Path(__file__).parent / "plugins" #Plugins are now in the same directory as the module.
+        if not plugin_dir.is_dir():
             return
-        for f in PLUGIN_ROOT.glob("*.py"):
+        for f in plugin_dir.glob("*.py"):
             if f.name.startswith("_"):
                 continue
             self._load(f)
