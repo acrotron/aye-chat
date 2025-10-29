@@ -6,9 +6,9 @@ name: Run Tests
 on:
   # Triggers the workflow on push or pull request events to main, dev-v, or dev branches
   push:
-    branches: [ "main", "dev-v", "dev" ]
+    branches: [ "main", "dev-v", "dev", "dev-b" ]
   pull_request:
-    branches: [ "main", "dev-v", "dev" ]
+    branches: [ "main", "dev-v", "dev", "dev-b" ]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
