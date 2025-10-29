@@ -6,8 +6,8 @@ from rich import print as rprint
 from .plugin_base import Plugin
 import os
 
-#PLUGIN_ROOT = Path.home() / ".aye" / "plugins" #Removed to package plugins with the app
-#PATH_ROOT = Path.home() / ".aye" #Removed to package plugins with the app
+PLUGIN_ROOT = Path.home() / ".aye" / "plugins" #Removed to package plugins with the app
+PATH_ROOT = Path.home() / ".aye" #Removed to package plugins with the app
 
 
 
