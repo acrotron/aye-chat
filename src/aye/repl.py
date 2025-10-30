@@ -1,3 +1,4 @@
+# repl.py
 import os
 import sys
 import subprocess
@@ -52,14 +53,12 @@ def handle_cd_command(tokens: list[str], conf) -> bool:
     """Handle 'cd' command: change directory and update conf.root. Returns True if handled."""
     import shlex
     from pathlib import Path
-    
     if len(tokens) < 2:
         # cd without args: go to home
         target_dir = str(Path.home())
     else:
         # Join remaining tokens for paths with spaces
         target_dir = ' '.join(tokens[1:])
-    
     try:
         old_cwd = Path.cwd()
         os.chdir(target_dir)
@@ -323,6 +322,7 @@ def chat_repl(conf) -> None:
         new_chat_id = result.get("new_chat_id")
         if new_chat_id is not None:
             chat_id = new_chat_id
+            chat_id_file.parent.mkdir(parents=True, exist_ok=True)  # Ensure .aye exists in current dir before writing
             chat_id_file.write_text(str(chat_id), encoding="utf-8")
 
         # Display assistant response summary
