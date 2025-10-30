@@ -15,12 +15,12 @@ It's not just another AI Slop, it's an ecosystem. Give it a try.
    pip install ayechat
    ```
 
-2. **Start Interactive Chat**:
+2. **Start interactive chat in your source code folder**:
    ```bash
    aye chat
    ```
 
-That's it!
+3. **Start asking questions. That's it!**
 
 
 ![Aye Chat demo](https://welcome.ayechat.ai/images/main-flow.gif)
