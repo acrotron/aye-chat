@@ -48,6 +48,28 @@ from .config import MODELS
 plugin_manager = PluginManager()
 plugin_manager.discover()
 
+def handle_cd_command(tokens: list[str], conf) -> bool:
+    """Handle 'cd' command: change directory and update conf.root. Returns True if handled."""
+    import shlex
+    from pathlib import Path
+    
+    if len(tokens) < 2:
+        # cd without args: go to home
+        target_dir = str(Path.home())
+    else:
+        # Join remaining tokens for paths with spaces
+        target_dir = ' '.join(tokens[1:])
+    
+    try:
+        old_cwd = Path.cwd()
+        os.chdir(target_dir)
+        conf.root = Path.cwd()
+        rprint(str(conf.root))
+        return True
+    except Exception as e:
+        rprint(f"[red]Error changing directory: {e}[/]")
+        return False
+
 def handle_model_command(session, models, conf, tokens):
     """Handle the 'model' command: display current and list available models for selection."""
     if len(tokens) > 1:
@@ -247,6 +269,11 @@ def chat_repl(conf) -> None:
         if lowered_first == "help":
             print_help_message()
             continue
+
+        # Special handling for 'cd' command before shell delegation
+        if lowered_first == "cd":
+            if handle_cd_command(tokens, conf):
+                continue
 
         # Shell commands – delegated to plugin system
         shell_response = plugin_manager.handle_command("execute_shell_command", {
