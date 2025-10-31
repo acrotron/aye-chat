@@ -43,7 +43,7 @@ from .snapshot import (
     apply_updates
 )
 
-from .config import MODELS
+from .config import MODELS, DEFAULT_MODEL_ID
 
 # Initialize plugin manager and get completer
 plugin_manager = PluginManager()
@@ -161,8 +161,8 @@ def chat_repl(conf) -> None:
         except ValueError:
             chat_id_file.unlink(missing_ok=True)  # Clear invalid file
 
-    # Models configuration
-    conf.selected_model = get_user_config("selected_model", MODELS[0]["id"])
+    # Models configuration – use DEFAULT_MODEL_ID as fallback instead of first list entry
+    conf.selected_model = get_user_config("selected_model", DEFAULT_MODEL_ID)
     conf.verbose = get_user_config("verbose", "off").lower() == "on"
 
     # Store the last user prompt for snapshot metadata
