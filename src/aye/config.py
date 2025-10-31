@@ -9,7 +9,7 @@ CONFIG_FILE = Path(".aye/config.json").resolve()
 # Private storage – the leading underscore signals "internal".
 _config: Dict[str, Any] = {}
 
-# Models configuration
+# Models configuration (order unchanged)
 MODELS = [
     {"id": "openai/gpt-oss-120b", "name": "OpenAI: GPT OSS 120b"},
     #{"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1"},
@@ -21,6 +21,9 @@ MODELS = [
     {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5"},
     {"id": "anthropic/claude-opus-4.1", "name": "Anthropic: Claude Opus 4.1"}
 ]
+
+# Default model identifier – kept separate so the order of MODELS stays unchanged.
+DEFAULT_MODEL_ID = "anthropic/claude-sonnet-4.5"
 
 
 def load_config() -> None:
