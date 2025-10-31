@@ -12,11 +12,14 @@ _config: Dict[str, Any] = {}
 # Models configuration
 MODELS = [
     {"id": "openai/gpt-oss-120b", "name": "OpenAI: GPT OSS 120b"},
-    {"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1"},
+    #{"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1"},
     {"id": "x-ai/grok-4-fast", "name": "xAI: Grok 4 Fast"},
-    {"id": "qwen/qwen3-coder", "name": "Qwen: Qwen3 Coder"},
+    #{"id": "qwen/qwen3-coder", "name": "Qwen: Qwen3 Coder"},
     {"id": "deepseek/deepseek-chat-v3-0324", "name": "DeepSeek: DeepSeek V3 0324"},
-    {"id": "google/gemini-2.0-flash-001", "name": "Google: Gemini 2.0 Flash"}
+    #{"id": "google/gemini-2.0-flash-001", "name": "Google: Gemini 2.0 Flash"},
+    {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro"},
+    {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5"},
+    {"id": "anthropic/claude-opus-4.1", "name": "Anthropic: Claude Opus 4.1"}
 ]
 
 
