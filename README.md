@@ -2,22 +2,9 @@
 [![CodeQL](https://github.com/acrotron/aye-chat/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/github-code-scanning/codeql)
 [![Dependabot Updates](https://github.com/acrotron/aye-chat/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/dependabot/dependabot-updates)
 
-# Aye Chat: AI-First development in your terminal
+# Aye Chat: AI-First Development in Your Terminal
 
-A terminal-native AI assistant that understands your project, edits your files safely, and helps you build faster — without ever leaving your flow.
-
-![Aye Chat demo](https://welcome.ayechat.ai/images/main-flow.gif)
-
-
-## Key Features
-
-- 🖥️ **Terminal-native experience** — built for developers who live in the CLI.  
-- 📁 **Full-file generation and modification** — no copy-pasting between tools.  
-- 🔁 **Automatic snapshots, diff, and restore** — iterate safely, without Git overhead.  
-- 🔒 **Privacy-aware design**: developer-defined boundaries with .gitignore and .ayeignore.
-- 💡 **Smart file awareness** — Aye Chat includes relevant project files automatically.  
-- 🧩 **Plugin architecture** — extend Aye Chat with your own commands.  
-
+**An AI assistant integrated into your shell: execute commands, edit files, and prompt AI, all in one seamless session.**
 
 ## Quick Start
 
@@ -26,16 +13,26 @@ A terminal-native AI assistant that understands your project, edits your files s
    pip install ayechat
    ```
 
-2. **Authenticate**:
-   ```bash
-   aye auth login
-   ```
-   Visit https://ayechat.ai to obtain your personal access token.
-
-3. **Start Interactive Chat**:
+2. **Start interactive chat in your source code folder**:
    ```bash
    aye chat
    ```
+
+3. **Start asking questions. That's it!**
+
+
+![Aye Chat demo](https://welcome.ayechat.ai/images/main-flow.gif)
+
+
+## Key Features
+
+- 🖥️ **Terminal-native experience** — built for developers who live in the CLI.  
+- 🔁 **Seamless shell integration** — unified session for command execution, file editing, AI interactions.
+- 📁 **Full-file generation and modification** — no copy-pasting between tools.
+- 🔒 **Privacy-aware design**: developer-defined boundaries with .gitignore and .ayeignore.
+- 💡 **Smart file awareness** — Aye Chat includes relevant project files automatically.  
+- 🧩 **Plugin architecture** — extend Aye Chat with your own commands.  
+
 
 ## Core Commands
 ### Authentication
@@ -60,6 +57,7 @@ In chat mode, you can use these built-in commands:
 - `restore [snapshot_id] [file]` - Restore all files from the latest snapshot or a specified snapshot; optionally for a specific file
 - `keep [N]` - Keep only N most recent snapshots (10 by default)
 - `model` - Select a different model. Selection will persist between sessions.
+- `verbose [on|off]` - Toggle verbose mode to print out list of files included with user prompt (on/off, persists between sessions)
 - `exit`, `quit`, `Ctrl+D` - Exit the chat session
 - `help` - Show available commands
 
