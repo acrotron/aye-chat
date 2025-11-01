@@ -2,11 +2,9 @@
 [![CodeQL](https://github.com/acrotron/aye-chat/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/github-code-scanning/codeql)
 [![Dependabot Updates](https://github.com/acrotron/aye-chat/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/acrotron/aye-chat/actions/workflows/dependabot/dependabot-updates)
 
-# Aye Chat: AI-First development in your terminal
+# Aye Chat: AI-First Development in Your Terminal
 
-If you ever try it - you are never going to go back to other tools. (That is, if your native environment is a terminal 🙂) 
-
-It's not just another AI Slop, it's an ecosystem. Give it a try.
+**An AI assistant integrated into your shell: execute commands, edit files, and prompt AI, all in one seamless session.**
 
 ## Quick Start
 
@@ -29,8 +27,8 @@ It's not just another AI Slop, it's an ecosystem. Give it a try.
 ## Key Features
 
 - 🖥️ **Terminal-native experience** — built for developers who live in the CLI.  
-- 📁 **Full-file generation and modification** — no copy-pasting between tools.  
-- 🔁 **Automatic snapshots, diff, and restore** — iterate safely, without Git overhead.  
+- 🔁 **Seamless shell integration** — unified session for command execution, file editing, AI interactions.
+- 📁 **Full-file generation and modification** — no copy-pasting between tools.
 - 🔒 **Privacy-aware design**: developer-defined boundaries with .gitignore and .ayeignore.
 - 💡 **Smart file awareness** — Aye Chat includes relevant project files automatically.  
 - 🧩 **Plugin architecture** — extend Aye Chat with your own commands.  
