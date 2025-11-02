@@ -125,8 +125,9 @@ def chat_repl(conf) -> None:
     # from .download_plugins import fetch_plugins
     # fetch_plugins()
 
-    # Get completer from plugin manager
-    completer_response = plugin_manager.handle_command("get_completer")
+    # Get completer from plugin manager, including built-in commands
+    BUILTIN_COMMANDS = ["new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "exit", "quit", ":q", "help", "cd"]
+    completer_response = plugin_manager.handle_command("get_completer", {"commands": BUILTIN_COMMANDS})
     completer = completer_response["completer"] if completer_response else None
 
     session = PromptSession(
@@ -213,7 +214,7 @@ def chat_repl(conf) -> None:
             continue
 
         # Snapshot‑related commands – now handled directly via snapshot.py
-        if lowered_first in {"history", "restore", "keep"}:
+        if lowered_first in {"history", "restore", "keep", "undo"}:
             args = tokens[1:] if len(tokens) > 1 else []
             try:
                 if lowered_first == "history":
@@ -223,7 +224,7 @@ def chat_repl(conf) -> None:
                             rprint(s)
                     else:
                         rprint("[yellow]No snapshots found.[/]")
-                elif lowered_first == "restore":
+                elif lowered_first in {"restore", "undo"}:
                     # Determine whether the argument is an ordinal or a filename
                     ordinal = None
                     file_name = None

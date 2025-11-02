@@ -15,7 +15,7 @@ def print_help_message():
     print("  new                          - Start a new chat session")
     print("  history                      - Show snapshot history")
     print("  diff <file> [snapshot_id]    - Show diff of file with the latest snapshot, or a specified snapshot")
-    print("  restore [snapshot_id] [file] - Restore all files from the latest snapshot or a specified snapshot; optionally for a specific file")
+    print("  restore, undo [id] [file]    - Revert changes to the last state, a specific snapshot `id`, or for a single `file`.")
     print("  keep [N]                     - Keep only N most recent snapshots (10 by default)")
     print("  model                        - Select a different model. Selection will persist between sessions.")
     print("  verbose [on|off]             - Toggle verbose mode to print out list of files included with user prompt (on/off, persists between sessions)")

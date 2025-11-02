@@ -13,9 +13,10 @@ class CmdPathCompleter(Completer):
     """
 
     def __init__(self, commands: Optional[List[str]] = None):
-        #self.commands = commands or []
         self._path_completer = PathCompleter()
-        self.commands = self._get_system_commands()
+        system_commands = self._get_system_commands()
+        builtin_commands = commands or []
+        self.commands = sorted(list(set(system_commands + builtin_commands)))
 
 
     def _get_system_commands(self):
