@@ -12,13 +12,13 @@ def print_welcome_message():
 
 def print_help_message():
     rprint("[bold]Available chat commands:[/]")
-    print("  new                          - Start a new chat session")
+    print("  model                        - Select a different model. Selection will persist between sessions.")
+    print("  verbose [on|off]             - Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)")
+    print("  new                          - Start a new chat session (if you want to change the subject)")
     print("  history                      - Show snapshot history")
     print("  diff <file> [snapshot_id]    - Show diff of file with the latest snapshot, or a specified snapshot")
     print("  restore, undo [id] [file]    - Revert changes to the last state, a specific snapshot `id`, or for a single `file`.")
     print("  keep [N]                     - Keep only N most recent snapshots (10 by default)")
-    print("  model                        - Select a different model. Selection will persist between sessions.")
-    print("  verbose [on|off]             - Toggle verbose mode to print out list of files included with user prompt (on/off, persists between sessions)")
     print("  exit, quit, Ctrl+D           - Exit the chat session")
     print("  help                         - Show this help message")
     print("")

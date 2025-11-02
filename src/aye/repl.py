@@ -84,13 +84,22 @@ def handle_model_command(session, models, conf, tokens):
         except ValueError:
             rprint("[red]Invalid input. Use a number.[/]")
     else:
+        is_interactive = session is not None
+
         current_id = conf.selected_model
         current_name = next(m['name'] for m in models if m['id'] == current_id)
         rprint(f"[yellow]Currently selected:[/] {current_name}")
         rprint("")
+        
         rprint("[yellow]Available models:[/]")
         for i, m in enumerate(models, 1):
             rprint(f"  {i}. {m['name']}")
+
+        rprint("")
+
+        if not is_interactive:
+            return
+
         choice = session.prompt("Enter model number to select (or Enter to keep current): ").strip()
         if not choice:
             rprint("[yellow]Keeping current model.[/]")
@@ -117,8 +126,24 @@ def handle_verbose_command(tokens):
         else:
             rprint("[red]Usage: verbose on|off[/]")
     else:
-        current = get_user_config("verbose", "off")
+        current = get_user_config("verbose", "on")
         rprint(f"[yellow]Verbose mode is {current.title()}[/]")
+
+def print_startup_header(conf):
+    """Prints the session context, current model, and welcome message."""
+    # Find the current model name to display it
+    try:
+        current_model_name = next(m['name'] for m in MODELS if m['id'] == conf.selected_model)
+    except StopIteration:
+        # The stored model ID is invalid, so reset to default and persist it.
+        conf.selected_model = DEFAULT_MODEL_ID
+        set_user_config("selected_model", DEFAULT_MODEL_ID)
+        # This second lookup should always succeed if DEFAULT_MODEL_ID is valid.
+        current_model_name = next((m['name'] for m in MODELS if m['id'] == DEFAULT_MODEL_ID), "Unknown")
+
+    rprint(f"[bold cyan]Session context: {conf.file_mask}[/]")
+    rprint(f"[bold cyan]Current model: {current_model_name} (use 'model' to change)[/]")
+    print_welcome_message()
 
 def chat_repl(conf) -> None:
     # NEW: Download plugins at start of every chat session (commented out to avoid network call during REPL)
@@ -144,8 +169,15 @@ def chat_repl(conf) -> None:
         )
         conf.file_mask = response["mask"] if response and response.get("mask") else "*.py"
 
-    rprint(f"[bold cyan]Session context: {conf.file_mask}[/]")
-    print_welcome_message()
+    # Models configuration – use DEFAULT_MODEL_ID as fallback instead of first list entry
+    conf.selected_model = get_user_config("selected_model", DEFAULT_MODEL_ID)
+    conf.verbose = get_user_config("verbose", "on").lower() == "on"
+
+    print_startup_header(conf)
+    if conf.verbose:
+        print_help_message()
+        rprint("")
+        handle_model_command(None, MODELS, conf, ['model'])
     console = Console()
 
     # Path to store chat_id persistently during session
@@ -161,10 +193,6 @@ def chat_repl(conf) -> None:
             chat_id = int(chat_id_file.read_text(encoding="utf-8").strip())
         except ValueError:
             chat_id_file.unlink(missing_ok=True)  # Clear invalid file
-
-    # Models configuration – use DEFAULT_MODEL_ID as fallback instead of first list entry
-    conf.selected_model = get_user_config("selected_model", DEFAULT_MODEL_ID)
-    conf.verbose = get_user_config("verbose", "off").lower() == "on"
 
     # Store the last user prompt for snapshot metadata
     last_prompt = None
@@ -204,7 +232,7 @@ def chat_repl(conf) -> None:
         # Verbose command
         if lowered_first == "verbose":
             handle_verbose_command(tokens)
-            conf.verbose = get_user_config("verbose", "off").lower() == "on"
+            conf.verbose = get_user_config("verbose", "on").lower() == "on"
             continue
 
         # Diff command (still uses original implementation)
