@@ -25,8 +25,8 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
     """Validate an HTTP response.
 
     * Raises for non‑2xx status codes.
-    * If the response body is JSON and contains an ``error`` key, prints the
-      error message and raises ``Exception`` with that message.
+    * If the response body is JSON and contains an ``error`` key, prints
+      the error message and raises ``Exception`` with that message.
     * If parsing JSON fails, falls back to raw text for the error message.
     Returns the parsed JSON payload for successful calls.
     """
@@ -125,3 +125,33 @@ def fetch_server_time(dry_run: bool = False) -> int:
             payload = _check_response(resp)
             return payload['timestamp']
 
+def send_feedback(feedback_text: str, chat_id: int = 0):
+    """Send user feedback to the feedback endpoint.
+    Includes the current chat ID (or 0 if not available).
+    """
+    url = f"{BASE_URL}/feedback"
+    payload = {"feedback": feedback_text, "chat_id": chat_id}
+    
+    try:
+        with httpx.Client(timeout=10.0, verify=True) as client:
+            # Fire-and-forget call. Errors are ignored to not block exit.
+            client.post(url, json=payload, headers=_auth_headers())
+    except Exception:
+        # Silently ignore all errors.
+        pass
+
+def main():
+    """
+    Sample workflow with entire flow (including login/logout) under ThreadPoolExecutor.
+    Replace 'YOUR_TOKEN_HERE' with your actual token.
+    """
+    token = os.getenv('AYE_TOKEN', 'YOUR_TOKEN_HERE')  # Or prompt for it
+    if token == 'YOUR_TOKEN_HERE':
+        print("⚠️  Please set your AYE_TOKEN environment variable or replace 'YOUR_TOKEN_HERE'.")
+        return
+
+    parallel_workflow(token)
+
+
+if __name__ == '__main__':
+    main()

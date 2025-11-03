@@ -10,6 +10,7 @@ import typer
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.shortcuts import CompleteStyle
+from prompt_toolkit.key_binding import KeyBindings
 
 from rich.console import Console
 from rich.live import Live
@@ -17,6 +18,7 @@ from rich.spinner import Spinner
 from rich.text import Text
 from rich import print as rprint
 
+from .api import send_feedback
 from .service import (
     process_chat_message,
     filter_unchanged_files
@@ -46,7 +48,7 @@ from .snapshot import (
 from .config import MODELS, DEFAULT_MODEL_ID
 
 # Initialize plugin manager and get completer
-plugin_manager = PluginManager()
+plugin_manager = PluginManager(verbose=False)
 plugin_manager.discover()
 
 def handle_cd_command(tokens: list[str], conf) -> bool:
@@ -84,13 +86,22 @@ def handle_model_command(session, models, conf, tokens):
         except ValueError:
             rprint("[red]Invalid input. Use a number.[/]")
     else:
+        is_interactive = session is not None
+
         current_id = conf.selected_model
         current_name = next(m['name'] for m in models if m['id'] == current_id)
         rprint(f"[yellow]Currently selected:[/] {current_name}")
         rprint("")
+        
         rprint("[yellow]Available models:[/]")
         for i, m in enumerate(models, 1):
             rprint(f"  {i}. {m['name']}")
+
+        rprint("")
+
+        if not is_interactive:
+            return
+
         choice = session.prompt("Enter model number to select (or Enter to keep current): ").strip()
         if not choice:
             rprint("[yellow]Keeping current model.[/]")
@@ -117,16 +128,66 @@ def handle_verbose_command(tokens):
         else:
             rprint("[red]Usage: verbose on|off[/]")
     else:
-        current = get_user_config("verbose", "off")
+        current = get_user_config("verbose", "on")
         rprint(f"[yellow]Verbose mode is {current.title()}[/]")
+
+def print_startup_header(conf):
+    """Prints the session context, current model, and welcome message."""
+    # Find the current model name to display it
+    try:
+        current_model_name = next(m['name'] for m in MODELS if m['id'] == conf.selected_model)
+    except StopIteration:
+        # The stored model ID is invalid, so reset to default and persist it.
+        conf.selected_model = DEFAULT_MODEL_ID
+        set_user_config("selected_model", DEFAULT_MODEL_ID)
+        # This second lookup should always succeed if DEFAULT_MODEL_ID is valid.
+        current_model_name = next((m['name'] for m in MODELS if m['id'] == DEFAULT_MODEL_ID), "Unknown")
+
+    rprint(f"[bold cyan]Session context: {conf.file_mask}[/]")
+    rprint(f"[bold cyan]Current model: {current_model_name} (use 'model' to change)[/]")
+    print_welcome_message()
+
+def collect_and_send_feedback(chat_id: int):
+    """Prompts user for feedback and sends it before exiting."""
+    # Use a new session for feedback to avoid using the command completer
+    feedback_session = PromptSession(history=InMemoryHistory())
+
+    # Custom keybindings to handle Ctrl+C as submit
+    bindings = KeyBindings()
+    @bindings.add('c-c')
+    def _(event):
+        """When Ctrl+C is pressed, exit the prompt and return the text."""
+        event.app.exit(result=event.app.current_buffer.text)
+
+    try:
+        rprint("\n[bold cyan]Before you go, would you mind sharing some comments about your experience?")
+        rprint("[bold cyan]Include your email if you are ok with us contacting you with some questions.")
+        rprint("[bold cyan](Press Ctrl+C to finish. Press Enter for a new line.)")
+        feedback = feedback_session.prompt("> ", multiline=True, key_bindings=bindings)
+
+        # Send feedback only if it's not empty.
+        if feedback and feedback.strip():
+            send_feedback(feedback.strip(), chat_id=chat_id)
+            rprint("[cyan]Thank you for your feedback! Goodbye.[/cyan]")
+        else:
+            rprint("[cyan]Goodbye![/cyan]")
+
+    except EOFError:
+        # User pressed Ctrl+D, which aborts the prompt.
+        rprint("\n[cyan]Goodbye![/cyan]")
+    except Exception:
+        # If sending feedback fails or another error occurs, don't block exit.
+        # The API call is silent on errors, so this is for other issues.
+        rprint("\n[cyan]Goodbye![/cyan]")
 
 def chat_repl(conf) -> None:
     # NEW: Download plugins at start of every chat session (commented out to avoid network call during REPL)
     # from .download_plugins import fetch_plugins
     # fetch_plugins()
 
-    # Get completer from plugin manager
-    completer_response = plugin_manager.handle_command("get_completer")
+    # Get completer from plugin manager, including built-in commands
+    BUILTIN_COMMANDS = ["new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "exit", "quit", ":q", "help", "cd"]
+    completer_response = plugin_manager.handle_command("get_completer", {"commands": BUILTIN_COMMANDS})
     completer = completer_response["completer"] if completer_response else None
 
     session = PromptSession(
@@ -143,8 +204,15 @@ def chat_repl(conf) -> None:
         )
         conf.file_mask = response["mask"] if response and response.get("mask") else "*.py"
 
-    rprint(f"[bold cyan]Session context: {conf.file_mask}[/]")
-    print_welcome_message()
+    # Models configuration – use DEFAULT_MODEL_ID as fallback instead of first list entry
+    conf.selected_model = get_user_config("selected_model", DEFAULT_MODEL_ID)
+    conf.verbose = get_user_config("verbose", "on").lower() == "on"
+
+    print_startup_header(conf)
+    if conf.verbose:
+        print_help_message()
+        rprint("")
+        handle_model_command(None, MODELS, conf, ['model'])
     console = Console()
 
     # Path to store chat_id persistently during session
@@ -160,10 +228,6 @@ def chat_repl(conf) -> None:
             chat_id = int(chat_id_file.read_text(encoding="utf-8").strip())
         except ValueError:
             chat_id_file.unlink(missing_ok=True)  # Clear invalid file
-
-    # Models configuration – use DEFAULT_MODEL_ID as fallback instead of first list entry
-    conf.selected_model = get_user_config("selected_model", DEFAULT_MODEL_ID)
-    conf.verbose = get_user_config("verbose", "off").lower() == "on"
 
     # Store the last user prompt for snapshot metadata
     last_prompt = None
@@ -203,7 +267,7 @@ def chat_repl(conf) -> None:
         # Verbose command
         if lowered_first == "verbose":
             handle_verbose_command(tokens)
-            conf.verbose = get_user_config("verbose", "off").lower() == "on"
+            conf.verbose = get_user_config("verbose", "on").lower() == "on"
             continue
 
         # Diff command (still uses original implementation)
@@ -213,7 +277,7 @@ def chat_repl(conf) -> None:
             continue
 
         # Snapshot‑related commands – now handled directly via snapshot.py
-        if lowered_first in {"history", "restore", "keep"}:
+        if lowered_first in {"history", "restore", "keep", "undo"}:
             args = tokens[1:] if len(tokens) > 1 else []
             try:
                 if lowered_first == "history":
@@ -223,7 +287,7 @@ def chat_repl(conf) -> None:
                             rprint(s)
                     else:
                         rprint("[yellow]No snapshots found.[/]")
-                elif lowered_first == "restore":
+                elif lowered_first in {"restore", "undo"}:
                     # Determine whether the argument is an ordinal or a filename
                     ordinal = None
                     file_name = None
@@ -367,6 +431,9 @@ def chat_repl(conf) -> None:
                         print_files_updated(console, file_names)
             except Exception as e:
                 rprint(f"[red]Error applying updates:[/] {e}")
+
+    # After the loop terminates, ask for feedback and exit.
+    collect_and_send_feedback(max(0, chat_id))
 
 if __name__ == "__main__":
     chat_repl()
