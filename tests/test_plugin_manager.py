@@ -14,10 +14,7 @@ class TestPlugin(Plugin):
     version = "1.0.0"
     premium = "free"
 
-    def _init(self, cfg: Dict[str, Any]) -> None:
-        pass
-
-    def init(self, cfg: Dict[str, Any: Any]) -> None:
+    def init(self, cfg: Dict[str, Any]) -> None:
         pass
 
 
