@@ -3,6 +3,7 @@ import pathlib
 from collections import Counter
 from typing import List, Tuple, Dict, Any, Optional
 import concurrent.futures
+from rich import print as rprint
 
 import pathspec  # pip install pathspec
 
@@ -26,6 +27,9 @@ class AutoDetectMaskPlugin(Plugin):
 
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the auto detect mask plugin."""
+
+        if self.verbose:
+            rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
         pass
 
     def _load_gitignore(self, root: pathlib.Path) -> pathspec.PathSpec:

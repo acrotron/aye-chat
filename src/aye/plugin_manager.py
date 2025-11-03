@@ -4,17 +4,20 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from rich import print as rprint
 from .plugin_base import Plugin
-import os
 
 PLUGIN_ROOT = Path.home() / ".aye" / "plugins" #Removed to package plugins with the app
 PATH_ROOT = Path.home() / ".aye" #Removed to package plugins with the app
 
-
-
 class PluginManager:
-    def __init__(self, tier: str = "free"):
+    def __init__(self, tier: str = "free", verbose: bool = False) -> None:
         self.tier = tier
+        self.verbose = verbose
         #self.registry: Dict[str, Plugin] = {}
+
+        if (self.verbose):
+            rprint(f"[bold yellow]Plugin Manager initialized with tier: {self.tier}[/]")
+            rprint(f"[bold yellow]Plugin directory: {PLUGIN_ROOT}[/]")
+
         self.registry = {}
 
 
@@ -49,7 +52,7 @@ class PluginManager:
                 #print(f"MARK 2: {isinstance(m, Plugin)}")
                 plug = m()
                 if self._allowed(plug.premium):
-                    plug.init({})
+                    plug._init({"verbose": self.verbose})
                     self.registry[plug.name] = plug
                     
 
