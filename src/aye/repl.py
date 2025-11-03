@@ -10,6 +10,7 @@ import typer
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.shortcuts import CompleteStyle
+from prompt_toolkit.key_binding import KeyBindings
 
 from rich.console import Console
 from rich.live import Live
@@ -17,6 +18,7 @@ from rich.spinner import Spinner
 from rich.text import Text
 from rich import print as rprint
 
+from .api import send_feedback
 from .service import (
     process_chat_message,
     filter_unchanged_files
@@ -144,6 +146,39 @@ def print_startup_header(conf):
     rprint(f"[bold cyan]Session context: {conf.file_mask}[/]")
     rprint(f"[bold cyan]Current model: {current_model_name} (use 'model' to change)[/]")
     print_welcome_message()
+
+def collect_and_send_feedback(chat_id: int):
+    """Prompts user for feedback and sends it before exiting."""
+    # Use a new session for feedback to avoid using the command completer
+    feedback_session = PromptSession(history=InMemoryHistory())
+
+    # Custom keybindings to handle Ctrl+C as submit
+    bindings = KeyBindings()
+    @bindings.add('c-c')
+    def _(event):
+        """When Ctrl+C is pressed, exit the prompt and return the text."""
+        event.app.exit(result=event.app.current_buffer.text)
+
+    try:
+        rprint("\n[bold cyan]Before you go, would you mind sharing some comments about your experience?")
+        rprint("[bold cyan]Include your email if you are ok with us contacting you with some questions.")
+        rprint("[bold cyan](Press Ctrl+C to finish. Press Enter for a new line.)")
+        feedback = feedback_session.prompt("> ", multiline=True, key_bindings=bindings)
+
+        # Send feedback only if it's not empty.
+        if feedback and feedback.strip():
+            send_feedback(feedback.strip(), chat_id=chat_id)
+            rprint("[cyan]Thank you for your feedback! Goodbye.[/cyan]")
+        else:
+            rprint("[cyan]Goodbye![/cyan]")
+
+    except EOFError:
+        # User pressed Ctrl+D, which aborts the prompt.
+        rprint("\n[cyan]Goodbye![/cyan]")
+    except Exception:
+        # If sending feedback fails or another error occurs, don't block exit.
+        # The API call is silent on errors, so this is for other issues.
+        rprint("\n[cyan]Goodbye![/cyan]")
 
 def chat_repl(conf) -> None:
     # NEW: Download plugins at start of every chat session (commented out to avoid network call during REPL)
@@ -396,6 +431,9 @@ def chat_repl(conf) -> None:
                         print_files_updated(console, file_names)
             except Exception as e:
                 rprint(f"[red]Error applying updates:[/] {e}")
+
+    # After the loop terminates, ask for feedback and exit.
+    collect_and_send_feedback(max(0, chat_id))
 
 if __name__ == "__main__":
     chat_repl()
