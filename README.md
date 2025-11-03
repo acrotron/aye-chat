@@ -4,12 +4,12 @@
 
 ## Key Features
 
--   🚀 **Seamless Shell Integration** — Your shell, super-powered. Run `ls`, `git`, and even `vim` in the same session you chat with AI. No prefixes, no context switching.
--   🧠 **Zero-Config Context** — Aye Chat automatically detects your project's files, respecting your `.gitignore`, so you can start coding immediately.
--   ✍️ **Direct File Editing** — The AI directly edits and creates files in your project. No more copy-pasting code from a chat window.
--   ⏪ **Instant Undo** — AI made a mistake? A single `restore` command instantly reverts the last set of changes. Your work is always safe.
--   🖥️ **Terminal-Native Experience** — A rich, responsive UI built for developers who live in the command line.
--   🧩 **Extensible via Plugins** — The core experience is enhanced by plugins for shell execution, autocompletion, and more.
+-   🚀 **Seamless Shell Integration** - Your shell, super-powered. Run `ls`, `git`, and even `vim` in the same session you chat with AI. No prefixes, no context switching.
+-   🧠 **Zero-Config Context** - Aye Chat automatically detects your project's files, respecting your `.gitignore`, so you can start coding immediately.
+-   ✍️ **Direct File Editing** - The AI directly edits and creates files in your project. No more copy-pasting code from a chat window.
+-   ⏪ **Instant Undo** - AI made a mistake? A single `restore` command instantly reverts the last set of changes. Your work is always safe.
+-   🖥️ **Terminal-Native Experience** - A rich, responsive UI built for developers who live in the command line.
+-   🧩 **Extensible via Plugins** - The core experience is enhanced by plugins for shell execution, autocompletion, and more.
 
 ## Quick Start
 
