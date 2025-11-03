@@ -46,7 +46,7 @@ from .snapshot import (
 from .config import MODELS, DEFAULT_MODEL_ID
 
 # Initialize plugin manager and get completer
-plugin_manager = PluginManager()
+plugin_manager = PluginManager(verbose=False)
 plugin_manager.discover()
 
 def handle_cd_command(tokens: list[str], conf) -> bool:

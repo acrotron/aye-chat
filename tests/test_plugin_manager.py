@@ -1,7 +1,7 @@
 # Test suite for aye.plugin_manager module
 import os
 from types import SimpleNamespace
-
+from typing import Any, Dict
 from unittest import TestCase
 from unittest.mock import patch, MagicMock
 
@@ -14,7 +14,10 @@ class TestPlugin(Plugin):
     version = "1.0.0"
     premium = "free"
 
-    def init(self, cfg):
+    def _init(self, cfg: Dict[str, Any]) -> None:
+        pass
+
+    def init(self, cfg: Dict[str, Any]) -> None:
         pass
 
 

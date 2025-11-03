@@ -3,6 +3,7 @@ import os
 import shlex
 from typing import Dict, Any, Optional
 from .plugin_base import Plugin
+from rich import print as rprint
 
 
 class ShellExecutorPlugin(Plugin):
@@ -18,6 +19,8 @@ class ShellExecutorPlugin(Plugin):
 
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the shell executor plugin."""
+        if self.verbose:
+            rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
         pass
 
     def _is_valid_command(self, command: str) -> bool:
