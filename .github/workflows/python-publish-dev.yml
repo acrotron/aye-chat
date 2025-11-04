@@ -1,0 +1,83 @@
+name: Publish Dev Package
+
+on:
+  push:
+    branches: [ dev, develop ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history needed for versioning
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build
+    
+    - name: Generate dev version
+      id: version
+      run: |
+        # Extract base version from pyproject.toml
+        BASE_VERSION=$(python -c "
+import tomllib
+with open('pyproject.toml', 'rb') as f:
+    data = tomllib.load(f)
+    print(data.get('project', {}).get('version', '0.0.0'))
+        ")
+        
+        # Get commit count for dev number
+        COMMIT_COUNT=$(git rev-list --count HEAD)
+        
+        # Create dev version
+        DEV_VERSION="${BASE_VERSION}.dev${COMMIT_COUNT}"
+        
+        echo "version=${DEV_VERSION}" >> $GITHUB_OUTPUT
+        echo "Dev version: ${DEV_VERSION}"
+        
+        # Update version in pyproject.toml
+        python -c "
+import tomllib
+import pathlib
+
+# Read pyproject.toml
+with open('pyproject.toml', 'rb') as f:
+    data = tomllib.load(f)
+
+# Update version
+data['project']['version'] = '${DEV_VERSION}'
+
+# Write back (simple approach - for production use tomlkit to preserve formatting)
+import json
+content = pathlib.Path('pyproject.toml').read_text()
+
+# Find and replace version line
+lines = content.split('\n')
+for i, line in enumerate(lines):
+    if line.strip().startswith('version'):
+        lines[i] = f'version = \"{DEV_VERSION}\"'
+        break
+
+pathlib.Path('pyproject.toml').write_text('\n'.join(lines))
+        "
+    
+    - name: Build package
+      run: python -m build
+    
+    - name: Publish package
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        user: __token__
+        password: ${{ secrets.PYPI_API_TOKEN }}
