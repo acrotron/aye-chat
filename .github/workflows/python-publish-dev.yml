@@ -95,7 +95,7 @@ jobs:
 
     # Use a separate environment for dev releases
     environment:
-      name: pypi-dev
+      name: pypi
 
     steps:
       - name: Retrieve dev distributions
