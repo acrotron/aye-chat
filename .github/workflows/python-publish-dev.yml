@@ -32,13 +32,19 @@ jobs:
           # Remove 'v' prefix if present
           LATEST_TAG=${LATEST_TAG#v}
 
-          # Get commit count since last tag
-          COMMIT_COUNT=$(git rev-list --count HEAD)
+          # Split version into major.minor.patch
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
+
+          # Increment patch version for dev releases
+          # This ensures dev version is AFTER the current release
+          NEXT_PATCH=$((PATCH + 1))
+          NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
 
           # Generate timestamp-based dev version
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          DEV_VERSION="${LATEST_TAG}.dev${TIMESTAMP}"
+          DEV_VERSION="${NEXT_VERSION}.dev${TIMESTAMP}"
 
+          echo "Latest release: $LATEST_TAG"
           echo "Dev version: $DEV_VERSION"
           echo "version=$DEV_VERSION" >> $GITHUB_OUTPUT
 
