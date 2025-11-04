@@ -27,7 +27,7 @@ class AutoDetectMaskPlugin(Plugin):
 
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the auto detect mask plugin."""
-
+        super().init(cfg)
         if self.verbose:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
         pass

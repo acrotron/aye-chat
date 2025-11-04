@@ -8,19 +8,14 @@ class Plugin(ABC):
     premium: str = "free"  # one of: free, pro, team, enterprise
     verbose: bool = False
 
-    def _init(self, cfg: Dict[str, Any]) -> None:
+    @abstractmethod
+    def init(self, cfg: Dict[str, Any]) -> None:
         self.verbose = bool(cfg.get("verbose", False))
 
         if self.verbose:
             rprint(f"[bold yellow]Plugin config: {cfg}[/]")
             rprint(f"[bold yellow]Plugin premium tier: {self.premium}[/]")
             rprint(f"[bold yellow]Plugin verbose mode: {self.verbose}[/]")
-
-        self.init(cfg)
-
-    @abstractmethod
-    def init(self, cfg: Dict[str, Any]) -> None:
-        ...
 
     def on_command(self, command_name: str, params: Dict[str, Any] = {}) -> Optional[Dict[str, Any]]:
         """
