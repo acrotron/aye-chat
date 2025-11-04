@@ -1,0 +1,52 @@
+name: Publish Dev Package
+
+on:
+  push:
+    branches: [ dev ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build
+    
+    - name: Create dev version and build
+      run: |
+        # Get base version and commit count
+        BASE_VERSION=$(grep -E "^version\s*=" pyproject.toml | sed -E 's/.*"(.*)".*/\1/')
+        COMMIT_COUNT=$(git rev-list --count HEAD)
+        DEV_VERSION="${BASE_VERSION}.dev${COMMIT_COUNT}"
+        
+        echo "Building version: $DEV_VERSION"
+        
+        # Temporarily update version in pyproject.toml
+        sed -i.bak -E "s/^version\s*=.*/version = \"$DEV_VERSION\"/" pyproject.toml
+        
+        # Build the package
+        python -m build
+        
+        # Show what was built
+        ls -la dist/
+    
+    - name: Publish package
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        user: __token__
+        password: ${{ secrets.PYPI_API_TOKEN }}
