@@ -3,6 +3,7 @@ from prompt_toolkit.document import Document
 from typing import Dict, Any, Optional, List
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from .plugin_base import Plugin
+from rich import print as rprint
 
 
 class CmdPathCompleter(Completer):
@@ -13,10 +14,10 @@ class CmdPathCompleter(Completer):
     """
 
     def __init__(self, commands: Optional[List[str]] = None):
-        #self.commands = commands or []
         self._path_completer = PathCompleter()
-        self.commands = self._get_system_commands()
-
+        system_commands = self._get_system_commands()
+        builtin_commands = commands or []
+        self.commands = sorted(list(set(system_commands + builtin_commands)))
 
     def _get_system_commands(self):
         """Get list of available system commands"""
@@ -86,6 +87,9 @@ class CompleterPlugin(Plugin):
 
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the completer plugin."""
+        super().init(cfg)
+        if self.verbose:
+            rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
         pass
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:

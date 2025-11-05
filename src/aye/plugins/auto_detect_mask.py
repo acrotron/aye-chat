@@ -2,6 +2,8 @@ import os
 import pathlib
 from collections import Counter
 from typing import List, Tuple, Dict, Any, Optional
+import concurrent.futures
+from rich import print as rprint
 
 import pathspec  # pip install pathspec
 
@@ -14,7 +16,8 @@ SOURCE_EXTENSIONS = {
     'html', 'htm', 'css', 'scss', 'sass', 'less',
     'json', 'xml', 'yaml', 'yml', 'tf', 'sh', 'toml',
     'md', 'rst', 'txt',
-    'sql'
+    'sql',
+    'asm'
 }
 
 
@@ -25,6 +28,9 @@ class AutoDetectMaskPlugin(Plugin):
 
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the auto detect mask plugin."""
+        super().init(cfg)
+        if self.verbose:
+            rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
         pass
 
     def _load_gitignore(self, root: pathlib.Path) -> pathspec.PathSpec:
@@ -60,6 +66,17 @@ class AutoDetectMaskPlugin(Plugin):
             # If we cannot read the file (permissions, etc.) treat it as binary
             return True
 
+    def _process_file(self, file_path: pathlib.Path) -> Optional[str]:
+        """
+        Process a single file: check if binary, and return extension if it's a source file.
+        """
+        if self._is_binary(file_path):
+            return None
+        ext = file_path.suffix.lower().lstrip(".")
+        if ext and ext in SOURCE_EXTENSIONS:
+            return ext
+        return None
+
     def _detect_top_extensions(
         self,
         root: pathlib.Path,
@@ -71,6 +88,8 @@ class AutoDetectMaskPlugin(Plugin):
         count file extensions (case-insensitive) from predefined source extensions list
         and return the most common ones (up to `max_exts`).
 
+        Uses parallel processing for file scanning.
+
         Returns
         -------
         (ext_list, counter)
@@ -78,7 +97,7 @@ class AutoDetectMaskPlugin(Plugin):
             sorted by frequency (most common first).
             counter  – the full Counter object (useful for debugging).
         """
-        ext_counter: Counter = Counter()
+        file_paths: List[pathlib.Path] = []
 
         for dirpath, dirnames, filenames in os.walk(root):
             # -----------------------------------------------------------------
@@ -93,7 +112,7 @@ class AutoDetectMaskPlugin(Plugin):
             ]
 
             # -----------------------------------------------------------------
-            # 2. process files
+            # 2. collect files to process
             # -----------------------------------------------------------------
             for name in filenames:
                 rel_file = os.path.join(rel_dir, name)
@@ -101,13 +120,23 @@ class AutoDetectMaskPlugin(Plugin):
                     continue
 
                 p = pathlib.Path(dirpath) / name
-                if self._is_binary(p):
-                    continue
+                file_paths.append(p)
 
-                ext = p.suffix.lower().lstrip(".")
-                # Only count extensions that are in our predefined source list
-                if ext and ext in SOURCE_EXTENSIONS:
-                    ext_counter[ext] += 1
+        # -----------------------------------------------------------------
+        # 3. process files in parallel
+        # -----------------------------------------------------------------
+        ext_counter: Counter = Counter()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(self._process_file, fp) for fp in file_paths]
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    ext = future.result()
+                    if ext:
+                        ext_counter[ext] += 1
+                except Exception:
+                    # Skip files that cause errors (e.g., permission issues, unexpected exceptions)
+                    # to ensure robust parallel processing
+                    continue
 
         if not ext_counter:
             return [], ext_counter
