@@ -46,10 +46,12 @@ from .snapshot import (
 )
 
 from .config import MODELS, DEFAULT_MODEL_ID
+from .tutorial import run_first_time_tutorial_if_needed
 
 # Initialize plugin manager and get completer
 plugin_manager = PluginManager(verbose=False)
 plugin_manager.discover()
+
 
 def handle_cd_command(tokens: list[str], conf) -> bool:
     """Handle 'cd' command: change directory and update conf.root. Returns True if handled."""
@@ -90,8 +92,10 @@ def handle_model_command(session, models, conf, tokens):
 
         current_id = conf.selected_model
         current_name = next(m['name'] for m in models if m['id'] == current_id)
-        rprint(f"[yellow]Currently selected:[/] {current_name}")
-        rprint("")
+
+        if is_interactive:
+            rprint(f"[yellow]Currently selected:[/] {current_name}")
+            rprint("")
         
         rprint("[yellow]Available models:[/]")
         for i, m in enumerate(models, 1):
@@ -100,6 +104,8 @@ def handle_model_command(session, models, conf, tokens):
         rprint("")
 
         if not is_interactive:
+            rprint(f"[yellow]Currently selected:[/] {current_name}. [yellow]Use 'model' command to change[/]")
+            rprint("")
             return
 
         choice = session.prompt("Enter model number to select (or Enter to keep current): ").strip()
@@ -144,7 +150,7 @@ def print_startup_header(conf):
         current_model_name = next((m['name'] for m in MODELS if m['id'] == DEFAULT_MODEL_ID), "Unknown")
 
     rprint(f"[bold cyan]Session context: {conf.file_mask}[/]")
-    rprint(f"[bold cyan]Current model: {current_model_name} (use 'model' to change)[/]")
+    rprint(f"[bold cyan]Current model: {current_model_name}[/]")
     print_welcome_message()
 
 def collect_and_send_feedback(chat_id: int):
@@ -181,6 +187,9 @@ def collect_and_send_feedback(chat_id: int):
         rprint("\n[cyan]Goodbye![/cyan]")
 
 def chat_repl(conf) -> None:
+    # NEW: Run first-time tutorial if needed.
+    run_first_time_tutorial_if_needed()
+    
     # NEW: Download plugins at start of every chat session (commented out to avoid network call during REPL)
     # from .download_plugins import fetch_plugins
     # fetch_plugins()
