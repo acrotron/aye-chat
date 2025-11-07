@@ -35,7 +35,7 @@ def run_tutorial():
 
     # Welcome message and confirmation
     rprint(Panel(
-        "[bold green]Welcome to Aye Chat![/] This is a quick interactive tutorial to get you started.",
+        "[bold green]Welcome to Aye Chat![/] This is a quick 3-step interactive tutorial to get you started.",
         title="[bold]First-Time User Tutorial[/bold]",
         border_style="green",
         expand=False
