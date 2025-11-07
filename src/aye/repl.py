@@ -168,7 +168,7 @@ def collect_and_send_feedback(chat_id: int):
     try:
         rprint("\n[bold cyan]Before you go, would you mind sharing some comments about your experience?")
         rprint("[bold cyan]Include your email if you are ok with us contacting you with some questions.")
-        rprint("[bold cyan](Press Ctrl+C to finish. Press Enter for a new line.)")
+        rprint("[bold cyan](Start typing. Press Enter for a new line. Press Ctrl+C to finish.)")
         feedback = feedback_session.prompt("> ", multiline=True, key_bindings=bindings)
 
         # Send feedback only if it's not empty.
