@@ -87,6 +87,7 @@ class CompleterPlugin(Plugin):
 
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the completer plugin."""
+        super().init(cfg)
         if self.verbose:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
         pass

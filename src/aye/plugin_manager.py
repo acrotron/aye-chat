@@ -52,7 +52,7 @@ class PluginManager:
                 #print(f"MARK 2: {isinstance(m, Plugin)}")
                 plug = m()
                 if self._allowed(plug.premium):
-                    plug._init({"verbose": self.verbose})
+                    plug.init({"verbose": self.verbose})
                     self.registry[plug.name] = plug
                     
 

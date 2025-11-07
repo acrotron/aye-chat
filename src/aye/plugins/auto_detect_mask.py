@@ -16,7 +16,8 @@ SOURCE_EXTENSIONS = {
     'html', 'htm', 'css', 'scss', 'sass', 'less',
     'json', 'xml', 'yaml', 'yml', 'tf', 'sh', 'toml',
     'md', 'rst', 'txt',
-    'sql'
+    'sql',
+    'asm'
 }
 
 
@@ -27,7 +28,7 @@ class AutoDetectMaskPlugin(Plugin):
 
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the auto detect mask plugin."""
-
+        super().init(cfg)
         if self.verbose:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
         pass

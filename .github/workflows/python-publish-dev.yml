@@ -1,0 +1,116 @@
+# This workflow will upload a Python Package to PyPI when a push is made to the dev branch
+# It automatically generates a dev version number based on the latest tag + timestamp
+
+name: Upload Python Dev Package to PyPI
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  dev-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Important: fetch all history for version calculation
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Generate dev version number
+        id: version
+        run: |
+          # Get the latest tag, or use 0.0.0 if no tags exist
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+          # Remove 'v' prefix if present
+          LATEST_TAG=${LATEST_TAG#v}
+
+          # Split version into major.minor.patch
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
+
+          # Increment patch version for dev releases
+          # This ensures dev version is AFTER the current release
+          NEXT_PATCH=$((PATCH + 1))
+          NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+
+          # Generate timestamp-based dev version
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          DEV_VERSION="${NEXT_VERSION}.dev${TIMESTAMP}"
+
+          echo "Latest release: $LATEST_TAG"
+          echo "Dev version: $DEV_VERSION"
+          echo "version=$DEV_VERSION" >> $GITHUB_OUTPUT
+
+          # Create a temporary version file for setuptools
+          echo "$DEV_VERSION" > VERSION.txt
+
+      - name: Update version in pyproject.toml
+        run: |
+          # Temporarily disable setuptools-scm and set static version
+          python -m pip install toml
+          python << EOF
+          import toml
+
+          # Read pyproject.toml
+          with open('pyproject.toml', 'r') as f:
+              config = toml.load(f)
+
+          # Remove dynamic version and set static version
+          config['project']['version'] = '${{ steps.version.outputs.version }}'
+          if 'dynamic' in config['project']:
+              config['project']['dynamic'].remove('version') if 'version' in config['project']['dynamic'] else None
+              if not config['project']['dynamic']:
+                  del config['project']['dynamic']
+
+          # Remove setuptools_scm configuration for this build
+          if 'tool' in config and 'setuptools_scm' in config['tool']:
+              del config['tool']['setuptools_scm']
+
+          # Write back
+          with open('pyproject.toml', 'w') as f:
+              toml.dump(config, f)
+          EOF
+
+          cat pyproject.toml
+
+      - name: Build dev distributions
+        run: |
+          python -m pip install build
+          python -m build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-dists
+          path: dist/
+
+  pypi-publish-dev:
+    runs-on: ubuntu-latest
+    needs:
+      - dev-build
+    permissions:
+      # IMPORTANT: this permission is mandatory for trusted publishing
+      id-token: write
+
+    # Use a separate environment for dev releases
+    environment:
+      name: pypi
+
+    steps:
+      - name: Retrieve dev distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-dists
+          path: dist/
+
+      - name: Publish dev distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
