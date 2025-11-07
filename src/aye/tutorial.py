@@ -35,7 +35,7 @@ def run_tutorial():
 
     # Welcome message and confirmation
     rprint(Panel(
-        "[bold green]Welcome to Aye![/] This is a quick interactive tutorial to get you started.",
+        "[bold green]Welcome to Aye Chat![/] This is a quick interactive tutorial to get you started.",
         title="[bold]First-Time User Tutorial[/bold]",
         border_style="green",
         expand=False
@@ -58,7 +58,7 @@ def run_tutorial():
     prompt = "add a docstring to the hello_world function"
     _print_step(
         "Step 1: Sending a Prompt",
-        "Aye works by sending your prompts to a Large Language Model (LLM), along with the content of relevant files in your project.\n\n"
+        "Aye Chat works by sending your prompts to a Large Language Model (LLM), along with the content of relevant files in your project.\n\n"
         "Let's ask the LLM to add a docstring to the function in `tutorial_example.py`.\n\n"
         "I will now simulate sending this prompt:",
         simulated_command=prompt
@@ -115,7 +115,7 @@ def run_tutorial():
     diff_command = f"diff {temp_file}"
     _print_step(
         "Step 2: Viewing Changes with `diff`",
-        "Before applying changes, Aye creates a snapshot of the original files. You can see the difference between the current version and the last snapshot using the `diff` command.\n\n"
+        "Before applying changes, Aye Chat creates a snapshot of the original files. You can see the difference between the current version and the last snapshot using the `diff` command.\n\n"
         "Let's run `diff` to see what changed.",
         simulated_command=diff_command
     )
@@ -151,7 +151,7 @@ def run_tutorial():
         "  2. Review the changes using `diff`.\n"
         "  3. Revert if needed using `restore` or `undo`.\n\n"
         "You can explore more commands like `history`, `model`, and `help` in the interactive chat.\n\n"
-        "Enjoy using Aye!"
+        "Enjoy using Aye Chat!"
     )
 
     # Cleanup and finalize
