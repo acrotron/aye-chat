@@ -309,7 +309,8 @@ def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_m
         # If parsing fails, check if it's an error message from the server
         if assistant_resp_str and "error" in assistant_resp_str.lower():
             # Raise a more user-friendly error
-            raise Exception(f"Server error: {assistant_resp_str}") from e
+            chat_title = resp.get('chat_title', 'Unknown')
+            raise Exception(f"Server error in chat '{chat_title}': {assistant_resp_str}") from e
         raise
     
     return {
