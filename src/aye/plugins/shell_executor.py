@@ -60,9 +60,10 @@ class ShellExecutorPlugin(Plugin):
                     timeout=2,
                     text=True
                 )
-                # If command executes without error (even if it shows help), it exists
-                # Most built-ins return 0 for /?, but some may return other codes
-                # We just check that it didn't fail to find the command
+                # Check if the command was actually recognized by Windows
+                # If it's not recognized, stderr will contain "is not recognized as an internal or external command"
+                if result.stderr and "is not recognized" in result.stderr:
+                    return False
                 return True
             except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
                 return False
