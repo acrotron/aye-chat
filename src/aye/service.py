@@ -22,7 +22,7 @@ from .ui import (
     print_error
 )
 
-DEBUG = True
+DEBUG = False
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
 

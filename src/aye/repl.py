@@ -48,7 +48,7 @@ from .snapshot import (
 from .config import MODELS, DEFAULT_MODEL_ID
 from .tutorial import run_first_time_tutorial_if_needed
 
-DEBUG = True
+DEBUG = False
 
 # Initialize plugin manager and get completer
 plugin_manager = PluginManager(verbose=False)
