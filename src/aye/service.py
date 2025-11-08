@@ -54,6 +54,25 @@ def handle_logout() -> None:
     delete_token()
     rprint("🔐 Token removed.")
 
+def handle_auth_status() -> None:
+    """Show authentication status."""
+    try:
+        token = get_token()
+        if token and not token.startswith("aye_demo_"):
+            # Real token exists
+            rprint("[green]Authenticated[/] - Token is saved")
+            rprint(f"  Token: {token[:12]}...")
+        elif token and token.startswith("aye_demo_"):
+            # Demo token
+            rprint("[yellow]Demo Mode[/] - Using demo token")
+            rprint("  Run 'aye auth login' to authenticate with a real token")
+        else:
+            # No token
+            rprint("[red]Not Authenticated[/] - No token saved")
+            rprint("  Run 'aye auth login' to authenticate")
+    except Exception as e:
+        rprint(f"[red]Error checking auth status:[/] {e}")
+
 # One-shot generation function
 def handle_generate_cmd(prompt: str) -> None:
     """

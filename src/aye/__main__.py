@@ -4,6 +4,7 @@ import typer
 from .service import (
     handle_login,
     handle_logout,
+    handle_auth_status,
     handle_generate_cmd,
     handle_chat,
     handle_history_cmd,
@@ -81,11 +82,21 @@ def login():
 def logout():
     """
     Remove the stored aye credentials.
-    
+
     Examples: \n
     aye auth logout
     """
     handle_logout()
+
+@auth_app.command()
+def status():
+    """
+    Show authentication status and whether a token is saved.
+
+    Examples: \n
+    aye auth status
+    """
+    handle_auth_status()
 
 # ----------------------------------------------------------------------
 # Interactive REPL (chat) command
