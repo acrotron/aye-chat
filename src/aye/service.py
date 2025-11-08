@@ -22,6 +22,7 @@ from .ui import (
     print_error
 )
 
+DEBUG = True
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
 
@@ -281,16 +282,31 @@ def filter_unchanged_files(updated_files: list) -> list:
 
 def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_mask: str, selected_model: Optional[str] = None, verbose: bool = False) -> Dict[str, any]:
     """Process a chat message and return the response."""
+    if (DEBUG): print(f"[DEBUG] process_chat_message called with chat_id={chat_id}, model={selected_model}")
     source_files = collect_sources(root, file_mask)
+    if (DEBUG): print(f"[DEBUG] Collected {len(source_files)} source files")
     if verbose:
         rprint(f"[yellow]Included with prompt: {', '.join(source_files.keys())}")
     else:
         rprint("[yellow]Turn on verbose mode to see list of files included with prompt.[/]")
-    
+
+    if (DEBUG): print(f"[DEBUG] Calling cli_invoke...")
     resp = cli_invoke(message=prompt, chat_id=chat_id or -1, source_files=source_files, model=selected_model)
-    
+    if (DEBUG): print(f"[DEBUG] cli_invoke returned, response type: {type(resp)}")
+    if (DEBUG): print(f"[DEBUG] Response keys: {resp.keys() if isinstance(resp, dict) else 'Not a dict'}")
+
     assistant_resp_str = resp.get('assistant_response')
-    assistant_resp = json.loads(assistant_resp_str)
+    if (DEBUG): print(f"[DEBUG] assistant_response type: {type(assistant_resp_str)}")
+    if (DEBUG): print(f"[DEBUG] assistant_response length: {len(assistant_resp_str) if assistant_resp_str else 0}")
+    if (DEBUG): print(f"[DEBUG] assistant_response preview: {assistant_resp_str[:200] if assistant_resp_str else 'Empty or None'}")
+
+    try:
+        assistant_resp = json.loads(assistant_resp_str)
+        if (DEBUG): print(f"[DEBUG] Successfully parsed assistant_response JSON")
+    except json.JSONDecodeError as e:
+        if (DEBUG): print(f"[DEBUG] Failed to parse assistant_response: {e}")
+        if (DEBUG): print(f"[DEBUG] Full assistant_response: {assistant_resp_str}")
+        raise
     
     return {
         "response": resp,

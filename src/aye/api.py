@@ -12,6 +12,7 @@ from .auth import get_token
 api_url = os.environ.get("AYE_CHAT_API_URL")
 BASE_URL = api_url if api_url else "https://api.ayechat.ai"
 TIMEOUT = 900.0
+DEBUG = True
 
 
 def _auth_headers() -> Dict[str, str]:
@@ -65,9 +66,14 @@ def cli_invoke(chat_id=-1, message="", source_files={},
         payload["model"] = model
     url = f"{BASE_URL}/invoke_cli"
 
+    if (DEBUG): print(f"[DEBUG] Sending request to {url}")
+    if (DEBUG): print(f"[DEBUG] Payload: chat_id={chat_id}, model={model}, dry_run={dry_run}")
+
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
+        if (DEBUG): print(f"[DEBUG] Initial response status: {resp.status_code}")
         data = _check_response(resp)
+        if (DEBUG): print(f"[DEBUG] Initial response data: {data}")
 
     # If server already returned the final payload, just return it
     # (previous logic kept for compatibility)
@@ -76,21 +82,36 @@ def cli_invoke(chat_id=-1, message="", source_files={},
 
     # Otherwise poll the presigned GET URL until the object exists, then download+return it
     response_url = data["response_url"]
+    if (DEBUG): print(f"[DEBUG] Polling response URL: {response_url}")
     deadline = time.time() + poll_timeout
     last_status = None
+    poll_count = 0
 
     while time.time() < deadline:
         try:
+            poll_count += 1
+            if (DEBUG): print(f"[DEBUG] Poll attempt {poll_count}, status: {last_status}")
             r = httpx.get(response_url, timeout=TIMEOUT)  # default verify=True
             last_status = r.status_code
+            if (DEBUG): print(f"[DEBUG] Poll response status: {r.status_code}")
             if r.status_code == 200:
-                return r.json()  # same shape as original resp.json()
+                if (DEBUG): print(f"[DEBUG] Response body length: {len(r.text)} bytes")
+                if (DEBUG): print(f"[DEBUG] Response body preview: {r.text[:200]}")
+                try:
+                    result = r.json()
+                    if (DEBUG): print(f"[DEBUG] Successfully parsed JSON response")
+                    return result
+                except json.JSONDecodeError as e:
+                    if (DEBUG): print(f"[DEBUG] JSON decode error: {e}")
+                    if (DEBUG): print(f"[DEBUG] Full response text: {r.text}")
+                    raise
             if r.status_code in (403, 404):
                 time.sleep(poll_interval)
                 continue
             r.raise_for_status()  # other non‑2xx errors are unexpected
-        except httpx.RequestError:
+        except httpx.RequestError as e:
             # transient network issue; retry
+            if (DEBUG): print(f"[DEBUG] Network error: {e}")
             time.sleep(poll_interval)
             continue
 
