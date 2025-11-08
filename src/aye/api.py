@@ -66,8 +66,10 @@ def cli_invoke(chat_id=-1, message="", source_files={},
         payload["model"] = model
     url = f"{BASE_URL}/invoke_cli"
 
-    if (DEBUG): print(f"[DEBUG] Sending request to {url}")
-    if (DEBUG): print(f"[DEBUG] Payload: chat_id={chat_id}, model={model}, dry_run={dry_run}")
+    if (DEBUG):
+        print(f"[DEBUG] Sending request to {url}")
+        print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
+        print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
 
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
@@ -122,8 +124,15 @@ def fetch_plugin_manifest(dry_run: bool = False):
     """Fetch the plugin manifest from the server."""
     url = f"{BASE_URL}/plugins"
     payload = {"dry_run": dry_run}
+
+    if (DEBUG):
+        print(f"[DEBUG] Sending request to {url}")
+        print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
+        print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
+
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
+        if (DEBUG): print(f"[DEBUG] Response status: {resp.status_code}")
         _check_response(resp)  # will raise on error and print the message
         return resp.json()
 
@@ -132,8 +141,14 @@ def fetch_server_time(dry_run: bool = False) -> int:
     """Fetch the current server timestamp."""
     url = f"{BASE_URL}/time"
     params = {"dry_run": dry_run}
+
+    if (DEBUG):
+        print(f"[DEBUG] Sending request to {url}")
+        print(f"[DEBUG] Query params: {json.dumps(params, indent=2)}")
+
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.get(url, params=params)
+        if (DEBUG): print(f"[DEBUG] Response status: {resp.status_code}")
         if not resp.ok:
             # Use the same helper for consistency but avoid raising for 200‑like cases
             try:
@@ -152,13 +167,20 @@ def send_feedback(feedback_text: str, chat_id: int = 0):
     """
     url = f"{BASE_URL}/feedback"
     payload = {"feedback": feedback_text, "chat_id": chat_id}
-    
+
+    if (DEBUG):
+        print(f"[DEBUG] Sending request to {url}")
+        print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
+        print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
+
     try:
         with httpx.Client(timeout=10.0, verify=True) as client:
             # Fire-and-forget call. Errors are ignored to not block exit.
-            client.post(url, json=payload, headers=_auth_headers())
-    except Exception:
-        # Silently ignore all errors.
+            resp = client.post(url, json=payload, headers=_auth_headers())
+            if (DEBUG): print(f"[DEBUG] Response status: {resp.status_code}")
+    except Exception as e:
+        # Silently ignore all errors, but log in debug mode.
+        if (DEBUG): print(f"[DEBUG] Error sending feedback: {e}")
         pass
 
 def main():
