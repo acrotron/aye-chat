@@ -306,6 +306,10 @@ def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_m
     except json.JSONDecodeError as e:
         if (DEBUG): print(f"[DEBUG] Failed to parse assistant_response: {e}")
         if (DEBUG): print(f"[DEBUG] Full assistant_response: {assistant_resp_str}")
+        # If parsing fails, check if it's an error message from the server
+        if assistant_resp_str and "error" in assistant_resp_str.lower():
+            # Raise a more user-friendly error
+            raise Exception(f"Server error: {assistant_resp_str}") from e
         raise
     
     return {
