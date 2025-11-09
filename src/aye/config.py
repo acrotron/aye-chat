@@ -24,7 +24,7 @@ MODELS = [
 ]
 
 # Default model identifier – kept separate so the order of MODELS stays unchanged.
-DEFAULT_MODEL_ID = "anthropic/claude-sonnet-4.5"
+DEFAULT_MODEL_ID = "google/gemini-2.5-pro"
 
 
 def load_config() -> None:
