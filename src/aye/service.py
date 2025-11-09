@@ -22,6 +22,7 @@ from .ui import (
     print_error
 )
 
+DEBUG = False
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
 
@@ -52,6 +53,25 @@ def handle_logout() -> None:
     """Remove the stored aye credentials."""
     delete_token()
     rprint("🔐 Token removed.")
+
+def handle_auth_status() -> None:
+    """Show authentication status."""
+    try:
+        token = get_token()
+        if token and not token.startswith("aye_demo_"):
+            # Real token exists
+            rprint("[green]Authenticated[/] - Token is saved")
+            rprint(f"  Token: {token[:12]}...")
+        elif token and token.startswith("aye_demo_"):
+            # Demo token
+            rprint("[yellow]Demo Mode[/] - Using demo token")
+            rprint("  Run 'aye auth login' to authenticate with a real token")
+        else:
+            # No token
+            rprint("[red]Not Authenticated[/] - No token saved")
+            rprint("  Run 'aye auth login' to authenticate")
+    except Exception as e:
+        rprint(f"[red]Error checking auth status:[/] {e}")
 
 # One-shot generation function
 def handle_generate_cmd(prompt: str) -> None:
@@ -281,16 +301,36 @@ def filter_unchanged_files(updated_files: list) -> list:
 
 def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_mask: str, selected_model: Optional[str] = None, verbose: bool = False) -> Dict[str, any]:
     """Process a chat message and return the response."""
+    if (DEBUG): print(f"[DEBUG] process_chat_message called with chat_id={chat_id}, model={selected_model}")
     source_files = collect_sources(root, file_mask)
+    if (DEBUG): print(f"[DEBUG] Collected {len(source_files)} source files")
     if verbose:
         rprint(f"[yellow]Included with prompt: {', '.join(source_files.keys())}")
     else:
         rprint("[yellow]Turn on verbose mode to see list of files included with prompt.[/]")
-    
+
+    if (DEBUG): print(f"[DEBUG] Calling cli_invoke...")
     resp = cli_invoke(message=prompt, chat_id=chat_id or -1, source_files=source_files, model=selected_model)
-    
+    if (DEBUG): print(f"[DEBUG] cli_invoke returned, response type: {type(resp)}")
+    if (DEBUG): print(f"[DEBUG] Response keys: {resp.keys() if isinstance(resp, dict) else 'Not a dict'}")
+
     assistant_resp_str = resp.get('assistant_response')
-    assistant_resp = json.loads(assistant_resp_str)
+    if (DEBUG): print(f"[DEBUG] assistant_response type: {type(assistant_resp_str)}")
+    if (DEBUG): print(f"[DEBUG] assistant_response length: {len(assistant_resp_str) if assistant_resp_str else 0}")
+    if (DEBUG): print(f"[DEBUG] assistant_response preview: {assistant_resp_str[:200] if assistant_resp_str else 'Empty or None'}")
+
+    try:
+        assistant_resp = json.loads(assistant_resp_str)
+        if (DEBUG): print(f"[DEBUG] Successfully parsed assistant_response JSON")
+    except json.JSONDecodeError as e:
+        if (DEBUG): print(f"[DEBUG] Failed to parse assistant_response: {e}")
+        if (DEBUG): print(f"[DEBUG] Full assistant_response: {assistant_resp_str}")
+        # If parsing fails, check if it's an error message from the server
+        if assistant_resp_str and "error" in assistant_resp_str.lower():
+            # Raise a more user-friendly error
+            chat_title = resp.get('chat_title', 'Unknown')
+            raise Exception(f"Server error in chat '{chat_title}': {assistant_resp_str}") from e
+        raise
     
     return {
         "response": resp,

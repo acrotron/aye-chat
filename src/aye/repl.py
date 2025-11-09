@@ -48,6 +48,8 @@ from .snapshot import (
 from .config import MODELS, DEFAULT_MODEL_ID
 from .tutorial import run_first_time_tutorial_if_needed
 
+DEBUG = False
+
 # Initialize plugin manager and get completer
 plugin_manager = PluginManager(verbose=False)
 plugin_manager.discover()
@@ -187,6 +189,7 @@ def collect_and_send_feedback(chat_id: int):
         rprint("\n[cyan]Goodbye![/cyan]")
 
 def chat_repl(conf) -> None:
+    if (DEBUG): print(f"[DEBUG] Starting chat REPL with root: {conf.root}, file_mask: {conf.file_mask}")
     # NEW: Run first-time tutorial if needed.
     run_first_time_tutorial_if_needed()
     
@@ -373,9 +376,11 @@ def chat_repl(conf) -> None:
 
         # Process LLM chat message
         try:
+            if (DEBUG): print(f"[DEBUG] Processing chat message with chat_id={chat_id}, model={conf.selected_model}")
             spinner = Spinner("dots", text="[yellow]Thinking...[/]")
             with console.status(spinner) as status:
                 result = process_chat_message(prompt, chat_id, conf.root, conf.file_mask, conf.selected_model, conf.verbose)
+            if (DEBUG): print(f"[DEBUG] Chat message processed, result keys: {result.keys() if result else 'None'}")
         except Exception as exc:
             if hasattr(exc, "response") and getattr(exc.response, "status_code", None) == 403:
                 traceback.print_exc()
