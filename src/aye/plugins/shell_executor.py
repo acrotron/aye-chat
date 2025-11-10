@@ -137,8 +137,10 @@ class ShellExecutorPlugin(Plugin):
             return {"stdout": result.stdout, "stderr": result.stderr, "returncode": result.returncode}
         except subprocess.CalledProcessError as e:
             return {
-                "error": f"Error running {command} {' '.join(args)}: {e.stderr}", 
-                "stdout": e.stdout, "stderr": e.stderr, "returncode": e.returncode
+                "error": f"Command '{self._build_full_cmd(command, args)}' failed with exit code {e.returncode}",
+                "stdout": e.stdout,
+                "stderr": e.stderr,
+                "returncode": e.returncode
             }
         except FileNotFoundError:
             return None  # Command not found
