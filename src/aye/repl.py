@@ -188,6 +188,30 @@ def collect_and_send_feedback(chat_id: int):
         # The API call is silent on errors, so this is for other issues.
         rprint("\n[cyan]Goodbye![/cyan]")
 
+def handle_local_model_command(plugin_manager, prompt, console) -> bool:
+    """
+    Invokes the local model plugin and handles its response.
+    Returns True if the prompt was handled by the plugin, False otherwise.
+    """
+    local_model_response = plugin_manager.handle_command("local_model_invoke", {"prompt": prompt})
+    if local_model_response is not None:
+        # The plugin handled the prompt. Display its response.
+        summary = local_model_response.get("summary")
+        if summary:
+            print_assistant_response(summary)
+
+        # This is a stub, so we don't expect file updates, but we can handle the message.
+        updated_files = local_model_response.get("updated_files", [])
+        if not updated_files:
+            print_no_files_changed(console)
+        else:
+            # This part is for future extension. For now, it will just print that files were updated.
+            file_names = [item.get("file_name") for item in updated_files if "file_name" in item]
+            if file_names:
+                print_files_updated(console, file_names)
+        return True
+    return False
+
 def chat_repl(conf) -> None:
     if (DEBUG): print(f"[DEBUG] Starting chat REPL with root: {conf.root}, file_mask: {conf.file_mask}")
     # NEW: Run first-time tutorial if needed.
@@ -356,20 +380,31 @@ def chat_repl(conf) -> None:
             "args": tokens[1:]
         })
         if shell_response is not None:
-            if "error" in shell_response:
-                rprint(f"[red]Error:[/] {shell_response['error']}")
-            elif "message" in shell_response:
-                # For interactive commands: print the completion message (output already handled by os.system)
-                # Strike that: be silent on success
-                # rprint(f"[green]{shell_response['message']}[/]")
-                pass
-            else:
-                # Non-interactive: print stdout if present
+            # Non-interactive command was run (identified by presence of stdout/stderr)
+            if "stdout" in shell_response or "stderr" in shell_response:
                 if shell_response.get("stdout", "").strip():
                     rprint(shell_response["stdout"])
                 if shell_response.get("stderr", "").strip():
                     rprint(f"[yellow]{shell_response['stderr']}[/]")
+                
+                # The 'error' key is only present on failure for non-interactive commands
+                if "error" in shell_response:
+                    rprint(f"[red]Error:[/] {shell_response['error']}")
+
+            # Interactive command was run
+            else:
+                if "error" in shell_response:
+                    rprint(f"[red]Error:[/] {shell_response['error']}")
+                elif "message" in shell_response:
+                    # For interactive commands: print the completion message (output already handled by os.system)
+                    # Strike that: be silent on success
+                    pass
+            
             continue
+
+        # Give local model plugin a chance to respond first
+        #if handle_local_model_command(plugin_manager, prompt, console):
+        #    continue
 
         # Store the prompt for snapshot metadata
         last_prompt = prompt
