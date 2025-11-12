@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from rich import print as rprint
-from .plugin_base import Plugin
+from .plugins.plugin_base import Plugin
 
 PLUGIN_ROOT = Path.home() / ".aye" / "plugins" #Removed to package plugins with the app
 PATH_ROOT = Path.home() / ".aye" #Removed to package plugins with the app

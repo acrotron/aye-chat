@@ -188,27 +188,60 @@ def collect_and_send_feedback(chat_id: int):
         # The API call is silent on errors, so this is for other issues.
         rprint("\n[cyan]Goodbye![/cyan]")
 
-def handle_local_model_command(plugin_manager, prompt, console) -> bool:
+def _make_paths_relative(files: list[dict], root: Path) -> list[dict]:
+    """Strip *root* from any file_name that already starts with it.
+    This prevents double‑prefixing like `src/aye/src/aye/foo.py`.
+    """
+    root = root.resolve()
+    for f in files:
+        if "file_name" not in f:
+            continue
+        try:
+            p = Path(f["file_name"]).resolve()
+            if p.is_relative_to(root):
+                f["file_name"] = str(p.relative_to(root))
+        except Exception:
+            # If the path cannot be resolved or Python <3.9, leave it unchanged
+            pass
+    return files
+
+def handle_local_model_command(plugin_manager, prompt, console, model_id, source_files, conf, last_prompt) -> bool:
     """
     Invokes the local model plugin and handles its response.
     Returns True if the prompt was handled by the plugin, False otherwise.
     """
-    local_model_response = plugin_manager.handle_command("local_model_invoke", {"prompt": prompt})
+    local_model_response = plugin_manager.handle_command("local_model_invoke", {
+        "prompt": prompt,
+        "model_id": model_id,
+        "source_files": source_files
+    })
     if local_model_response is not None:
         # The plugin handled the prompt. Display its response.
         summary = local_model_response.get("summary")
         if summary:
             print_assistant_response(summary)
 
-        # This is a stub, so we don't expect file updates, but we can handle the message.
+        # Handle file updates from the local model
         updated_files = local_model_response.get("updated_files", [])
+        
+        # Filter unchanged files (same as regular API path)
+        updated_files = filter_unchanged_files(updated_files)
+        
+        # Normalize file paths (same as regular API path)
+        updated_files = _make_paths_relative(updated_files, conf.root)
+        
         if not updated_files:
             print_no_files_changed(console)
         else:
-            # This part is for future extension. For now, it will just print that files were updated.
-            file_names = [item.get("file_name") for item in updated_files if "file_name" in item]
-            if file_names:
-                print_files_updated(console, file_names)
+            # Apply updates directly via snapshot utilities, passing the prompt
+            try:
+                batch_ts = apply_updates(updated_files, last_prompt)
+                if batch_ts:
+                    file_names = [item.get("file_name") for item in updated_files if "file_name" in item]
+                    if file_names:
+                        print_files_updated(console, file_names)
+            except Exception as e:
+                rprint(f"[red]Error applying updates:[/] {e}")
         return True
     return False
 
@@ -402,12 +435,16 @@ def chat_repl(conf) -> None:
             
             continue
 
-        # Give local model plugin a chance to respond first
-        #if handle_local_model_command(plugin_manager, prompt, console):
-        #    continue
-
         # Store the prompt for snapshot metadata
         last_prompt = prompt
+
+        # Collect source files for local model
+        from .source_collector import collect_sources
+        source_files = collect_sources(conf.root, conf.file_mask)
+
+        # Give local model plugin a chance to respond first
+        if handle_local_model_command(plugin_manager, prompt, console, conf.selected_model, source_files, conf, last_prompt):
+            continue
 
         # Process LLM chat message
         try:
@@ -446,26 +483,8 @@ def chat_repl(conf) -> None:
         # Determine which files were actually changed
         updated_files = result.get("updated_files", [])
         updated_files = filter_unchanged_files(updated_files)
-        # ---------------------------------------------------------------------
-        # NEW: Normalise file paths – ensure they are relative to the REPL root
-        # ---------------------------------------------------------------------
-        def _make_paths_relative(files: list[dict], root: Path) -> list[dict]:
-            """Strip *root* from any file_name that already starts with it.
-            This prevents double‑prefixing like `src/aye/src/aye/foo.py`.
-            """
-            root = root.resolve()
-            for f in files:
-                if "file_name" not in f:
-                    continue
-                try:
-                    p = Path(f["file_name"]).resolve()
-                    if p.is_relative_to(root):
-                        f["file_name"] = str(p.relative_to(root))
-                except Exception:
-                    # If the path cannot be resolved or Python <3.9, leave it unchanged
-                    pass
-            return files
-
+        
+        # Normalise file paths – ensure they are relative to the REPL root
         updated_files = _make_paths_relative(updated_files, conf.root)
 
         if not updated_files:
