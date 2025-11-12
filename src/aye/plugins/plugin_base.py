@@ -8,7 +8,6 @@ class Plugin(ABC):
     premium: str = "free"  # one of: free, pro, team, enterprise
     verbose: bool = False
 
-    @abstractmethod
     def init(self, cfg: Dict[str, Any]) -> None:
         self.verbose = bool(cfg.get("verbose", False))
 
