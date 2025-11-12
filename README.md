@@ -1,4 +1,4 @@
-# Aye Chat: AI-powered terminal
+# Aye Chat: AI-powered terminal workspace
 
 **Your terminal, but with AI. Edit files, run commands, chat with AI - all in one session.**
 
