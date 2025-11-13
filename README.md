@@ -1,92 +1,156 @@
-# Aye Chat: AI-powered shell for Linux
+# Aye Chat: AI-powered terminal for command line
 
-**An AI assistant integrated into your shell: execute commands, edit files, and prompt AI, all in one seamless session.**
+**Your terminal, but with AI. Edit files, run commands, chat with AI - all in one session.**
 
-## Key Features
+## Install in 30 seconds
 
--   🚀 **Seamless Shell Integration** - Your shell, super-powered. Run `ls`, `git`, and even `vim` in the same session you chat with AI. No prefixes, no context switching.
--   🧠 **Zero-Config Context** - Aye Chat automatically detects your project's files, respecting your `.gitignore`, so you can start coding immediately.
--   ✍️ **Direct File Editing** - The AI directly edits and creates files in your project. No more copy-pasting code from a chat window.
--   ⏪ **Instant Undo** - AI made a mistake? A single `restore` command instantly reverts the last set of changes. Your work is always safe.
--   🖥️ **Terminal-Native Experience** - A rich, responsive UI built for developers who live in the command line.
--   🧩 **Extensible via Plugins** - The core experience is enhanced by plugins for shell execution, autocompletion, and more.
-
-## Quick Start
-
-1.  **Install the tool**:
-    ```bash
-    pip install ayechat
-    ```
-
-2.  **Start interactive chat in your source code folder**:
-    ```bash
-    aye chat
-    ```
-
-3.  **Start talking to your shell. That's it!**
+```bash
+$ pip install ayechat
+$ aye chat          # Start in any project
+```
 
 ![Aye Chat: The AI-powered shell for Linux](https://raw.githubusercontent.com/acrotron/aye-media/refs/heads/main/files/ai-shell.gif)
+
+## What it does
+
+```bash
+$ aye chat
+> fix the bug in server.py
+✓ Fixed undefined variable on line 42
+
+> ls -la
+[shows your actual files]
+
+> refactor: make it async
+✓ Updated server.py with async/await
+
+> restore
+✓ Reverted last changes
+
+> vim config.json
+[opens real vim, returns to chat after]
+```
+
+**No copy-pasting. No context switching. AI edits your files directly.**
+
+## Why developers love it
+
+- **Zero config** - Automatically reads your project files (respects .gitignore)
+- **Instant undo** - `restore` command reverts any AI changes immediately  
+- **Real shell** - Run `git`, `pytest`, even `vim` without leaving the chat
+- **100% local backups** - Your code is safe, changes stored in `.aye/`
+- **No prefixes** - Just type. Commands run, everything else goes to AI
+
+## Quick examples
+
+```bash
+# In your project directory:
+aye chat
+
+> refactor this to use dependency injection
+> pytest
+> fix what broke  
+> git commit -m \"refactored DI\"
+```
+
+## Get started
+
+1. **Install**: `pip install ayechat`
+2. **Start chatting**: `aye chat` in any project folder
+
+---
+
+<details>
+<summary>📚 Full command reference</summary>
 
 ## Core Commands
 
 ### Authentication
 
-```bash
-aye auth login    # Configure your access token
-aye auth logout   # Remove stored credentials
-```
+**Does not require authentication**
 
 ### Starting a Session
 
 ```bash
 aye chat                          # Start chat with auto-detected files
 aye chat --root ./src             # Specify a different project root
-aye chat --include "*.js,*.css"   # Manually specify which files to include
+aye chat --include \"*.js,*.css\"   # Manually specify which files to include
 ```
 
 ### In-Chat Commands
 
-In chat mode, your input is handled in a specific order:
-1.  **Built-in Commands** (like `restore` or `model`).
-2.  **Shell Commands** (like `ls -la` or `git status`).
-3.  **AI Prompt** (everything else is sent to the LLM).
+Your input is handled in this order:
+1. **Built-in Commands** (like `restore` or `model`)
+2. **Shell Commands** (like `ls -la` or `git status`)
+3. **AI Prompt** (everything else)
 
 **Session & Model Control**
--   `new` - Start a fresh chat session.
--   `model` - Select a different AI model.
--   `verbose [on|off]` - Toggle printing the list of files sent to the AI.
--   `exit`, `quit`, `Ctrl+D` - Exit the chat.
--   `help` - Show available commands.
+- `new` - Start a fresh chat session
+- `model` - Select a different AI model
+- `verbose [on|off]` - Toggle verbose output on or off
+- `exit`, `quit`, `Ctrl+D` - Exit the chat
+- `help` - Show available commands
 
 **Reviewing & Undoing AI Changes**
--   `restore` - Instantly undo the last set of changes made by the AI.
--   `history` - Show the history of changes made by the AI.
--   `diff <file>` - Compare the current version of a file against the last change.
+- `restore`, `undo` - Instantly undo the last set of changes made by AI
+- `history` - Show the history of changes made by AI
+- `diff <file>` - Compare current version against last change
 
 **Shell Commands**
-Any command that is not a built-in is treated as a shell command.
--   You can run standard commands like `ls -la`, `git status`, or `docker ps`.
--   **Interactive commands like `vim`, `nano`, and `less` work seamlessly**, handing control over to the editor and returning you to the chat when you're done.
+- Run any command: `ls -la`, `git status`, `docker ps`
+- Interactive programs work: `vim`, `nano`, `less`, `top`
 
-## Philosophy
+</details>
 
-**Aye Chat** reimagines coding as a fluid conversation with an AI-powered shell.
+<details>
+<summary>⚙️ Configuration & Privacy</summary>
 
-Built for the terminal, it trusts the AI to act directly on your files—no approval diffs, no friction. This high-velocity workflow is made safe by a simple, instant `undo` command that keeps you in complete control.
+## Configuration
 
-By removing the barriers between thought, command, and code, Aye Chat lets you build software at the speed of your ideas.
+- Aye Chat respects `.gitignore` and `.ayeignore` - private files are never touched
+- Change history and backups stored locally in `.aye/` folder
+- Configure default model and preferences in `~/.aye/config.yaml`
 
-## Configuration & Privacy
+## Privacy & Security
 
--   Aye Chat respects `.gitignore` and `.ayeignore`—your private files are never touched.
--   Change history and backups are stored locally in the `.aye/` folder within your project.
+- All file backups are local only
+- API calls only include files you explicitly work with
+- No telemetry or usage tracking
+- Open source - audit the code yourself
 
-## 🤝 Contributing
+</details>
 
-Aye Chat is open-source — we welcome contributions!
--   Fork the repo and submit PRs.
--   Open issues for bugs or ideas.
--   Join our discussions on our [Discord Server](https://discord.gg/ZexraQYH77).
+<details>
+<summary>🧩 Plugins & Extensions</summary>
 
-### 🔥 Ready to code with AI — without leaving your terminal?
-👉 [Get started at ayechat.ai](https://ayechat.ai)
+## Extensible via Plugins
+
+The core experience is enhanced by plugins:
+- Shell execution plugin
+- Autocompletion plugin  
+- Custom command plugins
+- Model provider plugins
+
+</details>
+
+## Contributing
+
+Aye Chat is open source! We welcome contributions.
+
+- **Report bugs**: [GitHub Issues](https://github.com/acrotron/aye-chat/issues)
+- **Submit PRs**: Fork and contribute
+- **Get help**: [Discord Community](https://discord.gg/ZexraQYH77)
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file
+
+---
+
+**Ready to code with AI without leaving your terminal?**
+
+```bash
+pip install ayechat && aye chat
+```
+
+[Wiki](https://github.com/acrotron/aye-chat/wiki) • [Discord](https://discord.gg/ZexraQYH77) • [GitHub](https://github.com/acrotron/aye-chat)
