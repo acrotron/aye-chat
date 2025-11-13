@@ -194,9 +194,10 @@ class LocalModelPlugin(Plugin):
         
         try:
             # Make the API call
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=180.0) as client:
                 response = client.post(
-                    f"{api_url.rstrip('/')}/v1/chat/completions",
+                    #f"{api_url.rstrip('/')}/v1/chat/completions",
+                    api_url,
                     json=payload,
                     headers=headers
                 )
