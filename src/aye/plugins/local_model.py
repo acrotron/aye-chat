@@ -88,6 +88,80 @@ class LocalModelPlugin(Plugin):
             "updated_files": []
         }
 
+    def _handle_databricks(self, prompt: str, source_files: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        """Handle OpenAI-compatible API calls using AYE_DBX_API_URL, AYE_DBX_API_KEY, and AYE_DBX_MODEL."""
+        api_url = os.environ.get("AYE_DBX_API_URL")
+        api_key = os.environ.get("AYE_DBX_API_KEY")
+        model_name = os.environ.get("AYE_DBX_MODEL", "gpt-3.5-turbo")
+        
+        # Both API URL and API key environment variables must be set
+        if not api_url or not api_key:
+            return None
+        
+        # Build the user message
+        user_message = self._build_user_message(prompt, source_files)
+        
+        # Prepare the OpenAI-compatible API request
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+        
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_message}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 16384,
+            "response_format": {"type": "json_object"}
+        }
+        
+        try:
+            # Make the API call
+            with httpx.Client(timeout=180.0) as client:
+                response = client.post(
+                    api_url,
+                    json=payload,
+                    headers=headers
+                )
+
+                #print(response.text)
+                response.raise_for_status()
+                
+                # Parse the OpenAI-format response
+                result = response.json()
+
+                # Extract the generated content
+                if "choices" in result and result["choices"]:
+                    choice = result["choices"][0]
+                    if "message" in choice and "content" in choice["message"]:
+                        generated_text = choice["message"]["content"][1]["text"]
+
+                        #print("------------------")
+                        #print(generated_text)
+                        return self._parse_llm_response(generated_text)
+                
+                # If we couldn't extract a proper response
+                return self._create_error_response(
+                    "Failed to get a valid response from the OpenAI-compatible API"
+                )
+                
+        except httpx.HTTPStatusError as e:
+            print(e.response.text)
+            error_msg = f"DBX API error: {e.response.status_code}"
+            try:
+                error_detail = e.response.json()
+                if "error" in error_detail:
+                    error_msg += f" - {error_detail['error'].get('message', str(error_detail['error']))}"
+            except:
+                error_msg += f" - {e.response.text[:200]}"
+            return self._create_error_response(error_msg)
+            
+        except Exception as e:
+            return self._create_error_response(f"Error calling OpenAI-compatible API: {str(e)}")
+
     def _handle_openai_compatible(self, prompt: str, source_files: Dict[str, str]) -> Optional[Dict[str, Any]]:
         """Handle OpenAI-compatible API calls using AYE_LLM_API_URL, AYE_LLM_API_KEY, and AYE_LLM_MODEL."""
         api_url = os.environ.get("AYE_LLM_API_URL")
@@ -130,6 +204,7 @@ class LocalModelPlugin(Plugin):
                 
                 # Parse the OpenAI-format response
                 result = response.json()
+
                 
                 # Extract the generated content
                 if "choices" in result and result["choices"]:
@@ -229,6 +304,11 @@ class LocalModelPlugin(Plugin):
 
             # First, check for generic OpenAI-compatible API configuration
             result = self._handle_openai_compatible(prompt, source_files)
+            if result is not None:
+                return result
+
+            # Check for local databricks
+            result = self._handle_databricks(prompt, source_files)
             if result is not None:
                 return result
 
