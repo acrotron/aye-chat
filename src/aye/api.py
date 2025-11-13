@@ -183,17 +183,51 @@ def send_feedback(feedback_text: str, chat_id: int = 0):
         if (DEBUG): print(f"[DEBUG] Error sending feedback: {e}")
         pass
 
+def test_json_parsing_issue():
+    """
+    Test driver to demonstrate the JSON parsing issue.
+    This function simulates the logic in llm_invoker.py that causes the error.
+    """
+    print("--- Running Test Driver for JSON Parsing Issue ---")
+
+    # This is the full response string received from the API. Using a raw, triple-quoted
+    # string ensures that backslashes are preserved for the JSON parser.
+    full_api_response_str = r'''
+    {"user_id": "v@acrotron.com", "chat_id": 125, "chat_title": "Add Generic OpenAI-style Local Model", "assistant_response": "To test the local OpenAI-compatible invocation, you have two options:\n\n## Option 1: Use OpenRouter (Recommended)\n\nOpenRouter provides an OpenAI-compatible API endpoint. Set these environment variables:\n\n```bash\nexport AYE_LLM_API_URL=\"https://openrouter.ai/api\"\nexport AYE_LLM_API_KEY=\"your-openrouter-token\"\nexport AYE_LLM_MODEL=\"google/gemini-2.0-flash-exp:free\"  # Or any model from OpenRouter\n```\n\nThen run `aye chat` - it will use OpenRouter instead of the default API.\n\n## Option 2: Use a Mock Server for Testing\n\nCreate a simple test server that mimics OpenAI's API:\n\n```python\n# test_server.py\nfrom flask import Flask, request, jsonify\nimport json\n\napp = Flask(__name__)\n\n@app.route('/v1/chat/completions', methods=['POST'])\ndef chat_completions():\n    data = request.json\n    \n    # Extract the user message\n    user_msg = data['messages'][-1]['content']\n    \n    # Create a mock response\n    mock_response = {\n        \"answer_summary\": f\"Mock response to: {user_msg[:50]}...\",\n        \"source_files\": []\n    }\n    \n    return jsonify({\n        \"choices\": [{\n            \"message\": {\n                \"content\": json.dumps(mock_response)\n            }\n        }]\n    })\n\nif __name__ == '__main__':\n    app.run(port=8080)\n```\n\nThen set:\n```bash\nexport AYE_LLM_API_URL=\"http://localhost:8080\"\nexport AYE_LLM_API_KEY=\"test-key\"\nexport AYE_LLM_MODEL=\"test-model\"\n```\n\n## Option 3: Use Gemini Directly (Already Working)\n\nSince you have a Gemini API key, the local model plugin already supports it:\n\n```bash\nexport GEMINI_API_KEY=\"your-gemini-api-key\"\naye chat\n# Then select \"Google: Gemini 2.5 Pro\" model\n```\n\nThis will use the local Gemini handler instead of going through the main API.\n\n## Testing Verification\n\nTo verify which path is being used, temporarily add debug output to `llm_invoker.py`:\n\n```python\n# In invoke_llm function, after local_response check:\nif local_response is not None:\n    rprint(\"[cyan]Using local model handler[/]\")\n    # ... existing code\nelse:\n    rprint(\"[cyan]Using API handler[/]\")\n    # ... existing code\n```\n\nThe OpenRouter option is the most practical for testing since it's a real service that supports the OpenAI format and you already have a token for it.", "created_at": "2025-11-12 23:33:50+00:00", "updated_at": "2025-11-13 00:04:33+00:00"}
+    '''
+
+    # 1. The httpx library first parses the entire response into a dictionary.
+    # This step succeeds because the outer string is valid JSON.
+    resp_dict = json.loads(full_api_response_str)
+    print("Step 1: Successfully parsed the full API response into a Python dictionary.")
+
+    # 2. The code in `llm_invoker.py` then extracts the 'assistant_response' field.
+    assistant_resp_str = resp_dict.get('assistant_response')
+    print("\nStep 2: Extracted the 'assistant_response' field. Its content is:")
+    print("--------------------------------------------------")
+    print(assistant_resp_str)
+    print("--------------------------------------------------")
+
+    # 3. The code then attempts to parse THIS extracted string as JSON.
+    # This is where the error occurs.
+    print("\nStep 3: Attempting to run `json.loads()` on the extracted string...")
+    try:
+        json.loads(assistant_resp_str)
+        print("[green]This should not have succeeded.[/green]")
+    except json.JSONDecodeError as e:
+        print(f"\n[bold red]SUCCESSFULLY REPRODUCED ERROR:[/] {e}")
+        print("\n--- EXPLANATION ---")
+        print("The error 'Expecting value: line 1 column 1 (char 0)' occurs because the string being parsed is not valid JSON.")
+        print("The `llm_invoker.py` script expects the 'assistant_response' field to contain a JSON-formatted string, like:")
+        print("  '{\"answer_summary\": \"...\", \"source_files\": []}'")
+        print("Instead, it contains plain text that starts with 'To test the local...'.")
+        print("The JSON parser sees the 'T' at the beginning and immediately fails, as it's not a valid start for a JSON document (which must be {, [, \", number, true, false, or null).")
+
 def main():
     """
-    Sample workflow with entire flow (including login/logout) under ThreadPoolExecutor.
-    Replace 'YOUR_TOKEN_HERE' with your actual token.
+    Driver to test the JSON parsing issue.
     """
-    token = os.getenv('AYE_TOKEN', 'YOUR_TOKEN_HERE')  # Or prompt for it
-    if token == 'YOUR_TOKEN_HERE':
-        print("⚠️  Please set your AYE_TOKEN environment variable or replace 'YOUR_TOKEN_HERE'.")
-        return
-
-    parallel_workflow(token)
+    test_json_parsing_issue()
 
 
 if __name__ == '__main__':

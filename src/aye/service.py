@@ -21,6 +21,7 @@ from .ui import (
     print_files_updated,
     print_error
 )
+from .file_processor import filter_unchanged_files
 
 DEBUG = False
 
@@ -276,29 +277,6 @@ def diff_files(file1: Path, file2: Path) -> None:
     except Exception as e:
         rprint(f"[red]Error running diff:[/] {e}")
 
-def filter_unchanged_files(updated_files: list) -> list:
-    """Filter out files from updated_files list if their content hasn't changed compared to on-disk version."""
-    changed_files = []
-    for item in updated_files:
-        file_path = Path(item["file_name"])
-        new_content = item["file_content"]
-        
-        # If file doesn't exist on disk, consider it changed (new file)
-        if not file_path.exists():
-            changed_files.append(item)
-            continue
-            
-        # Read current content and compare
-        try:
-            current_content = file_path.read_text(encoding="utf-8")
-            if current_content != new_content:
-                changed_files.append(item)
-        except Exception:
-            # If we can't read the file, assume it should be updated
-            changed_files.append(item)
-            
-    return changed_files
-
 def process_chat_message(prompt: str, chat_id: Optional[int], root: Path, file_mask: str, selected_model: Optional[str] = None, verbose: bool = False) -> Dict[str, any]:
     """Process a chat message and return the response."""
     if (DEBUG): print(f"[DEBUG] process_chat_message called with chat_id={chat_id}, model={selected_model}")
@@ -402,5 +380,3 @@ def handle_config_delete(key: str) -> None:
         rprint(f"[green]Configuration '{key}' deleted.[/]")
     else:
         rprint(f"[yellow]Configuration key '{key}' not found.[/]")
-
-
