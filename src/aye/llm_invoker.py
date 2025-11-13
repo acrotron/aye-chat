@@ -81,18 +81,29 @@ def invoke_llm(
     # Parse the assistant response
     assistant_resp_str = resp.get('assistant_response')
     
-    try:
-        assistant_resp = json.loads(assistant_resp_str)
-        if DEBUG:
-            print(f"[DEBUG] Successfully parsed assistant_response JSON")
-    except json.JSONDecodeError as e:
-        if DEBUG:
-            print(f"[DEBUG] Failed to parse assistant_response: {e}")
-        # If parsing fails, check if it's an error message from the server
-        if assistant_resp_str and "error" in assistant_resp_str.lower():
-            chat_title = resp.get('chat_title', 'Unknown')
-            raise Exception(f"Server error in chat '{chat_title}': {assistant_resp_str}") from e
-        raise
+    if assistant_resp_str is None:
+        # Handle case where API response is missing the field entirely
+        assistant_resp = {"answer_summary": "No response from assistant.", "source_files": []}
+    else:
+        try:
+            # Attempt to parse as JSON
+            assistant_resp = json.loads(assistant_resp_str)
+            if DEBUG:
+                print(f"[DEBUG] Successfully parsed assistant_response JSON")
+        except json.JSONDecodeError as e:
+            if DEBUG:
+                print(f"[DEBUG] Failed to parse assistant_response as JSON: {e}. Treating as plain text.")
+            
+            # Check for server-side error messages before treating as plain text
+            if "error" in assistant_resp_str.lower():
+                chat_title = resp.get('chat_title', 'Unknown')
+                raise Exception(f"Server error in chat '{chat_title}': {assistant_resp_str}") from e
+
+            # If not an error, treat the whole string as the summary
+            assistant_resp = {
+                "answer_summary": assistant_resp_str,
+                "source_files": []
+            }
     
     return LLMResponse(
         summary=assistant_resp.get("answer_summary", ""),
