@@ -336,6 +336,7 @@ def chat_repl(conf) -> None:
         if lowered_first == "new":
             chat_id_file.unlink(missing_ok=True)
             chat_id = -1
+            plugin_manager.handle_command("new_chat", {"root": conf.root})
             console.print("[green]✅ New chat session started.[/]")
             continue
 
