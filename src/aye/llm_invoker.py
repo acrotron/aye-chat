@@ -52,7 +52,9 @@ def invoke_llm(
         local_response = plugin_manager.handle_command("local_model_invoke", {
             "prompt": prompt,
             "model_id": conf.selected_model,
-            "source_files": source_files
+            "source_files": source_files,
+            "chat_id": chat_id,
+            "root": conf.root
         })
         
         if local_response is not None:
