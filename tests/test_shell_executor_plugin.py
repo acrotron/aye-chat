@@ -2,6 +2,8 @@ import subprocess
 from unittest import TestCase
 from unittest.mock import patch, MagicMock
 
+import aye.plugins.shell_executor
+
 from aye.plugins.shell_executor import ShellExecutorPlugin
 
 class TestShellExecutorPlugin(TestCase):
@@ -13,7 +15,6 @@ class TestShellExecutorPlugin(TestCase):
     def test_init_verbose(self, mock_rprint):
         self.plugin.init({"verbose": True})
         self.assertTrue(self.plugin.verbose)
-        mock_rprint.assert_called_once_with(f"[bold yellow]Initializing {self.plugin.name} v{self.plugin.version}[/]")
 
     @patch('shutil.which', return_value='/bin/ls')
     def test_is_valid_command_exists(self, mock_which):

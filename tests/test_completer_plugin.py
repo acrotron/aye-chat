@@ -4,6 +4,8 @@ from unittest.mock import patch, MagicMock
 from prompt_toolkit.document import Document
 from prompt_toolkit.completion import Completion
 
+import aye.plugins.completer
+
 from aye.plugins.completer import CompleterPlugin, CmdPathCompleter
 
 class TestCompleterPlugin(TestCase):
