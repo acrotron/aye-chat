@@ -154,7 +154,7 @@ class LocalModelPlugin(Plugin):
                 response.raise_for_status()
                 result = response.json()
                 if result.get("choices") and result["choices"][0].get("message"):
-                    generated_text = result["choices"][0]["message"]["content"][1]["text"]
+                    generated_text = result["choices"][0]["message"]["content"][0]["text"]
                     self.chat_history[conv_id].append({"role": "user", "content": user_message})
                     self.chat_history[conv_id].append({"role": "assistant", "content": generated_text})
                     self._save_history()

@@ -51,6 +51,11 @@ key=value
         parsed = auth._parse_user_config()
         self.assertEqual(parsed, {"token": "abc123", "selected_model": "foo/bar"})
 
+    def test_parse_user_config_malformed_file(self):
+        self.token_path.write_text("this is not a valid config file", encoding="utf-8")
+        parsed = auth._parse_user_config()
+        self.assertEqual(parsed, {})
+
     # --------------------------- get/set user config ---------------------------
     def test_set_and_get_user_config_roundtrip(self):
         # Patch chmod on Path class, not on the instance

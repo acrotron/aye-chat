@@ -65,7 +65,7 @@ def invoke_llm(
         
         # Fall back to API (Model interaction)
         if DEBUG:
-            print(f"[DEBUG] Processing chat message with chat_id={chat_id}, model={conf.selected_model}")
+            print(f"[DEBUG] Processing chat message with chat_id={chat_id or -1}, model={conf.selected_model}")
         
         resp = cli_invoke(
             message=prompt,

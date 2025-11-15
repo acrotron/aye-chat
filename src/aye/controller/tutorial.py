@@ -8,7 +8,7 @@ from rich.prompt import Confirm
 from rich.spinner import Spinner
 
 from aye.presenter.diff_presenter import show_diff
-from aye.model.snapshot import restore_snapshot, apply_updates
+from aye.model.snapshot import restore_snapshot, apply_updates, list_snapshots
 
 
 def _print_step(title, text, simulated_command=None):
@@ -124,7 +124,6 @@ def run_tutorial():
         # To call diff, we need the path to the snapshot file.
         # In a real scenario, we'd get this from the snapshot model.
         # Here, we can reconstruct it based on the `apply_updates` logic.
-        from aye.model.snapshot import list_snapshots
         snapshots = list_snapshots(temp_file)
         if snapshots:
             latest_snap_path = Path(snapshots[0][1])
