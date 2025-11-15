@@ -36,14 +36,14 @@ The purpose of this test plan is to validate that the demo token behaves correct
 | Test Case ID | Steps | Expected Result | Pass/Fail Criteria |
 |--------------|-------|-----------------|---------------------|
 | TC-DEM-001 | 1. Delete `~/.ayecfg` if exists.<br>2. Run `aye chat` or `aye auth login` (but don't enter token).<br>3. Check if command proceeds (may show demo mode).<br>4. Inspect `~/.ayecfg`. | - Demo token generated (format: `aye_demo_[10-char-hash]`).<br>- Stored under `[default]` section as `token=aye_demo_...`.<br>- File permissions: 0600.<br>- CLI starts REPL or shows no auth error. | Token present and unique; no errors in stderr. |
-| TC-DEM-002 | 1. Run `python -c "from aye.auth import get_token; print(get_token())"`. | Prints a demo token; subsequent runs print the same (persisted). | Token starts with `aye_demo_`; consistent across runs. |
+| TC-DEM-002 | 1. Run `python -c "from aye.model.auth import get_token; print(get_token())"`. | Prints a demo token; subsequent runs print the same (persisted). | Token starts with `aye_demo_`; consistent across runs. |
 
 ### Scenario 2: Persistence and Usage in API Calls
 **Description**: Demo token enables basic API interactions (e.g., dry-run mode).
 
 | Test Case ID | Steps | Expected Result | Pass/Fail Criteria |
 |--------------|-------|-----------------|---------------------|
-| TC-DEM-003 | 1. With demo token active.<br>2. Run `aye chat` and send a message (e.g., "Hello").<br>3. Or run `python aye/api_driver.py` (with dry_run). | - API call to `/invoke_cli` or `/plugins` uses demo token in `Authorization: Bearer aye_demo_...`.<br>- Response handled (e.g., spinner shows, summary printed; may indicate demo limits).<br>- No 401/403 auth errors. | HTTP headers include demo token; response JSON parsed without auth exceptions. Check via debug logs if needed. |
+| TC-DEM-003 | 1. With demo token active.<br>2. Run `aye chat` and send a message (e.g., "Hello").<br>3. Or run `python aye/model/api.py` (with dry_run). | - API call to `/invoke_cli` or `/plugins` uses demo token in `Authorization: Bearer aye_demo_...`.<br>- Response handled (e.g., spinner shows, summary printed; may indicate demo limits).<br>- No 401/403 auth errors. | HTTP headers include demo token; response JSON parsed without auth exceptions. Check via debug logs if needed. |
 | TC-DEM-004 | 1. Run multiple commands: `aye snap history`, `aye config list`.<br>2. Restart terminal/session. | Demo token reused; no regeneration unless deleted. | Token unchanged in `~/.ayecfg`; API calls succeed consistently. |
 
 ### Scenario 3: Override with Real Token via Login
@@ -51,7 +51,7 @@ The purpose of this test plan is to validate that the demo token behaves correct
 
 | Test Case ID | Steps | Expected Result | Pass/Fail Criteria |
 |--------------|-------|-----------------|---------------------|
-| TC-DEM-005 | 1. Demo token active.<br>2. Run `aye auth login`.<br>3. Enter a mock/real token (e.g., from https://ayechat.ai).<br>4. Run `python -c "from aye.auth import get_token; print(get_token())"`. | - Token updated to real one in `~/.ayecfg`.<br>- Demo token no longer used.<br>- CLI echoes "✅ Token saved." | New token stored; starts with user-provided value, not `aye_demo_`. |
+| TC-DEM-005 | 1. Demo token active.<br>2. Run `aye auth login`.<br>3. Enter a mock/real token (e.g., from https://ayechat.ai).<br>4. Run `python -c "from aye.model.auth import get_token; print(get_token())"`. | - Token updated to real one in `~/.ayecfg`.<br>- Demo token no longer used.<br>- CLI echoes "✅ Token saved." | New token stored; starts with user-provided value, not `aye_demo_`. |
 | TC-DEM-006 | 1. After login.<br>2. Run API call (e.g., `aye chat`). | Uses real token; full features if valid. | No demo prefix; backend responds accordingly (e.g., no dry_run forced). |
 
 ### Scenario 4: Logout and Demo Regeneration
@@ -76,7 +76,7 @@ The purpose of this test plan is to validate that the demo token behaves correct
 - All test cases pass without critical errors (auth failures, crashes).
 - Demo token enables basic CLI usage (chat, plugins) in dry-run/demo mode.
 - Transitions to/from real tokens are seamless.
-- Coverage: 100% of core paths in `auth.py#get_token()`.
+- Coverage: 100% of core paths in `aye/model/auth.py#get_token()`.
 
 ## Risks and Mitigations
 

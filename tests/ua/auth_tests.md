@@ -1,6 +1,6 @@
 # User Acceptance Tests for Auth Commands in Aye
 
-This document outlines user acceptance tests (UATs) for authentication-related commands in Aye. These commands are executed from the CLI: `aye auth login` and `aye auth logout`. Tests are based on the functionality implemented in `src/aye/__main__.py`, `src/aye/service.py`, and `src/aye/auth.py`, focusing on token management, plugin downloads, and error handling.
+This document outlines user acceptance tests (UATs) for authentication-related commands in Aye. These commands are executed from the CLI: `aye auth login` and `aye auth logout`. Tests are based on the functionality implemented in `aye/__main__.py`, `aye/controller/commands.py`, and `aye/model/auth.py`, focusing on token management, plugin downloads, and error handling.
 
 ## Test Environment Setup
 - Ensure Aye is installed and accessible via CLI.
@@ -77,7 +77,7 @@ This document outlines user acceptance tests (UATs) for authentication-related c
 
 ## Notes
 - Tests assume the API endpoints for plugin download are functional; use dry_run modes or mocks for isolated testing.
-- Error messages are based on code inspection (e.g., from exception handling in `handle_login` and `fetch_plugins`); actual output may vary.
+- Error messages are based on code inspection (e.g., from exception handling in `login_and_fetch_plugins` and `fetch_plugins`); actual output may vary.
 - Security: Ensure tokens are handled securely; tests should not log or expose real tokens.
 - All commands should handle exceptions gracefully, providing user-friendly messages.
 - Tests should be run in a controlled environment to avoid affecting real authentication state.

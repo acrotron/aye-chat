@@ -23,7 +23,7 @@ class CmdPathCompleter(Completer):
         """Get list of available system commands"""
         try:
             # Get PATH directories
-            path_dirs = os.environ.get('PATH', '').split(':')
+            path_dirs = os.environ.get('PATH', '').split(os.pathsep)
             commands = set()
             
             # Scan each directory for executables

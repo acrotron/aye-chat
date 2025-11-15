@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from aye.source_collector import _is_hidden
+from aye.model.source_collector import _is_hidden
 
 
 @pytest.mark.parametrize(

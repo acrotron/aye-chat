@@ -1,6 +1,6 @@
 # User Acceptance Tests for Snapshot Commands in Aye Chat
 
-This document outlines user acceptance tests (UATs) for snapshot-related commands that are executed exclusively from the Aye chat interface (REPL). These commands are: `history`, `restore`, and `keep`. Tests are based on the functionality implemented in `src/aye/repl.py`, focusing on user interactions within the chat session.
+This document outlines user acceptance tests (UATs) for snapshot-related commands that are executed exclusively from the Aye chat interface (REPL). These commands are: `history`, `restore`, and `keep`. Tests are based on the functionality implemented in `aye/controller/repl.py`, focusing on user interactions within the chat session.
 
 ## Test Environment Setup
 - Start Aye chat session using `aye chat`.
@@ -104,7 +104,7 @@ This document outlines user acceptance tests (UATs) for snapshot-related command
 - **Then**: The system displays an error message (e.g., `[red]Error:[/] invalid literal for int() with base 10: 'abc'`), and no pruning occurs.
 
 ## Notes
-- Tests assume the underlying snapshot functions in `src/aye/snapshot.py` work correctly, as the REPL delegates to them.
+- Tests assume the underlying snapshot functions in `aye/model/snapshot.py` work correctly, as the REPL delegates to them.
 - Error messages are based on code inspection; actual output may vary slightly.
 - All commands should respond gracefully to exceptions, displaying error messages in red.
 - Tests should be run in a controlled environment to avoid affecting real project snapshots.

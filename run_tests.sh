@@ -34,13 +34,9 @@ pytest_status=$?
 status=$((status || pytest_status))
 
 # Generate the coverage report
-#coverage report --omit="**/test_*.py,**/tests/*.py"
-#coverage xml --omit="**/test_*.py,**/tests/*.py"
-#coverage html --omit="**/test_*.py,**/tests/*.py"
-
-coverage report
-coverage xml
-coverage html
+coverage report --omit="**/test_*.py,**/tests/*.py"
+coverage xml --omit="**/test_*.py,**/tests/*.py"
+coverage html --omit="**/test_*.py,**/tests/*.py"
 
 echo "----------------------------------------------------------------------"
 echo "================= AYE CHAT tests: the end ===================="

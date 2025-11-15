@@ -1,6 +1,6 @@
 # User Acceptance Tests for UI Functions in Aye
 
-This document outlines user acceptance tests (UATs) for UI functions in Aye, implemented in `src/aye/ui.py`. The module provides display functions for welcome messages, help, prompts, errors, and status updates. Tests cover CLI and chat interactions where UI prints are shown. Emphasize proper formatting, colors, and user feedback in terminal.
+This document outlines user acceptance tests (UATs) for UI functions in Aye, implemented in `aye/presenter/repl_ui.py` and related presenter modules. The modules provide display functions for welcome messages, help, prompts, errors, and status updates. Tests cover CLI and chat interactions where UI prints are shown. Emphasize proper formatting, colors, and user feedback in terminal.
 
 ## Test Environment Setup
 - Run in a color-supporting terminal.

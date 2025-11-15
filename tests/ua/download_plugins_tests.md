@@ -1,6 +1,6 @@
 # User Acceptance Tests for Download Plugins Functionality in Aye
 
-This document outlines user acceptance tests (UATs) for the plugin download functionality in Aye, implemented in `src/aye/download_plugins.py`. The `fetch_plugins` function fetches the plugin manifest from the server, downloads and installs plugins if hashes don't match, and updates the local manifest. This is triggered during authentication (e.g., `aye auth login`) and supports dry_run mode for testing. Tests focus on successful downloads, error handling (e.g., network issues, invalid tokens), hash verification, and plugin loading in the chat interface.
+This document outlines user acceptance tests (UATs) for the plugin download functionality in Aye, implemented in `aye/model/download_plugins.py`. The `fetch_plugins` function fetches the plugin manifest from the server, downloads and installs plugins if hashes don't match, and updates the local manifest. This is triggered during authentication (e.g., `aye auth login`) and supports dry_run mode for testing. Tests focus on successful downloads, error handling (e.g., network issues, invalid tokens), hash verification, and plugin loading in the chat interface.
 
 ## Test Environment Setup
 - Ensure Aye is installed and accessible via CLI.
