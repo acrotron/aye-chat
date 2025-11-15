@@ -1,6 +1,6 @@
 # User Acceptance Tests for Configuration Management in Aye
 
-This document outlines user acceptance tests (UATs) for configuration management in Aye, implemented in `src/aye/config.py`. The module handles loading/saving user config from `.aye/config.json`, with functions for get/set/delete/list. Configurations include file masks, root directories, selected models, and other settings. Tests cover CLI config commands (`aye config list/get/set/delete`), persistence, and defaults. Emphasize user interactions via CLI to set/get configs that affect behavior (e.g., model selection in chat).
+This document outlines user acceptance tests (UATs) for configuration management in Aye, implemented in `aye/model/config.py`. The module handles loading/saving user config from `.aye/config.json`, with functions for get/set/delete/list. Configurations include file masks, root directories, selected models, and other settings. Tests cover CLI config commands (`aye config list/get/set/delete`), persistence, and defaults. Emphasize user interactions via CLI to set/get configs that affect behavior (e.g., model selection in chat).
 
 ## Test Environment Setup
 - Ensure `.aye/config.json` exists or can be created (clean slate for tests).

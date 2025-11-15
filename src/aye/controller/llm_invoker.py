@@ -1,16 +1,13 @@
-# llm_invoker.py
-"""Unified LLM invocation wrapper for both API and local models."""
-
 import json
-from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Optional
+
 from rich.console import Console
 from rich import print as rprint
 
-from .source_collector import collect_sources
-from .api import cli_invoke
-from .models import LLMResponse, LLMSource
-from .ui_utils import thinking_spinner
+from aye.model.source_collector import collect_sources
+from aye.model.api import cli_invoke
+from aye.model.models import LLMResponse, LLMSource
+from aye.presenter.ui_utils import thinking_spinner
 
 DEBUG = False
 
@@ -38,7 +35,7 @@ def invoke_llm(
     Returns:
         LLMResponse object with the result
     """
-    # Collect source files
+    # Collect source files (Model interaction)
     source_files = collect_sources(conf.root, conf.file_mask)
     
     if verbose:
@@ -46,9 +43,9 @@ def invoke_llm(
     else:
         rprint("[yellow]Turn on verbose mode to see list of files included with prompt.[/]")
     
-    # Use spinner for both local and API invocations
+    # Use spinner for both local and API invocations (Presenter interaction)
     with thinking_spinner(console):
-        # Try local model first
+        # Try local model first (Controller logic)
         local_response = plugin_manager.handle_command("local_model_invoke", {
             "prompt": prompt,
             "model_id": conf.selected_model,
@@ -66,9 +63,9 @@ def invoke_llm(
                 source=LLMSource.LOCAL
             )
         
-        # Fall back to API
+        # Fall back to API (Model interaction)
         if DEBUG:
-            print(f"[DEBUG] Processing chat message with chat_id={chat_id}, model={conf.selected_model}")
+            print(f"[DEBUG] Processing chat message with chat_id={chat_id or -1}, model={conf.selected_model}")
         
         resp = cli_invoke(
             message=prompt,
@@ -80,7 +77,7 @@ def invoke_llm(
         if DEBUG:
             print(f"[DEBUG] Chat message processed, response keys: {resp.keys() if resp else 'None'}")
     
-    # Parse the assistant response
+    # Parse the assistant response (Controller logic)
     assistant_resp_str = resp.get('assistant_response')
     
     if assistant_resp_str is None:

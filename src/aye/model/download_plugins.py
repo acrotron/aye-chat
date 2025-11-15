@@ -11,8 +11,8 @@ import shutil
 import binascii
 from typing import Union
 
-from .auth import get_token
-from .api import fetch_plugin_manifest, fetch_server_time
+from aye.model.auth import get_token
+from aye.model.api import fetch_plugin_manifest, fetch_server_time
 
 PLUGIN_ROOT = Path.home() / ".aye" / "plugins"
 MANIFEST_FILE = PLUGIN_ROOT / "manifest.json"

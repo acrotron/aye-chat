@@ -1,6 +1,6 @@
 # User Acceptance Tests for Plugin System in Aye
 
-This document outlines user acceptance tests (UATs) for the plugin system in Aye, implemented in `src/aye/plugin_manager.py`, `src/aye/plugin_base.py`, and plugins in `src/aye/plugins/` (e.g., completer.py, shell_executor.py, auto_detect_mask.py). The plugin manager loads plugins from `~/.aye/plugins/`, handles commands via `on_command`, and integrates into chat for completers, shell execution, and auto-detection. Tests cover plugin discovery, command handling, and specific plugin functionalities like tab completion, shell commands, and mask detection. Emphasize user interactions in chat where plugins are active.
+This document outlines user acceptance tests (UATs) for the plugin system in Aye, implemented in `aye/controller/plugin_manager.py`, `aye/plugins/plugin_base.py`, and plugins in `aye/plugins/` (e.g., completer.py, shell_executor.py, auto_detect_mask.py). The plugin manager loads plugins from `~/.aye/plugins/`, handles commands via `on_command`, and integrates into chat for completers, shell execution, and auto-detection. Tests cover plugin discovery, command handling, and specific plugin functionalities like tab completion, shell commands, and mask detection. Emphasize user interactions in chat where plugins are active.
 
 ## Test Environment Setup
 - Downloaded plugins must be present in `~/.aye/plugins/` (via `aye auth login`).

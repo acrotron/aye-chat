@@ -62,6 +62,8 @@ def _truncate_prompt(prompt: Optional[str], max_length: int = 32) -> str:
     if not prompt:
         return "no prompt".ljust(max_length)
     prompt = prompt.strip()
+    if not prompt:
+        return "no prompt".ljust(max_length)
     if len(prompt) <= max_length:
         return prompt.ljust(max_length)
     return prompt[:max_length] + "..."

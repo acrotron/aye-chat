@@ -7,8 +7,8 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.spinner import Spinner
 
-from .service import handle_diff_command
-from .snapshot import restore_snapshot, apply_updates
+from aye.presenter.diff_presenter import show_diff
+from aye.model.snapshot import restore_snapshot, apply_updates, list_snapshots
 
 
 def _print_step(title, text, simulated_command=None):
@@ -93,7 +93,7 @@ def run_tutorial():
             raise RuntimeError("The model did not suggest any file changes.")
         
         # Apply the updates, which also creates the initial snapshot
-        apply_updates(updated_files, prompt)
+        batch_ts = apply_updates(updated_files, prompt)
         
         summary = result.get("summary", "The model has responded.")
         bot_face = "-{•!•}-"
@@ -121,7 +121,15 @@ def run_tutorial():
     )
     
     try:
-        handle_diff_command([str(temp_file)])
+        # To call diff, we need the path to the snapshot file.
+        # In a real scenario, we'd get this from the snapshot model.
+        # Here, we can reconstruct it based on the `apply_updates` logic.
+        snapshots = list_snapshots(temp_file)
+        if snapshots:
+            latest_snap_path = Path(snapshots[0][1])
+            show_diff(temp_file, latest_snap_path)
+        else:
+             rprint("[yellow]Could not find snapshot to diff against.[/yellow]")
     except Exception as e:
         rprint(f"[red]Error showing diff: {e}[/red]")
 

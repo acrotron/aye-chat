@@ -1,6 +1,6 @@
 # User Acceptance Tests for Source Collector Functionality in Aye
 
-This document outlines user acceptance tests (UATs) for the source collection feature in Aye, implemented in `src/aye/source_collector.py`. The `collect_sources` function collects source files based on file masks, automatically excluding hidden files/directories (those starting with '.') and files matching patterns in `.gitignore` and `.ayeignore` files (loaded from the root directory and all parent directories). Tests emphasize correct exclusion of hidden and ignored files, while verifying inclusion of valid source files. The functionality is used internally by Aye for collecting files to include in prompts, such as in chat sessions or generation commands.
+This document outlines user acceptance tests (UATs) for the source collection feature in Aye, implemented in `aye/model/source_collector.py`. The `collect_sources` function collects source files based on file masks, automatically excluding hidden files/directories (those starting with '.') and files matching patterns in `.gitignore` and `.ayeignore` files (loaded from the root directory and all parent directories). Tests emphasize correct exclusion of hidden and ignored files, while verifying inclusion of valid source files. The functionality is used internally by Aye for collecting files to include in prompts, such as in chat sessions or generation commands.
 
 ## Test Environment Setup
 - Create a temporary project directory structure with various files and subdirectories.

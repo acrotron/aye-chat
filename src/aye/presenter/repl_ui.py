@@ -2,7 +2,6 @@ from rich import print as rprint
 from rich.padding import Padding
 from rich.console import Console
 from rich.spinner import Spinner
-from rich import print as rprint
 
 
 def print_welcome_message():
