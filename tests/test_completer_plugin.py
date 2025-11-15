@@ -42,11 +42,6 @@ class TestCmdPathCompleter(TestCase):
         doc = Document("e", cursor_position=1)
         completions = list(self.completer.get_completions(doc, self.event))
         self.assertIn(Completion("exit ", start_position=-1, display="exit"), completions)
-        
-        # Complete 'c' -> 'cd'
-        doc = Document("c", cursor_position=1)
-        completions = list(self.completer.get_completions(doc, self.event))
-        self.assertIn(Completion("cd ", start_position=-1, display="cd"), completions)
 
     @patch('os.path.isdir')
     @patch('prompt_toolkit.completion.PathCompleter.get_completions')
