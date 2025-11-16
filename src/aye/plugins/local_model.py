@@ -49,7 +49,7 @@ class LocalModelPlugin(Plugin):
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the local model plugin."""
         super().init(cfg)
-        if self.verbose:
+        if self.debug:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
         
     def _load_history(self) -> None:

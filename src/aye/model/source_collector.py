@@ -44,41 +44,65 @@ def _load_ignore_patterns(root_path: Path) -> list[str]:
     return ignore_patterns
 
 
-def collect_sources(
+def get_project_files(
     root_dir: str = ".",
     file_mask: str = "*.py",
     recursive: bool = True,
-) -> Dict[str, str]:
-    sources: Dict[str, str] = {}
+) -> List[Path]:
+    """
+    Collects a list of source file paths based on include masks and ignore patterns,
+    without reading their content. This is an I/O-optimized way to get a file list.
+
+    Returns:
+        A list of Path objects for all matching files.
+    """
     base_path = Path(root_dir).expanduser().resolve()
 
     if not base_path.is_dir():
         raise NotADirectoryError(f"'{root_dir}' is not a valid directory")
 
-    # Load ignore patterns and build a PathSpec for git‑style matching
     ignore_patterns = _load_ignore_patterns(base_path)
     spec = pathspec.PathSpec.from_lines("gitwildmatch", ignore_patterns)
 
-    masks: List[str] = [m.strip() for m in file_mask.split(",") if m.strip()]  # e.g. ["*.py", "*.jsx"]
+    masks: List[str] = [m.strip() for m in file_mask.split(",") if m.strip()]
 
     def _iter_for(mask: str) -> Iterable[Path]:
         return base_path.rglob(mask) if recursive else base_path.glob(mask)
 
-    # Chain all iterators; convert to a set to deduplicate paths
     all_matches: Set[Path] = set(chain.from_iterable(_iter_for(m) for m in masks))
 
+    project_files = []
     for py_file in all_matches:
-        # Skip hidden subfolders (any part of the path starting with '.')
         if _is_hidden(py_file.relative_to(base_path)):
             continue
         
-        # Skip files that match ignore patterns (relative to the base path)
         rel_path = py_file.relative_to(base_path).as_posix()
         if spec.match_file(rel_path):
             continue
         
         if not py_file.is_file():
             continue
+        
+        project_files.append(py_file)
+    
+    return project_files
+
+
+def collect_sources(
+    root_dir: str = ".",
+    file_mask: str = "*.py",
+    recursive: bool = True,
+) -> Dict[str, str]:
+    """
+    Collects source files and their content into a dictionary.
+    Uses get_project_files to find relevant files and then reads them.
+    """
+    sources: Dict[str, str] = {}
+    base_path = Path(root_dir).expanduser().resolve()
+    
+    project_files = get_project_files(root_dir, file_mask, recursive)
+
+    for py_file in project_files:
         try:
             content = py_file.read_text(encoding="utf-8")
             rel_key = py_file.relative_to(base_path).as_posix()

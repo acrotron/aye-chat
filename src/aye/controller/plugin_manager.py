@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Any
 from rich import print as rprint
 from aye.plugins.plugin_base import Plugin
 
+DEBUG = False
 
 class PluginManager:
     def __init__(self, tier: str = "free", verbose: bool = False) -> None:
@@ -12,7 +13,7 @@ class PluginManager:
         self.verbose = verbose
         self.registry: Dict[str, Plugin] = {}
 
-        if self.verbose:
+        if DEBUG:
             rprint(f"[bold yellow]Plugin Manager initialized with tier: {self.tier}[/]")
 
     def _load(self, file: Path):
@@ -30,7 +31,7 @@ class PluginManager:
                 if isinstance(m, type) and issubclass(m, Plugin) and m is not Plugin:
                     plug = m()
                     if self._allowed(plug.premium):
-                        plug.init({"verbose": self.verbose})
+                        plug.init({"verbose": self.verbose, "debug": DEBUG})
                         self.registry[plug.name] = plug
         except Exception as e:
             if self.verbose:

@@ -1,7 +1,11 @@
+# Runtime dependencies
 typer
 keyring
 prompt_toolkit
 httpx
 pathspec
+chromadb
+
+# Development dependencies
 coverage
 pytest

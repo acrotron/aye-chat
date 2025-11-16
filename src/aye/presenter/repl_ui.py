@@ -11,6 +11,7 @@ def print_welcome_message():
 
 def print_help_message():
     rprint("[bold]Available chat commands:[/]")
+    print("  with <files> : <prompt>      - Run prompt with specified files in context, skipping RAG.")
     print("  model                        - Select a different model. Selection will persist between sessions.")
     print("  verbose [on|off]             - Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)")
     print("  new                          - Start a new chat session (if you want to change the subject)")
@@ -21,8 +22,7 @@ def print_help_message():
     print("  exit, quit, Ctrl+D           - Exit the chat session")
     print("  help                         - Show this help message")
     print("")
-    #rprint("Shell commands (e.g., ls, git) are also supported without the leading slash.")
-    rprint("[yellow]If the first word does not match a chat or a shell command, entire prompt will be sent to LLM for response[/]")
+    rprint("[yellow]By default, relevant files are found using RAG to provide context for your prompt.[/]")
 
 
 def print_prompt():

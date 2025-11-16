@@ -74,10 +74,8 @@ def chat(
     file_mask: str = typer.Option(None, "--include", "-i", help="Include patterns for source files. Comma-separated globs."),
 ):
     """Start an interactive REPL."""
-    from types import SimpleNamespace
-    conf = SimpleNamespace()
-    conf.root = root if root else Path.cwd()
-    conf.file_mask = file_mask
+    # Centralized context and index preparation
+    conf = commands.initialize_project_context(root, file_mask)
     repl.chat_repl(conf)
 
 # ----------------------------------------------------------------------

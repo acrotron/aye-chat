@@ -141,11 +141,9 @@ class TestRepl(TestCase):
             mock_rprint.assert_any_call("\n[cyan]Goodbye![/cyan]")
 
     def test_chat_repl_main_loop_commands(self):
-        # This is a complex function to test. We will test the dispatching logic.
-        # We mock the main loop and check if the correct handlers are called.
+        # This test is rewritten to correctly mock dependencies and test the command dispatch logic.
         with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
              patch('aye.controller.repl.run_first_time_tutorial_if_needed'), \
-             patch('aye.controller.repl.plugin_manager'), \
              patch('aye.controller.repl.get_user_config', return_value="on"), \
              patch('aye.controller.repl.print_startup_header'), \
              patch('aye.controller.repl.Path') as mock_path, \
@@ -172,29 +170,55 @@ class TestRepl(TestCase):
                 'exit'
             ]
             mock_session_cls.return_value = mock_session
-            mock_path.return_value.exists.return_value = False
+
+            # Mock chat_id file handling
+            mock_chat_id_file = MagicMock()
+            mock_chat_id_file.exists.return_value = False
+            mock_path.return_value = mock_chat_id_file
+
             mock_commands.get_diff_paths.return_value = (Path('p1'), Path('p2'))
-            repl.plugin_manager.handle_command.side_effect = [
-                {"completer": None}, # get_completer (startup)
-                {"mask": "*.py"}, # auto_detect_mask (startup)
-                None, # new_chat (for 'new' prompt)
-                {"stdout": "files"}, # execute_shell_command (for 'ls -l')
-                None, # execute_shell_command (for 'a real prompt' -> triggers invoke_llm)
+
+            mock_plugin_manager = MagicMock()
+            mock_plugin_manager.handle_command.side_effect = [
+                {"completer": None}, # get_completer on startup
+                None,                # new_chat command
+                {"stdout": "files"}, # execute_shell_command for 'ls -l'
+                None,                # execute_shell_command for 'a real prompt' (fallback to LLM)
             ]
 
-            conf = SimpleNamespace(root=Path.cwd(), file_mask=None)
+            mock_index_manager = MagicMock()
+            mock_index_manager.has_work.return_value = False
+            mock_index_manager.is_indexing.return_value = False
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask="*.py",
+                plugin_manager=mock_plugin_manager,
+                index_manager=mock_index_manager,
+                verbose=True,
+                selected_model='test-model'
+            )
+
             repl.chat_repl(conf)
 
             # Assertions
             self.assertEqual(mock_session.prompt.call_count, 10)
-            self.assertEqual(mock_model_cmd.call_count, 2)
+            self.assertEqual(mock_model_cmd.call_count, 2) # Once on startup (verbose), once for 'model' command
             mock_commands.get_snapshot_history.assert_called_once()
             mock_commands.get_diff_paths.assert_called_once_with('file.py', '001', None)
             mock_diff.show_diff.assert_called_once()
             mock_commands.restore_from_snapshot.assert_called_once_with('001', None)
             mock_commands.prune_snapshots.assert_called_once_with(5)
-            mock_path.return_value.unlink.assert_called_once()
-            self.assertEqual(mock_help.call_count, 2)
-            self.assertIn(call("execute_shell_command", {'command': 'ls', 'args': ['-l']}), repl.plugin_manager.handle_command.call_args_list)
+            mock_chat_id_file.unlink.assert_called_once()
+            self.assertEqual(mock_help.call_count, 2) # Once on startup (verbose), once for 'help' command
+
+            expected_plugin_calls = [
+                call('get_completer', {'commands': ['with', 'new', 'history', 'diff', 'restore', 'undo', 'keep', 'model', 'verbose', 'exit', 'quit', ':q', 'help', 'cd']}),
+                call('new_chat', {'root': conf.root}),
+                call('execute_shell_command', {'command': 'ls', 'args': ['-l']}),
+                call('execute_shell_command', {'command': 'a', 'args': ['real', 'prompt']})
+            ]
+            self.assertEqual(mock_plugin_manager.handle_command.call_args_list, expected_plugin_calls)
+
             mock_invoke.assert_called_once()
             mock_process.assert_called_once()

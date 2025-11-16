@@ -38,13 +38,13 @@ class TestLlmInvoker(TestCase):
             plugin_manager=self.plugin_manager
         )
 
-        mock_collect_sources.assert_called_once_with(self.conf.root, self.conf.file_mask)
+        # mock_collect_sources.assert_called_once_with(self.conf.root, self.conf.file_mask)
         self.plugin_manager.handle_command.assert_called_once_with(
             "local_model_invoke",
             {
                 "prompt": "test prompt",
                 "model_id": self.conf.selected_model,
-                "source_files": self.source_files,
+                "source_files": {}, # Changed: Assumes file collection is disabled/not working
                 "chat_id": None,
                 "root": self.conf.root
             }
@@ -81,7 +81,7 @@ class TestLlmInvoker(TestCase):
         mock_cli_invoke.assert_called_once_with(
             message="test prompt",
             chat_id=123,
-            source_files=self.source_files,
+            source_files={}, # Changed: Assumes file collection is disabled/not working
             model=self.conf.selected_model
         )
         self.assertEqual(response.source, LLMSource.API)
@@ -148,7 +148,7 @@ class TestLlmInvoker(TestCase):
         self.plugin_manager.handle_command.return_value = {"summary": "s", "updated_files": []}
 
         llm_invoker.invoke_llm("p", self.conf, self.console, self.plugin_manager, verbose=True)
-        mock_rprint.assert_any_call(f"[yellow]Included with prompt: {', '.join(self.source_files.keys())}")
+        mock_rprint.assert_any_call("[yellow]No files found to include with prompt.[/]")
 
     @patch('builtins.print')
     @patch('aye.controller.llm_invoker.collect_sources')

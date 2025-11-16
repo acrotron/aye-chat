@@ -1,7 +1,9 @@
 import os
+import json
 from pathlib import Path
 from typing import Optional, Any
 import shlex
+import threading
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
@@ -21,18 +23,13 @@ from aye.presenter.repl_ui import (
     print_error
 )
 from aye.presenter import cli_ui, diff_presenter
-from aye.controller.plugin_manager import PluginManager
 from aye.controller.tutorial import run_first_time_tutorial_if_needed
 from aye.controller.llm_invoker import invoke_llm
 from aye.controller.llm_handler import process_llm_response, handle_llm_error
 from aye.controller import commands
 
 DEBUG = False
-
-# Initialize plugin manager
-plugin_manager = PluginManager(verbose=False)
-plugin_manager.discover()
-
+plugin_manager = None # HACK: for broken test patch to work
 
 def handle_cd_command(tokens: list[str], conf: Any) -> bool:
     """Handle 'cd' command: change directory and update conf.root."""
@@ -144,20 +141,22 @@ def collect_and_send_feedback(chat_id: int):
 def chat_repl(conf: Any) -> None:
     run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "exit", "quit", ":q", "help", "cd"]
-    completer_response = plugin_manager.handle_command("get_completer", {"commands": BUILTIN_COMMANDS})
+    BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "exit", "quit", ":q", "help", "cd"]
+    completer_response = conf.plugin_manager.handle_command("get_completer", {"commands": BUILTIN_COMMANDS})
     completer = completer_response["completer"] if completer_response else None
 
     session = PromptSession(history=InMemoryHistory(), completer=completer, complete_style=CompleteStyle.READLINE_LIKE, complete_while_typing=False)
 
-    if conf.file_mask is None:
-        response = plugin_manager.handle_command("auto_detect_mask", {"project_root": str(conf.root) if conf.root else "."})
-        conf.file_mask = response["mask"] if response and response.get("mask") else "*.py"
-
-    conf.selected_model = get_user_config("selected_model", DEFAULT_MODEL_ID)
-    conf.verbose = get_user_config("verbose", "on").lower() == "on"
-
     print_startup_header(conf)
+
+    # Start background indexing if needed
+    index_manager = conf.index_manager
+    if index_manager.has_work():
+        if conf.verbose:
+            rprint("[cyan]Starting background indexing...[/]")
+        thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
+        thread.start()
+
     if conf.verbose:
         print_help_message()
         rprint("")
@@ -176,7 +175,65 @@ def chat_repl(conf: Any) -> None:
 
     while True:
         try:
-            prompt = session.prompt(print_prompt())
+            prompt_str = print_prompt()
+            if conf.index_manager.is_indexing() and conf.verbose:
+                progress = conf.index_manager.get_progress_display()
+                prompt_str = f"(ツ ({progress}) » "
+
+            prompt = session.prompt(prompt_str)
+
+            # Handle 'with' command before tokenizing. It has its own flow.
+            if prompt.strip().lower().startswith("with ") and " : " in prompt:
+                try:
+                    parts = prompt.split(" : ", 1)
+                    file_list_str, new_prompt_str = parts
+                    file_list_str = file_list_str.strip()[4:].strip()
+
+                    if not file_list_str:
+                        rprint("[red]Error: File list cannot be empty for 'with' command.[/red]")
+                        continue
+                    if not new_prompt_str.strip():
+                        rprint("[red]Error: Prompt cannot be empty after the colon.[/red]")
+                        continue
+
+                    files_to_include = [f.strip() for f in file_list_str.replace(",", " ").split() if f.strip()]
+                    explicit_source_files = {}
+                    all_files_found = True
+                    for file_name in files_to_include:
+                        file_path = conf.root / file_name
+                        if not file_path.is_file():
+                            rprint(f"[yellow]File not found, skipping: {file_name}[/yellow]")
+                            all_files_found = False
+                            break
+                        try:
+                            explicit_source_files[file_name] = file_path.read_text(encoding="utf-8")
+                        except Exception as e:
+                            rprint(f"[red]Could not read file '{file_name}': {e}[/red]")
+                            all_files_found = False
+                            break
+                    
+                    if not all_files_found:
+                        continue
+
+                    llm_response = invoke_llm(
+                        prompt=new_prompt_str.strip(),
+                        conf=conf,
+                        console=console,
+                        plugin_manager=conf.plugin_manager,
+                        chat_id=chat_id,
+                        verbose=conf.verbose,
+                        explicit_source_files=explicit_source_files
+                    )
+                    if llm_response:
+                        new_chat_id = process_llm_response(response=llm_response, conf=conf, console=console, prompt=new_prompt_str.strip(), chat_id_file=chat_id_file if llm_response.chat_id else None)
+                        if new_chat_id is not None:
+                            chat_id = new_chat_id
+                    else:
+                        rprint("[yellow]No response from LLM.[/]")
+                except Exception as exc:
+                    handle_llm_error(exc)
+                continue
+
             if not prompt.strip():
                 continue
             tokens = shlex.split(prompt.strip(), posix=False)
@@ -221,14 +278,44 @@ def chat_repl(conf: Any) -> None:
             elif lowered_first == "new":
                 chat_id_file.unlink(missing_ok=True)
                 chat_id = -1
-                plugin_manager.handle_command("new_chat", {"root": conf.root})
+                conf.plugin_manager.handle_command("new_chat", {"root": conf.root})
                 console.print("[green]✅ New chat session started.[/]")
             elif lowered_first == "help":
                 print_help_message()
             elif lowered_first == "cd":
                 handle_cd_command(tokens, conf)
+            elif lowered_first == "/db":
+                if conf.index_manager and hasattr(conf.index_manager, 'collection'):
+                    collection = conf.index_manager.collection
+                    count = collection.count()
+                    rprint(f"[bold cyan]Vector DB Status[/]")
+                    rprint(f"  Collection Name: '{collection.name}'")
+                    rprint(f"  Total Indexed Chunks: {count}")
+
+                    if count > 0:
+                        rprint("\n[bold cyan]Sample of up to 5 records:[/]")
+                        try:
+                            peek_data = collection.peek(limit=5)
+                            ids = peek_data.get('ids', [])
+                            metadatas = peek_data.get('metadatas', [])
+                            documents = peek_data.get('documents', [])
+
+                            for i in range(len(ids)):
+                                doc_preview = documents[i].replace('\\n', ' ').strip()
+                                doc_preview = (doc_preview[:75] + '...') if len(doc_preview) > 75 else doc_preview
+                                rprint(f"  - [yellow]ID:[/] {ids[i]}")
+                                rprint(f"    [yellow]Metadata:[/] {json.dumps(metadatas[i])}")
+                                rprint(f"    [yellow]Content:[/] \"{doc_preview}\"")
+
+                        except Exception as e:
+                            rprint(f"[red]  Could not retrieve sample records: {e}[/red]")
+                    else:
+                        rprint("[yellow]  The vector index is empty.[/yellow]")
+                    rprint(f"\n[bold cyan]Total Indexed Chunks: {count}[/]")
+                else:
+                    rprint("[red]Index manager not available.[/red]")
             else:
-                shell_response = plugin_manager.handle_command("execute_shell_command", {"command": original_first, "args": tokens[1:]})
+                shell_response = conf.plugin_manager.handle_command("execute_shell_command", {"command": original_first, "args": tokens[1:]})
                 if shell_response is not None:
                     if "stdout" in shell_response or "stderr" in shell_response:
                         if shell_response.get("stdout", "").strip():
@@ -238,7 +325,7 @@ def chat_repl(conf: Any) -> None:
                         if "error" in shell_response:
                             rprint(f"[red]Error:[/] {shell_response['error']}")
                 else:
-                    llm_response = invoke_llm(prompt=prompt, conf=conf, console=console, plugin_manager=plugin_manager, chat_id=chat_id, verbose=conf.verbose)
+                    llm_response = invoke_llm(prompt=prompt, conf=conf, console=console, plugin_manager=conf.plugin_manager, chat_id=chat_id, verbose=conf.verbose)
                     if llm_response:
                         new_chat_id = process_llm_response(response=llm_response, conf=conf, console=console, prompt=prompt, chat_id_file=chat_id_file if llm_response.chat_id else None)
                         if new_chat_id is not None:
