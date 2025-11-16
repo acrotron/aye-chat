@@ -1,10 +1,11 @@
 from pathlib import Path
 import os
+from typing import Union, Optional
 
 # The only marker we care about now is the index file inside the .aye directory
 PROJECT_MARKER = ".aye/file_index.json"
 
-def find_project_root(start_path: str | Path = None) -> Path:
+def find_project_root(start_path: Optional[Union[str, Path]] = None) -> Path:
     """
     Find the project root by searching upwards for a '.aye/file_index.json' file.
     If no start_path is given, it uses the current working directory.
