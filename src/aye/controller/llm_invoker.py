@@ -58,60 +58,71 @@ def invoke_llm(
             # ALL FILES MODE: Include all project files
             source_files = collect_sources(root_dir=str(conf.root), file_mask=conf.file_mask)
         else:
-            # DEFAULT MODE (RAG): Retrieve context using the vector index.
-            if hasattr(conf, 'index_manager') and conf.index_manager:
-                rprint("[cyan]Searching for relevant context...[/]")
-                retrieved_chunks = conf.index_manager.query(
-                    prompt,
-                    n_results=300,
-                    min_relevance=RELEVANCE_THRESHOLD
-                )
+            # --- NEW: Decide between RAG and sending all files based on project size ---
+            all_project_files = collect_sources(root_dir=str(conf.root), file_mask=conf.file_mask)
+            total_size = sum(len(content.encode('utf-8')) for content in all_project_files.values())
 
-                if DEBUG and retrieved_chunks:
-                    rprint("[yellow]Retrieved context chunks (by relevance):[/]")
-                    for chunk in retrieved_chunks:
-                        rprint(f"  - Score: {chunk.score:.4f}, File: {chunk.file_path}")
-                    rprint()
+            if total_size < CONTEXT_HARD_LIMIT:
+                # Project is small enough, send all files.
+                if verbose:
+                    rprint(f"[cyan]Project size ({total_size / 1024:.1f}KB) is small; including all files.[/]")
+                source_files = all_project_files
+                use_all_files = True  # This ensures the correct message is printed later
+            else:
+                # DEFAULT MODE (RAG): Project is large, retrieve context using the vector index.
+                if hasattr(conf, 'index_manager') and conf.index_manager:
+                    rprint("[cyan]Searching for relevant context...[/]")
+                    retrieved_chunks = conf.index_manager.query(
+                        prompt,
+                        n_results=300,
+                        min_relevance=RELEVANCE_THRESHOLD
+                    )
 
-                if retrieved_chunks:
-                    # Get a ranked list of unique file paths from the sorted chunks
-                    unique_files_ranked = []
-                    seen_files = set()
-                    for chunk in retrieved_chunks:
-                        if chunk.file_path not in seen_files:
-                            unique_files_ranked.append(chunk.file_path)
-                            seen_files.add(chunk.file_path)
+                    if DEBUG and retrieved_chunks:
+                        rprint("[yellow]Retrieved context chunks (by relevance):[/]")
+                        for chunk in retrieved_chunks:
+                            rprint(f"  - Score: {chunk.score:.4f}, File: {chunk.file_path}")
+                        rprint()
 
-                    # --- Context Packing Logic ---
-                    # Add files by relevance, filling up to the soft limit (CONTEXT_TARGET_SIZE).
-                    # Skip any single file that would push the total size over the hard limit.
-                    current_size = 0
-                    for file_path_str in unique_files_ranked:
-                        # Stop if we've already packed enough context (soft limit).
-                        if current_size > CONTEXT_TARGET_SIZE:
-                            break
+                    if retrieved_chunks:
+                        # Get a ranked list of unique file paths from the sorted chunks
+                        unique_files_ranked = []
+                        seen_files = set()
+                        for chunk in retrieved_chunks:
+                            if chunk.file_path not in seen_files:
+                                unique_files_ranked.append(chunk.file_path)
+                                seen_files.add(chunk.file_path)
+
+                        # --- Context Packing Logic ---
+                        # Add files by relevance, filling up to the soft limit (CONTEXT_TARGET_SIZE).
+                        # Skip any single file that would push the total size over the hard limit.
+                        current_size = 0
+                        for file_path_str in unique_files_ranked:
+                            # Stop if we've already packed enough context (soft limit).
+                            if current_size > CONTEXT_TARGET_SIZE:
+                                break
                             
-                        try:
-                            full_path = conf.root / file_path_str
-                            if not full_path.is_file():
-                                continue
-                            
-                            content = full_path.read_text(encoding="utf-8")
-                            file_size = len(content.encode('utf-8'))
-                            
-                            # Check if adding this file would exceed the hard limit.
-                            if current_size + file_size > CONTEXT_HARD_LIMIT:
+                            try:
+                                full_path = conf.root / file_path_str
+                                if not full_path.is_file():
+                                    continue
+                                
+                                content = full_path.read_text(encoding="utf-8")
+                                file_size = len(content.encode('utf-8'))
+                                
+                                # Check if adding this file would exceed the hard limit.
+                                if current_size + file_size > CONTEXT_HARD_LIMIT:
+                                    if verbose:
+                                        rprint(f"[yellow]Skipping large file {file_path_str} ({file_size / 1024:.1f}KB) to stay within payload limits.[/]")
+                                    continue # Skip this file and try the next one.
+                                
+                                source_files[file_path_str] = content
+                                current_size += file_size
+                                
+                            except Exception as e:
                                 if verbose:
-                                    rprint(f"[yellow]Skipping large file {file_path_str} ({file_size / 1024:.1f}KB) to stay within payload limits.[/]")
-                                continue # Skip this file and try the next one.
-                            
-                            source_files[file_path_str] = content
-                            current_size += file_size
-                            
-                        except Exception as e:
-                            if verbose:
-                                rprint(f"[red]Could not read file {file_path_str}: {e}[/red]")
-                            continue
+                                    rprint(f"[red]Could not read file {file_path_str}: {e}[/red]")
+                                continue
     
     if verbose:
         if source_files:

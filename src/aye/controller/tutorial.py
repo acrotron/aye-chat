@@ -25,8 +25,9 @@ def run_tutorial():
     
     Guides the user through:
     1. Sending a prompt to modify a file.
-    2. Viewing the changes with `diff`.
-    3. Reverting the changes with `restore`.
+    2. Running a shell command.
+    3. Viewing the changes with `diff`.
+    4. Reverting the changes with `restore`.
     """
     # Directory for the flag file that prevents the tutorial from running again.
     tutorial_flag_dir = Path.home() / ".aye"
@@ -35,7 +36,7 @@ def run_tutorial():
 
     # Welcome message and confirmation
     rprint(Panel(
-        "[bold green]Welcome to Aye Chat![/] This is a quick 3-step interactive tutorial to get you started.",
+        "[bold green]Welcome to Aye Chat![/] This is a quick 4-step interactive tutorial to get you started.",
         title="[bold]First-Time User Tutorial[/bold]",
         border_style="green",
         expand=False
@@ -111,10 +112,37 @@ def run_tutorial():
         tutorial_flag_file.touch()
         return
     
-    # Step 2: Viewing the changes (diff)
+    # Step 2: Running a shell command
+    ls_command = f"ls -l {temp_file}"
+    _print_step(
+        "Step 2: Running Shell Commands",
+        "Aye Chat isn't just for AI prompts. Any command that isn't a built-in (like `diff` or `restore`) is executed directly in your shell.\n\n"
+        "This means you can run `git`, `pytest`, or even `vim` without leaving the chat.\n\n"
+        "Let's run `ls -l` to see the details of our updated file.",
+        simulated_command=ls_command
+    )
+
+    # In a real scenario, the shell executor plugin would handle this.
+    # Here, we'll simulate its output.
+    try:
+        from datetime import datetime
+
+        stat = temp_file.stat()
+        size = stat.st_size
+        mtime = datetime.fromtimestamp(stat.st_mtime).strftime('%b %d %H:%M')
+        
+        # A simplified, cross-platform 'ls -l' style output
+        ls_output = f"-rw-r--r-- 1 user group {size:4d} {mtime} {temp_file}"
+        rprint(f"\n[bright_black]{ls_output}[/bright_black]")
+
+    except Exception as e:
+        rprint(f"\n[yellow]Could not simulate 'ls -l': {e}[/yellow]")
+        rprint(f"[yellow]Imagine seeing file details like '-rw-r--r-- 1 user group 123 Oct 26 10:30 {temp_file}' here.[/yellow]")
+
+    # Step 3: Viewing the changes (diff)
     diff_command = f"diff {temp_file}"
     _print_step(
-        "Step 2: Viewing Changes with `diff`",
+        "Step 3: Viewing Changes with `diff`",
         "Before applying changes, Aye Chat creates a snapshot of the original files. You can see the difference between the current version and the last snapshot using the `diff` command.\n\n"
         "Let's run `diff` to see what changed.",
         simulated_command=diff_command
@@ -133,10 +161,10 @@ def run_tutorial():
     except Exception as e:
         rprint(f"[red]Error showing diff: {e}[/red]")
 
-    # Step 3: Reverting changes
+    # Step 4: Reverting changes
     restore_command = f"restore {temp_file}"
     _print_step(
-        "Step 3: Reverting Changes with `restore`",
+        "Step 4: Reverting Changes with `restore`",
         "If you don't like the changes, you can easily revert them using the `restore` (or `undo`) command. This restores the file from the last snapshot.\n\n"
         "Let's run `restore`.",
         simulated_command=restore_command
@@ -156,8 +184,9 @@ def run_tutorial():
         "Tutorial Complete!",
         "You've learned the basic workflow:\n"
         "  1. Send a prompt to the assistant.\n"
-        "  2. Review the changes using `diff`.\n"
-        "  3. Revert if needed using `restore` or `undo`.\n\n"
+        "  2. Run any shell command, like `ls -l`.\n"
+        "  3. Review the changes using `diff`.\n"
+        "  4. Revert if needed using `restore` or `undo`.\n\n"
         "You can explore more commands like `history`, `model`, and `help` in the interactive chat.\n\n"
         "Enjoy using Aye Chat!"
     )
