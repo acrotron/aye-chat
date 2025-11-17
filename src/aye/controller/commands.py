@@ -1,8 +1,16 @@
 import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
+from types import SimpleNamespace
 
-from aye.model import auth, config, snapshot, download_plugins
+from rich import print as rprint
+
+from aye.model import auth, config, snapshot, download_plugins, vector_db
+from aye.controller.plugin_manager import PluginManager
+from aye.controller.util import find_project_root
+from aye.model.index_manager import IndexManager
+from aye.model.auth import get_user_config
+from aye.model.config import DEFAULT_MODEL_ID
 
 
 # --- Auth Commands ---
@@ -101,3 +109,51 @@ def get_config_value(key: str) -> Any:
 def delete_config_value(key: str) -> bool:
     """Delete a configuration value."""
     return config.delete_value(key)
+
+# --- Context and Indexing Commands ---
+
+def initialize_project_context(root: Optional[Path], file_mask: Optional[str]) -> Any:
+    """
+    Initializes the project context by finding the root, setting up plugins,
+    and performing an initial file scan and index.
+    """
+    conf = SimpleNamespace()
+
+    # Load verbose config first
+    conf.verbose = get_user_config("verbose", "on").lower() == "on"
+
+    # 1. Find and set the project root
+    start_dir = root if root else Path.cwd()
+    conf.root = find_project_root(start_dir)
+
+    # 2. Initialize Plugin Manager and add to conf
+    plugin_manager = PluginManager(verbose=conf.verbose)
+    plugin_manager.discover()
+    conf.plugin_manager = plugin_manager
+
+    # 3. Auto-detect file mask if not provided
+    if not file_mask:
+        response = plugin_manager.handle_command(
+            "auto_detect_mask", {"project_root": str(conf.root)}
+        )
+        conf.file_mask = response["mask"] if response and response.get("mask") else "*.py"
+    else:
+        conf.file_mask = file_mask
+
+    # 4. Initialize the IndexManager, which handles vector DB and file scanning
+    conf.index_manager = IndexManager(conf.root, conf.file_mask)
+
+    # 5. Perform initial file scan and prepare for background indexing
+    if conf.verbose:
+        rprint("[cyan]Scanning project for changes...[/]")
+    try:
+        # The prepare_sync method now handles the fast scan and prints changes
+        conf.index_manager.prepare_sync(verbose=conf.verbose)
+    except Exception as e:
+        rprint(f"[red]Error during project scan: {e}[/]")
+        rprint("[yellow]Proceeding without index updates.[/]")
+
+    # 6. Load other configs
+    conf.selected_model = get_user_config("selected_model", DEFAULT_MODEL_ID)
+
+    return conf

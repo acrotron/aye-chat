@@ -25,3 +25,31 @@ class LLMResponse:
     updated_files: List[Dict[str, Any]]
     chat_id: Optional[int] = None
     source: LLMSource = LLMSource.API
+
+@dataclass
+class FileChanges:
+    """
+    Represents changes in the project files since the last scan.
+
+    Attributes:
+        added: List of file paths that are new.
+        modified: List of file paths that have been modified.
+        deleted: List of file paths that have been deleted.
+    """
+    added: List[str]
+    modified: List[str]
+    deleted: List[str]
+
+@dataclass
+class VectorIndexResult:
+    """
+    Represents a single item returned from a vector index search.
+
+    Attributes:
+        file_path: The path to the source file.
+        content: The original text content of the code chunk.
+        score: The similarity score (higher is better).
+    """
+    file_path: str
+    content: str
+    score: float

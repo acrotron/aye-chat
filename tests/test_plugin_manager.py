@@ -25,6 +25,7 @@ class TestPluginManager(TestCase):
     def setUp(self):
         self.plugin_manager = PluginManager()
 
+    @patch('aye.controller.plugin_manager.DEBUG', True)
     @patch('aye.controller.plugin_manager.rprint')
     def test_init_verbose(self, mock_rprint):
         manager = PluginManager(verbose=True)

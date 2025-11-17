@@ -1,7 +1,12 @@
-typer
-keyring
-prompt_toolkit
-httpx
-pathspec
+# Runtime dependencies
+typer==0.20.0
+keyring==25.7.0
+prompt_toolkit==3.0.52
+httpx==0.28.1
+pathspec==0.12.1
+onnxruntime==1.19.2
+chromadb==1.3.4
+
+# Development dependencies
 coverage
 pytest
