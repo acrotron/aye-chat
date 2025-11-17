@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Tuple
 import threading
 import concurrent.futures
 import weakref
@@ -110,6 +110,52 @@ class IndexManager:
         """Calculate the SHA-256 hash of a string."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+    def _check_file_status(self, file_path: Path, old_index: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """
+        Checks a single file against the index to determine its status.
+        
+        Returns:
+            A tuple of (status, new_metadata).
+            Status can be 'unchanged', 'modified', 'needs_refinement', or 'error'.
+        """
+        rel_path_str = file_path.relative_to(self.root_path).as_posix()
+        old_file_meta = old_index.get(rel_path_str)
+        
+        try:
+            stats = file_path.stat()
+            mtime = stats.st_mtime
+            size = stats.st_size
+        except FileNotFoundError:
+            return "error", None
+
+        is_new_format = isinstance(old_file_meta, dict)
+
+        # Fast check: if mtime and size are the same, assume unchanged.
+        if is_new_format and old_file_meta.get("mtime") == mtime and old_file_meta.get("size") == size:
+            if not old_file_meta.get("refined", False):
+                return "needs_refinement", old_file_meta
+            return "unchanged", old_file_meta
+
+        # Slower check: read file and compare hashes.
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            current_hash = self._calculate_hash(content)
+        except (IOError, UnicodeDecodeError):
+            return "error", old_file_meta # Keep old meta if read fails
+
+        old_hash = old_file_meta.get("hash") if is_new_format else old_file_meta
+        if current_hash == old_hash:
+            # Hash matches, but mtime/size didn't. Update meta and check refinement.
+            updated_meta = old_file_meta.copy() if is_new_format else {}
+            updated_meta.update({"hash": current_hash, "mtime": mtime, "size": size})
+            if not updated_meta.get("refined", False):
+                return "needs_refinement", updated_meta
+            return "unchanged", updated_meta
+        
+        # If we reach here, the file is modified.
+        new_meta = {"hash": current_hash, "mtime": mtime, "size": size, "refined": False}
+        return "modified", new_meta
+
     def prepare_sync(self, verbose: bool = False) -> None:
         """
         Performs a fast scan for file changes and prepares lists of files for
@@ -132,48 +178,23 @@ class IndexManager:
 
         for file_path in current_files:
             rel_path_str = file_path.relative_to(self.root_path).as_posix()
-            
-            try:
-                stats = file_path.stat()
-                mtime = stats.st_mtime
-                size = stats.st_size
-            except FileNotFoundError:
-                continue
+            status, meta = self._check_file_status(file_path, old_index)
 
-            old_file_meta = old_index.get(rel_path_str)
-            is_new_format = isinstance(old_file_meta, dict)
-
-            is_modified = True
-            if is_new_format and old_file_meta.get("mtime") == mtime and old_file_meta.get("size") == size:
-                is_modified = False
-
-            if is_modified:
-                try:
-                    content = file_path.read_text(encoding="utf-8")
-                    current_hash = self._calculate_hash(content)
-                except (IOError, UnicodeDecodeError):
-                    if old_file_meta: new_index[rel_path_str] = old_file_meta
-                    continue
-                
-                old_hash = old_file_meta.get("hash") if is_new_format else old_file_meta
-                if current_hash == old_hash:
-                    is_modified = False
-                else:
-                    new_index[rel_path_str] = {"hash": current_hash, "mtime": mtime, "size": size, "refined": False}
-                    files_to_coarse_index.append(rel_path_str)
-            
-            if not is_modified and old_file_meta:
-                new_index[rel_path_str] = old_file_meta
-                if not old_file_meta.get("refined", False):
-                    files_to_refine.append(rel_path_str)
+            if status == "modified":
+                files_to_coarse_index.append(rel_path_str)
+                if meta: new_index[rel_path_str] = meta
+            elif status == "needs_refinement":
+                files_to_refine.append(rel_path_str)
+                if meta: new_index[rel_path_str] = meta
+            elif status == "unchanged":
+                if meta: new_index[rel_path_str] = meta
+            # 'error' status is ignored
 
         deleted_files = list(set(old_index.keys()) - current_file_paths_str)
         if deleted_files:
             if verbose:
                 rprint(f"  [red]Deleted:[/] {len(deleted_files)} file(s) from index.")
             vector_db.delete_from_index(self.collection, deleted_files)
-            for file_path in deleted_files:
-                old_index.pop(file_path, None)
 
         if files_to_coarse_index:
             if verbose:
@@ -192,7 +213,7 @@ class IndexManager:
                 rprint("[green]Project index is up-to-date.[/]")
 
         self._target_index = new_index
-        self._current_index_on_disk = old_index
+        self._current_index_on_disk = old_index.copy()
 
     def _process_one_file_coarse(self, rel_path_str: str) -> Optional[str]:
         try:
