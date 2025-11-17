@@ -6,12 +6,13 @@ from typing import Dict, Any, List, Optional, Callable, Tuple
 import threading
 import concurrent.futures
 import weakref
+import time
 
 from rich import print as rprint
 
 from aye.model.models import VectorIndexResult
 from aye.model.source_collector import get_project_files
-from aye.model import vector_db
+from aye.model import vector_db, onnx_manager
 
 # --- Custom Daemon ThreadPoolExecutor ---
 # This is a workaround for the standard ThreadPoolExecutor not creating daemon threads.
@@ -88,7 +89,9 @@ class IndexManager:
         self.hash_index_path = self.index_dir / "file_index.json"
         self.SAVE_INTERVAL = 20  # Save progress after every N files
         
-        self.collection = vector_db.initialize_index(root_path)
+        self.collection: Optional[Any] = None
+        self._is_initialized = False
+        self._initialization_lock = threading.Lock()
 
         # --- Attributes for background indexing ---
         self._files_to_coarse_index: List[str] = []
@@ -105,6 +108,37 @@ class IndexManager:
         self._is_indexing: bool = False
         self._is_refining: bool = False
         self._progress_lock = threading.Lock()
+
+    def _lazy_initialize(self) -> bool:
+        """
+        Initializes the ChromaDB collection if it hasn't been already and if the
+        ONNX model is ready. Returns True on success or if already initialized.
+        """
+        with self._initialization_lock:
+            if self._is_initialized:
+                return self.collection is not None
+
+            model_status = onnx_manager.get_model_status()
+            
+            if model_status == "READY":
+                try:
+                    self.collection = vector_db.initialize_index(self.root_path)
+                    self._is_initialized = True
+                    rprint("[bold cyan]RAG system is now active.[/]")
+                    return True
+                except Exception as e:
+                    rprint(f"[red]Failed to initialize RAG system: {e}[/red]")
+                    self._is_initialized = True  # Mark as "initialized" to avoid retrying
+                    self.collection = None
+                    return False
+            
+            elif model_status == "FAILED":
+                self._is_initialized = True  # Avoid retrying on failure
+                self.collection = None
+                return False
+
+            # If status is DOWNLOADING or NOT_DOWNLOADED, we are not ready.
+            return False
 
     def _calculate_hash(self, content: str) -> str:
         """Calculate the SHA-256 hash of a string."""
@@ -161,6 +195,16 @@ class IndexManager:
         Performs a fast scan for file changes and prepares lists of files for
         coarse indexing and refinement.
         """
+        if not self._is_initialized and not self._lazy_initialize():
+            if verbose and onnx_manager.get_model_status() == "DOWNLOADING":
+                rprint("[yellow]RAG system is initializing (downloading models)... Project scan will begin shortly.[/]")
+            return
+
+        if not self.collection:
+            if verbose:
+                rprint("[yellow]RAG system is disabled. Skipping project scan.[/]")
+            return
+
         old_index: Dict[str, Any] = {}
         if self.hash_index_path.is_file():
             try:
@@ -218,7 +262,8 @@ class IndexManager:
     def _process_one_file_coarse(self, rel_path_str: str) -> Optional[str]:
         try:
             content = (self.root_path / rel_path_str).read_text(encoding="utf-8")
-            vector_db.update_index_coarse(self.collection, {rel_path_str: content})
+            if self.collection:
+                vector_db.update_index_coarse(self.collection, {rel_path_str: content})
             return rel_path_str
         except Exception:
             return None
@@ -229,7 +274,8 @@ class IndexManager:
     def _process_one_file_refine(self, rel_path_str: str) -> Optional[str]:
         try:
             content = (self.root_path / rel_path_str).read_text(encoding="utf-8")
-            vector_db.refine_file_in_index(self.collection, rel_path_str, content)
+            if self.collection:
+                vector_db.refine_file_in_index(self.collection, rel_path_str, content)
             return rel_path_str
         except Exception:
             return None
@@ -280,6 +326,23 @@ class IndexManager:
             self._save_progress()
 
     def run_sync_in_background(self):
+        """
+        Waits for the RAG system to be ready, then runs the indexing and
+        refinement process in the background.
+        """
+        # Wait for the RAG system to be ready. This will block the background thread,
+        # but not the main application thread.
+        while not self._is_initialized:
+            if self._lazy_initialize():
+                break
+            # If model download has failed, exit this thread.
+            if onnx_manager.get_model_status() == "FAILED":
+                return
+            time.sleep(1)
+
+        if not self.collection:
+            return  # RAG is disabled, so no indexing work to do.
+
         if not self.has_work():
             return
 
@@ -321,6 +384,14 @@ class IndexManager:
             return ""
 
     def query(self, query_text: str, n_results: int = 10, min_relevance: float = 0.0) -> List[VectorIndexResult]:
+        if not self._is_initialized and not self._lazy_initialize():
+            if onnx_manager.get_model_status() == "DOWNLOADING":
+                rprint("[yellow]RAG system is still initializing (downloading models)... Search is temporarily disabled.[/]")
+            return []
+
+        if not self.collection:
+            return []  # RAG is disabled.
+            
         return vector_db.query_index(
             collection=self.collection,
             query_text=query_text,

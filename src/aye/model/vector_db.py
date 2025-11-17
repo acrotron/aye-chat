@@ -4,7 +4,9 @@ This module encapsulates all interactions with the vector database (ChromaDB).
 It uses a lightweight ONNX-based model for embeddings to avoid large dependencies
 like PyTorch.
 """
-
+import os
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -13,6 +15,21 @@ import chromadb
 from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
 from aye.model.models import VectorIndexResult
+
+
+@contextmanager
+def suppress_stdout_stderr():
+    """A context manager that redirects stdout and stderr to devnull"""
+    with open(os.devnull, 'w') as fnull:
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = fnull
+        sys.stderr = fnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
 
 
 def initialize_index(root_path: Path) -> Any:
@@ -32,7 +49,10 @@ def initialize_index(root_path: Path) -> Any:
     
     # Instantiate the lightweight ONNX embedding function.
     # This avoids pulling in PyTorch and is much smaller.
-    embedding_function = ONNXMiniLM_L6_V2()
+    # The first time this is called, it will download the ONNX model.
+    # We suppress stdout/stderr to hide the download progress from the user.
+    with suppress_stdout_stderr():
+        embedding_function = ONNXMiniLM_L6_V2()
 
     # A collection is like a table in a traditional database
     collection = client.get_or_create_collection(

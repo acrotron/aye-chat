@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from rich import print as rprint
 
-from aye.model import auth, config, snapshot, download_plugins, vector_db
+from aye.model import auth, config, snapshot, download_plugins, vector_db, onnx_manager
 from aye.controller.plugin_manager import PluginManager
 from aye.controller.util import find_project_root
 from aye.model.index_manager import IndexManager
@@ -122,16 +122,20 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str]) -
     # Load verbose config first
     conf.verbose = get_user_config("verbose", "on").lower() == "on"
 
-    # 1. Find and set the project root
+    # 1. Kick off the ONNX model download in the background if it's the first run.
+    #    This allows the app to start up without waiting for the download.
+    onnx_manager.download_model_if_needed()
+
+    # 2. Find and set the project root
     start_dir = root if root else Path.cwd()
     conf.root = find_project_root(start_dir)
 
-    # 2. Initialize Plugin Manager and add to conf
+    # 3. Initialize Plugin Manager and add to conf
     plugin_manager = PluginManager(verbose=conf.verbose)
     plugin_manager.discover()
     conf.plugin_manager = plugin_manager
 
-    # 3. Auto-detect file mask if not provided
+    # 4. Auto-detect file mask if not provided
     if not file_mask:
         response = plugin_manager.handle_command(
             "auto_detect_mask", {"project_root": str(conf.root)}
@@ -140,10 +144,10 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str]) -
     else:
         conf.file_mask = file_mask
 
-    # 4. Initialize the IndexManager, which handles vector DB and file scanning
+    # 5. Initialize the IndexManager, which handles vector DB and file scanning
     conf.index_manager = IndexManager(conf.root, conf.file_mask)
 
-    # 5. Perform initial file scan and prepare for background indexing
+    # 6. Perform initial file scan and prepare for background indexing
     if conf.verbose:
         rprint("[cyan]Scanning project for changes...[/]")
     try:
@@ -153,7 +157,7 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str]) -
         rprint(f"[red]Error during project scan: {e}[/]")
         rprint("[yellow]Proceeding without index updates.[/]")
 
-    # 6. Load other configs
+    # 7. Load other configs
     conf.selected_model = get_user_config("selected_model", DEFAULT_MODEL_ID)
 
     return conf
