@@ -262,6 +262,10 @@ class IndexManager:
         if not self.has_work():
             return
 
+        # Set TOKENIZERS_PARALLELISM to false for this background process
+        # to avoid warnings and potential deadlocks with our own thread pool.
+        os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
         try:
             if self._files_to_coarse_index:
                 self._is_indexing = True
