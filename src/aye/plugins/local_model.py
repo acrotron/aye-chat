@@ -8,6 +8,8 @@ from rich import print as rprint
 
 from .plugin_base import Plugin
 
+LLM_TIMEOUT = 600.0
+
 
 # Shared system prompt for all local model handlers
 SYSTEM_PROMPT = (
@@ -149,7 +151,7 @@ class LocalModelPlugin(Plugin):
         payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": 16384, "response_format": {"type": "json_object"}}
         
         try:
-            with httpx.Client(timeout=180.0) as client:
+            with httpx.Client(timeout=LLM_TIMEOUT) as client:
                 response = client.post(api_url, json=payload, headers=headers)
                 response.raise_for_status()
                 result = response.json()
@@ -189,7 +191,7 @@ class LocalModelPlugin(Plugin):
         payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": 65536, "response_format": {"type": "json_object"}}
         
         try:
-            with httpx.Client(timeout=180.0) as client:
+            with httpx.Client(timeout=LLM_TIMEOUT) as client:
                 response = client.post(api_url, json=payload, headers=headers)
                 response.raise_for_status()
                 result = response.json()
@@ -230,7 +232,7 @@ class LocalModelPlugin(Plugin):
         payload = {"contents": contents, "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]}, "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.95, "maxOutputTokens": 65536, "responseMimeType": "application/json"}}
 
         try:
-            with httpx.Client(timeout=180.0) as client:
+            with httpx.Client(timeout=LLM_TIMEOUT) as client:
                 response = client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 result = response.json()
