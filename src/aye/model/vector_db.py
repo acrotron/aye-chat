@@ -15,6 +15,7 @@ import chromadb
 from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
 from aye.model.models import VectorIndexResult
+from aye.model.ast_chunker import ast_chunker, get_language_from_file_path
 
 
 @contextmanager
@@ -66,13 +67,13 @@ def initialize_index(root_path: Path) -> Any:
 def _chunk_file(content: str, chunk_size: int = 100, overlap: int = 10) -> List[str]:
     """
     Simple text chunker based on lines of code.
-    
+
     TODO: This can be replaced with a more sophisticated, language-aware chunker.
     """
     lines = content.splitlines()
     if not lines:
         return []
-        
+
     chunks = []
     for i in range(0, len(lines), chunk_size - overlap):
         chunk = "\n".join(lines[i:i + chunk_size])
@@ -105,13 +106,21 @@ def update_index_coarse(
 def refine_file_in_index(collection: Any, file_path: str, content: str):
     """
     Refines the index for a single file by replacing its coarse chunk
-    with fine-grained chunks.
+    with fine-grained, AST-based chunks.
     """
     # 1. Delete the old coarse chunk, which used the file_path as its ID.
     collection.delete(ids=[file_path])
 
     # 2. Create and upsert the new fine-grained chunks.
-    chunks = _chunk_file(content)
+    language_name = get_language_from_file_path(file_path)
+    chunks = []
+    if language_name:
+        chunks = ast_chunker(content, language_name)
+
+    # Fallback to line-based chunking if AST chunking fails or is not supported
+    if not chunks:
+        chunks = _chunk_file(content)
+
     if not chunks:
         return
 
@@ -152,7 +161,7 @@ def query_index(
 
     Returns:
         A list of VectorIndexResult objects. If filtering by `min_relevance` yields no results,
-        it falls back to returning the top 3 most relevant chunks.
+        it falls back to returning the top 10 most relevant chunks.
     """
     if not query_text:
         return []
@@ -184,7 +193,7 @@ def query_index(
         filtered_results = [r for r in all_results if r.score >= min_relevance]
 
         # If filtering removes all results, but there were some initial matches,
-        # fall back to returning the top 3 results regardless of score.
+        # fall back to returning the top 10 results regardless of score.
         # This ensures some context is always provided if anything is found at all.
         if not filtered_results and all_results:
             return all_results[:10]
