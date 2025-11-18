@@ -173,14 +173,27 @@ def chat_repl(conf: Any) -> None:
         except (ValueError, TypeError):
             chat_id_file.unlink(missing_ok=True)
 
+    first_iteration = True
     while True:
         try:
+            if not first_iteration:
+                # After the first command, check for file changes and trigger indexing if needed.
+                if not index_manager.is_indexing():
+                    index_manager.prepare_sync(verbose=False)
+                    if index_manager.has_work():
+                        if conf.verbose:
+                            rprint("[cyan]Changes detected, starting background indexing...[/]")
+                        thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
+                        thread.start()
+
             prompt_str = print_prompt()
             if conf.index_manager.is_indexing() and conf.verbose:
                 progress = conf.index_manager.get_progress_display()
                 prompt_str = f"(ツ ({progress}) » "
 
             prompt = session.prompt(prompt_str)
+
+            first_iteration = False
 
             # Handle 'with' command before tokenizing. It has its own flow.
             if prompt.strip().lower().startswith("with ") and ":" in prompt:
