@@ -1,24 +1,11 @@
 from pathlib import Path
 import typer
+from typing import Optional
 
-from .service import (
-    handle_login,
-    handle_logout,
-    handle_auth_status,
-    handle_generate_cmd,
-    handle_chat,
-    handle_history_cmd,
-    handle_snap_show_cmd,
-    handle_restore_cmd,
-    handle_prune_cmd,
-    handle_cleanup_cmd,
-    handle_config_list,
-    handle_config_set,
-    handle_config_get,
-    handle_config_delete,
-)
-
-from .config import load_config
+from aye.controller import commands, repl
+from aye.presenter import cli_ui
+from aye.presenter.diff_presenter import show_diff
+from aye.model.config import load_config
 
 # Load configuration at startup
 load_config()
@@ -26,19 +13,15 @@ load_config()
 app = typer.Typer(help="Aye: AI‑powered coding assistant for the terminal")
 
 # ----------------------------------------------------------------------
-# Version callback (retrieved from package metadata)
+# Version callback
 # ----------------------------------------------------------------------
 
 def _get_package_version() -> str:
-    """Return the installed package version using importlib.metadata.
-    Falls back to "0.0.0" if the package metadata cannot be found.
-    """
     try:
         from importlib.metadata import version, PackageNotFoundError
         return version("ayechat")
     except (ImportError, PackageNotFoundError):
         return "0.0.0"
-
 
 def _version_callback(value: bool):
     if value:
@@ -48,224 +31,131 @@ def _version_callback(value: bool):
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    version: bool = typer.Option(
-        None,
-        "--version",
-        callback=_version_callback,
-        is_eager=True,
-        help="Show the version and exit.",
-    ),
+    version: bool = typer.Option(None, "--version", callback=_version_callback, is_eager=True, help="Show the version and exit."),
 ):
-    """Root callback to handle global options like --version.
-    If no sub‑command is provided, show a short hint directing the user to the help output.
-    """
     if ctx.invoked_subcommand is None:
-        # No command was supplied – give a friendly hint.
         typer.echo("Run 'aye --help' to see available commands.")
-    # No further action needed – commands are added below.
-    return
 
-# Create subcommands
+# ----------------------------------------------------------------------
+# Auth commands
+# ----------------------------------------------------------------------
 auth_app = typer.Typer(help="Authentication commands")
 app.add_typer(auth_app, name="auth")
-# ----------------------------------------------------------------------
-# Authentication commands
-# ----------------------------------------------------------------------
+
 @auth_app.command()
 def login():
-    """
-    Configure personal access token for authenticating with the aye service.
-    """
-    handle_login()
+    """Configure personal access token for authenticating with the aye service."""
+    try:
+        commands.login_and_fetch_plugins()
+    except Exception as e:
+        cli_ui.print_generic_message(f"Login failed: {e}", is_error=True)
 
 @auth_app.command()
 def logout():
-    """
-    Remove the stored aye credentials.
-
-    Examples: \n
-    aye auth logout
-    """
-    handle_logout()
+    """Remove the stored aye credentials."""
+    commands.logout()
+    cli_ui.print_generic_message("🔐 Token removed.")
 
 @auth_app.command()
 def status():
-    """
-    Show authentication status and whether a token is saved.
-
-    Examples: \n
-    aye auth status
-    """
-    handle_auth_status()
+    """Show authentication status."""
+    try:
+        token = commands.get_auth_status_token()
+        cli_ui.print_auth_status(token)
+    except Exception as e:
+        cli_ui.print_generic_message(f"Error checking auth status: {e}", is_error=True)
 
 # ----------------------------------------------------------------------
-# Interactive REPL (chat) command
+# Chat (REPL) command
 # ----------------------------------------------------------------------
 @app.command()
 def chat(
-    root: Path = typer.Option(
-        None, "--root", "-r", help="Root folder where source files are located."
-    ),
-    file_mask: str = typer.Option(
-        None, "--include", "-i", help="Include patterns for source files to include into generation. Comma-separated globs are allowed."
-    ),
+    root: Path = typer.Option(None, "--root", "-r", help="Root folder where source files are located."),
+    file_mask: str = typer.Option(None, "--include", "-i", help="Include patterns for source files. Comma-separated globs."),
 ):
-    """
-    Start an interactive REPL. Use exit or Ctrl‑D to leave.
-    
-    Examples: \n
-    aye chat \n
-    aye chat --root ./src \n
-    aye chat --include "*.js,*.html" --root ./frontend \n
-    """
-    handle_chat(root, file_mask)
+    """Start an interactive REPL."""
+    # Centralized context and index preparation
+    conf = commands.initialize_project_context(root, file_mask)
+    repl.chat_repl(conf)
 
 # ----------------------------------------------------------------------
 # Snapshot commands
 # ----------------------------------------------------------------------
-snap_app = typer.Typer(help="Snapshot management commands (EXPERIMENTAL)")
+snap_app = typer.Typer(help="Snapshot management commands")
 app.add_typer(snap_app, name="snap")
 
 @snap_app.command("history")
-def history(
-    file: Path = typer.Argument(None, help="File to list snapshots for")
-):
-    """
-    Show timestamps of saved snapshots for *file* or all snapshots if no file provided.
-    
-    Examples: \n
-    aye snap history \n
-    aye snap history src/main.py \n
-    """
-    handle_history_cmd(file)
+def history(file: Path = typer.Argument(None, help="File to list snapshots for")):
+    """Show snapshot history for a file or all snapshots."""
+    snapshots = commands.get_snapshot_history(file)
+    cli_ui.print_snapshot_history(snapshots)
 
 @snap_app.command("show")
-def show(
-    file: Path = typer.Argument(..., help="File whose snapshot to show"),
-    ordinal: str = typer.Argument(..., help="Snapshot ID of the snapshot (e.g., 001)"),
-):
-    """
-    Print the contents of a specific snapshot.
-    
-    Examples: \n
-    aye snap show src/main.py 001 \n
-    """
-    handle_snap_show_cmd(file, ordinal)
+def show_snap(file: Path = typer.Argument(..., help="File whose snapshot to show"), ordinal: str = typer.Argument(..., help="Snapshot ID (e.g., 001)")):
+    """Print the contents of a specific snapshot."""
+    content = commands.get_snapshot_content(file, ordinal)
+    cli_ui.print_snapshot_content(content)
 
 @snap_app.command("restore")
-def restore(
-    ordinal: str = typer.Argument(None, help="Snapshot ID of the snapshot to restore (e.g., 001, default: latest)"),
-    file_name: str = typer.Argument(None, help="Specific file to restore from the snapshot"),
-):
-    """
-    Replace all files with the latest snapshot or specified snapshot by snapshot ID.
-    If file_name is provided, only that file is restored.
-    
-    Examples:\n
-    aye snap restore \n
-    aye snap restore 001 \n
-    aye snap restore 001 myfile.py \n
-    """
-    handle_restore_cmd(ordinal, file_name)
+def restore(ordinal: str = typer.Argument(None, help="Snapshot ID to restore (default: latest)"), file_name: str = typer.Argument(None, help="Specific file to restore")):
+    """Restore files from a snapshot."""
+    try:
+        commands.restore_from_snapshot(ordinal, file_name)
+        cli_ui.print_restore_feedback(ordinal, file_name)
+    except Exception as exc:
+        cli_ui.print_generic_message(f"Error: {exc}", is_error=True)
 
-# ----------------------------------------------------------------------
-# Snapshot cleanup/pruning commands
-# ----------------------------------------------------------------------
-@snap_app.command()
-def keep(
-    num: int = typer.Option(10, "--num", "-n", help="Number of recent snapshots to keep (default: 10)"),
-):
-    """
-    Delete all but the most recent N snapshots.
-    
-    Examples: \n
-    aye snap keep \n
-    aye snap keep --num 5 \n
-    aye snap keep -n 3 \n
-    """
-    handle_prune_cmd(num)
+@snap_app.command("keep")
+def keep(num: int = typer.Option(10, "--num", "-n", help="Number of recent snapshots to keep")):
+    """Delete all but the most recent N snapshots."""
+    try:
+        deleted_count = commands.prune_snapshots(num)
+        cli_ui.print_prune_feedback(deleted_count, num)
+    except Exception as e:
+        cli_ui.print_generic_message(f"Error pruning snapshots: {e}", is_error=True)
 
 @snap_app.command()
-def cleanup(
-    days: int = typer.Option(30, "--days", "-d", help="Delete snapshots older than N days (default: 30)"),
-):
-    """
-    Delete snapshots older than N days.
-    
-    Examples: \n
-    aye snap cleanup \n
-    aye snap cleanup --days 7 \n
-    aye snap cleanup -d 14 \n
-    """
-    handle_cleanup_cmd(days)
+def cleanup(days: int = typer.Option(30, "--days", "-d", help="Delete snapshots older than N days")):
+    """Delete snapshots older than N days."""
+    try:
+        deleted_count = commands.cleanup_old_snapshots(days)
+        cli_ui.print_cleanup_feedback(deleted_count, days)
+    except Exception as e:
+        cli_ui.print_generic_message(f"Error cleaning up snapshots: {e}", is_error=True)
 
 # ----------------------------------------------------------------------
-# One‑shot generation
-# ----------------------------------------------------------------------
-#@app.command()
-def generate(
-    prompt: str = typer.Argument(..., help="Prompt for the LLM"),
-    mode: str = typer.Option(
-        "replace",
-        "--mode",
-        "-m",
-        help="replace | append | insert (default: replace)",
-    ),
-):
-    """
-    Send a single prompt to the backend.
-    
-    Examples: \n
-    aye generate "Create a function that reverses a string" \n
-    aye generate "Add type hints to this function" --mode append \n
-    """
-    handle_generate_cmd(prompt, mode)
-
-# ----------------------------------------------------------------------
-# Configuration management commands
+# Config commands
 # ----------------------------------------------------------------------
 @app.command()
 def config(
-    action: str = typer.Argument(..., help="Action to perform: list, get, set, delete"),
+    action: str = typer.Argument(..., help="Action: list, get, set, delete"),
     key: str = typer.Argument(None, help="Configuration key"),
-    value: str = typer.Argument(None, help="Configuration value (for set action)"),
+    value: str = typer.Argument(None, help="Configuration value (for set)"),
 ):
-    """
-    Manage configuration values for file masks, root directories, and other settings. (EXPERIMENTAL)
-    
-    Actions: \n
-    - list: Show all configuration values \n
-    - get: Retrieve a specific configuration value \n
-    - set: Set a configuration value \n
-    - delete: Remove a configuration value \n
-    
-    Examples: \n
-    aye config list \n
-    aye config get file_mask \n
-    aye config set file_mask "*.py,*.js" \n
-    aye config delete file_mask \n
-    """
-    if action == "list":
-        handle_config_list()
-    elif action == "get":
-        if not key:
-            typer.echo("[red]Error:[/] Key is required for get action.")
-            raise typer.Exit(code=1)
-        handle_config_get(key)
-    elif action == "set":
-        if not key or not value:
-            typer.echo("[red]Error:[/] Key and value are required for set action.")
-            raise typer.Exit(code=1)
-        handle_config_set(key, value)
-    elif action == "delete":
-        if not key:
-            typer.echo("[red]Error:[/] Key is required for delete action.")
-            raise typer.Exit(code=1)
-        handle_config_delete(key)
-    else:
-        typer.echo(f"[red]Error:[/] Invalid action '{action}'. Use: list, get, set, delete")
+    """Manage local configuration."""
+    try:
+        if action == "list":
+            cfg = commands.get_all_config()
+            cli_ui.print_config_list(cfg)
+        elif action == "get":
+            if not key: raise typer.BadParameter("Key is required for get action.")
+            val = commands.get_config_value(key)
+            cli_ui.print_config_value(key, val)
+        elif action == "set":
+            if not key or value is None: raise typer.BadParameter("Key and value are required for set action.")
+            commands.set_config_value(key, value)
+            cli_ui.print_generic_message(f"Configuration '{key}' set.")
+        elif action == "delete":
+            if not key: raise typer.BadParameter("Key is required for delete action.")
+            if commands.delete_config_value(key):
+                cli_ui.print_generic_message(f"Configuration '{key}' deleted.")
+            else:
+                cli_ui.print_generic_message(f"Configuration key '{key}' not found.", is_error=True)
+        else:
+            raise typer.BadParameter(f"Invalid action '{action}'. Use: list, get, set, delete")
+    except Exception as e:
+        cli_ui.print_generic_message(str(e), is_error=True)
         raise typer.Exit(code=1)
-
 
 if __name__ == "__main__":
     app()

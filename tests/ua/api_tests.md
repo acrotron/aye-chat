@@ -1,6 +1,6 @@
 # User Acceptance Tests for API Functionality in Aye
 
-This document outlines user acceptance tests (UATs) for API-related functionality in Aye, implemented in `src/aye/api.py` and `src/aye/api_driver.py`. The `api.py` module handles HTTP requests to the Aye API for chat invokes, plugin manifests, and server time. The `api_driver.py` provides a driver for parallel execution of login, plugin fetch, chat invoke, and logout. Tests focus on successful API calls, error handling (e.g., no token, network failures), polling for responses, and parallel workflow execution. These are exercised via CLI commands or programmatic calls that depend on API endpoints.
+This document outlines user acceptance tests (UATs) for API-related functionality in Aye, implemented in `aye/model/api.py`. The `api.py` module handles HTTP requests to the Aye API for chat invokes, plugin manifests, and server time. (Note: api_driver.py has been refactored or removed; parallel workflows are now handled differently.) Tests focus on successful API calls, error handling (e.g., no token, network failures), polling for responses, and workflow execution. These are exercised via CLI commands or programmatic calls that depend on API endpoints.
 
 ## Test Environment Setup
 - Ensure Aye is installed and configured with a valid API URL (via `AYE_CHAT_API_URL` env var or default).
@@ -65,23 +65,23 @@ This document outlines user acceptance tests (UATs) for API-related functionalit
 - **Then**: Raises exception with API error.
 - **Verification**: Ensure fallback or error handling in calling code.
 
-### 4. API Driver Parallel Workflow
+### 4. API Workflow (Refactored from Parallel Driver)
 
-#### UAT-4.1: Successful Parallel Login, Fetch, Chat, Logout
+#### UAT-4.1: Successful Login, Fetch, Chat, Logout
 - **Given**: Valid token provided, server responsive.
-- **When**: The user runs `api_driver.main()` or equivalent with a real token.
-- **Then**: Executes login (stores token), parallel fetch plugins/time/chat, then logout, printing success messages.
-- **Verification**: Confirm all futures complete successfully, chat response is returned, and token is removed at end. No race conditions or exceptions.
+- **When**: The user runs login, chat, and logout commands sequentially.
+- **Then**: Executes login (stores token), fetches plugins, processes chat, then logout, printing success messages.
+- **Verification**: Confirm all steps complete successfully, chat response is returned, and token is removed at end. No race conditions or exceptions.
 
-#### UAT-4.2: Parallel Workflow with One Failure
+#### UAT-4.2: Workflow with One Failure
 - **Given**: Valid token, but one API (e.g., chat) fails.
-- **When**: Running parallel workflow.
+- **When**: Running workflow.
 - **Then**: Other tasks continue, failed task raises exception, but workflow attempts to complete.
 - **Verification**: Check that logout still runs, and errors are printed for failed tasks.
 
-#### UAT-4.3: Parallel Workflow No Token
+#### UAT-4.3: Workflow No Token
 - **Given**: No token provided or invalid.
-- **When**: Running `parallel_workflow`.
+- **When**: Running workflow.
 - **Then**: Login raises RuntimeError, workflow fails early.
 - **Verification**: Ensure no partial execution; all dependent calls check token.
 

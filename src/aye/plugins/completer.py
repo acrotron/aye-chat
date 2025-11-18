@@ -23,7 +23,7 @@ class CmdPathCompleter(Completer):
         """Get list of available system commands"""
         try:
             # Get PATH directories
-            path_dirs = os.environ.get('PATH', '').split(':')
+            path_dirs = os.environ.get('PATH', '').split(os.pathsep)
             commands = set()
             
             # Scan each directory for executables
@@ -88,7 +88,7 @@ class CompleterPlugin(Plugin):
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the completer plugin."""
         super().init(cfg)
-        if self.verbose:
+        if self.debug:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
         pass
 

@@ -29,28 +29,38 @@ class AutoDetectMaskPlugin(Plugin):
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the auto detect mask plugin."""
         super().init(cfg)
-        if self.verbose:
+        if self.debug:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
         pass
 
     def _load_gitignore(self, root: pathlib.Path) -> pathspec.PathSpec:
         """
-        Build a PathSpec that matches patterns from every `.gitignore`
-        and `.ayeignore` file found under *root* (including the top-level one).
+        Load ignore patterns from .ayeignore and .gitignore files in the root
+        directory and all parent directories. This ensures that detection respects
+        the same ignore rules as file collection.
         """
-        ignore_files: List[pathlib.Path] = []
-        for dirpath, _, filenames in os.walk(root):
-            for ignore_file in [".gitignore", ".ayeignore"]:
-                if ignore_file in filenames:
-                    ignore_files.append(pathlib.Path(dirpath) / ignore_file)
-
-        # Combine all patterns – `pathspec` can take an iterator of lines.
         patterns = []
-        for ig in ignore_files:
-            with ig.open("r", encoding="utf-8") as f:
-                patterns.extend(line.rstrip() for line in f if line.strip() and not line.strip().startswith("#"))
+        current_path = root.resolve()
 
-        # `GitIgnoreSpec` implements the same syntax as git.
+        while True:
+            for ignore_name in (".gitignore", ".ayeignore"):
+                ignore_file = current_path / ignore_name
+                if ignore_file.is_file():
+                    try:
+                        with ignore_file.open("r", encoding="utf-8") as f:
+                            patterns.extend(
+                                line.rstrip() for line in f 
+                                if line.strip() and not line.strip().startswith("#")
+                            )
+                    except Exception:
+                        # Ignore files we can't read
+                        pass
+            
+            if current_path.parent == current_path:  # Reached filesystem root
+                break
+            
+            current_path = current_path.parent
+
         return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
 
     def _is_binary(self, file_path: pathlib.Path, blocksize: int = 4096) -> bool:

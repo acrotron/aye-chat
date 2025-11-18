@@ -7,11 +7,13 @@ class Plugin(ABC):
     version: str = "1.0.0"
     premium: str = "free"  # one of: free, pro, team, enterprise
     verbose: bool = False
+    debug: bool = False
 
     def init(self, cfg: Dict[str, Any]) -> None:
         self.verbose = bool(cfg.get("verbose", False))
+        self.debug = bool(cfg.get("debug", False))
 
-        if self.verbose:
+        if self.debug:
             rprint(f"[bold yellow]Plugin config: {cfg}[/]")
             rprint(f"[bold yellow]Plugin premium tier: {self.premium}[/]")
             rprint(f"[bold yellow]Plugin verbose mode: {self.verbose}[/]")

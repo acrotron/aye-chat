@@ -1,6 +1,6 @@
 # User Acceptance Tests for Service Handlers in Aye
 
-This document outlines user acceptance tests (UATs) for service handlers in Aye, implemented in `src/aye/service.py` and CLI in `src/aye/__main__.py`. Covers handlers for generate, chat, diff, and other commands not fully tested elsewhere. Emphasize CLI usage and chat integration.
+This document outlines user acceptance tests (UATs) for service handlers in Aye, implemented in `aye/controller/commands.py` and CLI in `aye/__main__.py`. Covers handlers for generate, chat, diff, and other commands not fully tested elsewhere. Emphasize CLI usage and chat integration.
 
 ## Test Environment Setup
 - Run CLI commands.

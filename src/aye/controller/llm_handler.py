@@ -1,17 +1,18 @@
-# llm_handler.py
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any, Optional
+
 from rich import print as rprint
 from rich.console import Console
 
-from .ui import (
+from aye.presenter.repl_ui import (
     print_assistant_response,
     print_no_files_changed,
-    print_files_updated
+    print_files_updated,
+    print_error
 )
-from .snapshot import apply_updates
-from .file_processor import filter_unchanged_files, make_paths_relative
-from .models import LLMResponse
+from aye.model.snapshot import apply_updates
+from aye.model.file_processor import filter_unchanged_files, make_paths_relative
+from aye.model.models import LLMResponse
 
 
 def process_llm_response(
@@ -23,6 +24,7 @@ def process_llm_response(
 ) -> Optional[int]:
     """
     Unified handler for LLM responses from any source (API or local model).
+    Acts as a Presenter in MVP, orchestrating model and view updates.
     
     Args:
         response: Standardized LLM response
@@ -41,29 +43,29 @@ def process_llm_response(
         chat_id_file.parent.mkdir(parents=True, exist_ok=True)
         chat_id_file.write_text(str(new_chat_id), encoding="utf-8")
     
-    # Display assistant response summary
+    # Display assistant response summary (View update)
     if response.summary:
         print_assistant_response(response.summary)
     
     # Process file updates
     updated_files = response.updated_files
     
-    # Filter unchanged files
+    # Filter unchanged files (Controller/Model logic)
     updated_files = filter_unchanged_files(updated_files)
     
-    # Normalize file paths - ensure they are relative to the REPL root
+    # Normalize file paths (Controller/Model logic)
     updated_files = make_paths_relative(updated_files, conf.root)
     
     if not updated_files:
         print_no_files_changed(console)
     else:
-        # Apply updates directly via snapshot utilities
+        # Apply updates to the model (Model update)
         try:
-            batch_ts = apply_updates(updated_files, prompt)
-            if batch_ts:
-                file_names = [item.get("file_name") for item in updated_files if "file_name" in item]
-                if file_names:
-                    print_files_updated(console, file_names)
+            apply_updates(updated_files, prompt)
+            file_names = [item.get("file_name") for item in updated_files if "file_name" in item]
+            if file_names:
+                # Update the view
+                print_files_updated(console, file_names)
         except Exception as e:
             rprint(f"[red]Error applying updates:[/] {e}")
     
@@ -81,13 +83,13 @@ def handle_llm_error(exc: Exception) -> None:
     
     if hasattr(exc, "response") and getattr(exc.response, "status_code", None) == 403:
         traceback.print_exc()
-        from .ui import print_error
         print_error(
-            "[red]❌ Unauthorized:[/] the stored token is invalid or missing.\n"
-            "Log in again with `aye auth login` or set a valid "
-            "`AYE_TOKEN` environment variable.\n"
-            "Obtain your personal access token at https://ayechat.ai"
+            Exception(
+                "[red]❌ Unauthorized:[/] the stored token is invalid or missing.\n"
+                "Log in again with `aye auth login` or set a valid "
+                "`AYE_TOKEN` environment variable.\n"
+                "Obtain your personal access token at https://ayechat.ai"
+            )
         )
     else:
-        from .ui import print_error
         print_error(exc)
