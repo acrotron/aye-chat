@@ -7,6 +7,8 @@ try:
     TREE_SITTER_AVAILABLE = True
 except ImportError:
     TREE_SITTER_AVAILABLE = False
+    get_language = None
+    get_parser = None
 
 # Mapping from file extensions to tree-sitter language names
 # This should cover common languages found in projects.

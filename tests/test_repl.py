@@ -104,7 +104,7 @@ class TestRepl(TestCase):
     @patch('aye.controller.repl.rprint')
     def test_handle_verbose_command_status(self, mock_rprint, mock_get_config):
         repl.handle_verbose_command(['verbose'])
-        mock_get_config.assert_called_with("verbose", "on")
+        mock_get_config.assert_called_with("verbose", "off")
         mock_rprint.assert_called_with("[yellow]Verbose mode is Off[/]")
 
     @patch('aye.controller.repl.rprint')

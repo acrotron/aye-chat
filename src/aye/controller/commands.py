@@ -120,7 +120,7 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str]) -
     conf = SimpleNamespace()
 
     # Load verbose config first
-    conf.verbose = get_user_config("verbose", "on").lower() == "on"
+    conf.verbose = get_user_config("verbose", "off").lower() == "on"
 
     # 1. Ensure the ONNX model is downloaded before proceeding. This is a blocking
     #    operation required for the RAG system to initialize correctly.

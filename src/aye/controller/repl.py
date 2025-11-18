@@ -98,7 +98,7 @@ def handle_verbose_command(tokens: list):
         else:
             rprint("[red]Usage: verbose on|off[/]")
     else:
-        current = get_user_config("verbose", "on")
+        current = get_user_config("verbose", "off")
         rprint(f"[yellow]Verbose mode is {current.title()}[/]")
 
 def print_startup_header(conf: Any):
@@ -139,7 +139,7 @@ def collect_and_send_feedback(chat_id: int):
         rprint("\n[cyan]Goodbye![/cyan]")
 
 def chat_repl(conf: Any) -> None:
-    run_first_time_tutorial_if_needed()
+    is_first_run = run_first_time_tutorial_if_needed()
 
     BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "exit", "quit", ":q", "help", "cd"]
     completer_response = conf.plugin_manager.handle_command("get_completer", {"commands": BUILTIN_COMMANDS})
@@ -157,7 +157,7 @@ def chat_repl(conf: Any) -> None:
         thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
         thread.start()
 
-    if conf.verbose:
+    if conf.verbose or is_first_run:
         print_help_message()
         rprint("")
         handle_model_command(None, MODELS, conf, ['model'])
@@ -173,27 +173,14 @@ def chat_repl(conf: Any) -> None:
         except (ValueError, TypeError):
             chat_id_file.unlink(missing_ok=True)
 
-    first_iteration = True
     while True:
         try:
-            if not first_iteration:
-                # After the first command, check for file changes and trigger indexing if needed.
-                if not index_manager.is_indexing():
-                    index_manager.prepare_sync(verbose=False)
-                    if index_manager.has_work():
-                        if conf.verbose:
-                            rprint("[cyan]Changes detected, starting background indexing...[/]")
-                        thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
-                        thread.start()
-
             prompt_str = print_prompt()
             if conf.index_manager.is_indexing() and conf.verbose:
                 progress = conf.index_manager.get_progress_display()
                 prompt_str = f"(ツ ({progress}) » "
 
             prompt = session.prompt(prompt_str)
-
-            first_iteration = False
 
             # Handle 'with' command before tokenizing. It has its own flow.
             if prompt.strip().lower().startswith("with ") and ":" in prompt:
@@ -267,7 +254,7 @@ def chat_repl(conf: Any) -> None:
                 handle_model_command(session, MODELS, conf, tokens)
             elif lowered_first == "verbose":
                 handle_verbose_command(tokens)
-                conf.verbose = get_user_config("verbose", "on").lower() == "on"
+                conf.verbose = get_user_config("verbose", "off").lower() == "on"
             elif lowered_first == "diff":
                 args = tokens[1:]
                 if not args:
@@ -338,6 +325,13 @@ def chat_repl(conf: Any) -> None:
                         if "error" in shell_response:
                             rprint(f"[red]Error:[/] {shell_response['error']}")
                 else:
+                    # This is the LLM path. Sync the index here before invoking.
+                    if not index_manager.is_indexing():
+                        index_manager.prepare_sync(verbose=conf.verbose)
+                        if index_manager.has_work():
+                            thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
+                            thread.start()
+
                     llm_response = invoke_llm(prompt=prompt, conf=conf, console=console, plugin_manager=conf.plugin_manager, chat_id=chat_id, verbose=conf.verbose)
                     if llm_response:
                         new_chat_id = process_llm_response(response=llm_response, conf=conf, console=console, prompt=prompt, chat_id_file=chat_id_file if llm_response.chat_id else None)
