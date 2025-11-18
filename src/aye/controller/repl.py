@@ -98,7 +98,7 @@ def handle_verbose_command(tokens: list):
         else:
             rprint("[red]Usage: verbose on|off[/]")
     else:
-        current = get_user_config("verbose", "on")
+        current = get_user_config("verbose", "off")
         rprint(f"[yellow]Verbose mode is {current.title()}[/]")
 
 def print_startup_header(conf: Any):
@@ -139,7 +139,7 @@ def collect_and_send_feedback(chat_id: int):
         rprint("\n[cyan]Goodbye![/cyan]")
 
 def chat_repl(conf: Any) -> None:
-    run_first_time_tutorial_if_needed()
+    is_first_run = run_first_time_tutorial_if_needed()
 
     BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "exit", "quit", ":q", "help", "cd"]
     completer_response = conf.plugin_manager.handle_command("get_completer", {"commands": BUILTIN_COMMANDS})
@@ -157,7 +157,7 @@ def chat_repl(conf: Any) -> None:
         thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
         thread.start()
 
-    if conf.verbose:
+    if conf.verbose or is_first_run:
         print_help_message()
         rprint("")
         handle_model_command(None, MODELS, conf, ['model'])
@@ -267,7 +267,7 @@ def chat_repl(conf: Any) -> None:
                 handle_model_command(session, MODELS, conf, tokens)
             elif lowered_first == "verbose":
                 handle_verbose_command(tokens)
-                conf.verbose = get_user_config("verbose", "on").lower() == "on"
+                conf.verbose = get_user_config("verbose", "off").lower() == "on"
             elif lowered_first == "diff":
                 args = tokens[1:]
                 if not args:
