@@ -198,8 +198,14 @@ def run_tutorial():
     time.sleep(2)
 
 
-def run_first_time_tutorial_if_needed():
-    """Checks if the first-run tutorial should be executed and runs it."""
+def run_first_time_tutorial_if_needed() -> bool:
+    """
+    Checks if the first-run tutorial should be executed and runs it.
+    Returns True if this was the first run (and the tutorial was run or skipped),
+    False otherwise.
+    """
     tutorial_flag_file = Path.home() / ".aye" / ".tutorial_ran"
     if not tutorial_flag_file.exists():
         run_tutorial()
+        return True
+    return False

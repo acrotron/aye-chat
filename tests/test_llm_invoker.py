@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 import aye.controller.llm_invoker as llm_invoker
-from aye.model.models import LLMResponse, LLMSource
+from aye.model.models import LLMResponse, LLMSource, VectorIndexResult
 
 class TestLlmInvoker(TestCase):
     def setUp(self):
@@ -13,7 +13,7 @@ class TestLlmInvoker(TestCase):
             root=Path('.'),
             file_mask='*.py',
             selected_model='test-model',
-            # No index_manager by default, so RAG path is not fully tested unless added
+            index_manager=None # No index_manager by default
         )
         self.console = MagicMock()
         self.plugin_manager = MagicMock()
@@ -108,9 +108,7 @@ class TestLlmInvoker(TestCase):
 
         # And a mocked index manager that finds one relevant file
         mock_index_manager = MagicMock()
-        mock_chunk = MagicMock()
-        mock_chunk.score = 0.9
-        mock_chunk.file_path = "relevant.py"
+        mock_chunk = VectorIndexResult(file_path="relevant.py", score=0.9, content="relevant content")
         mock_index_manager.query.return_value = [mock_chunk]
         self.conf.index_manager = mock_index_manager
         
@@ -223,4 +221,93 @@ class TestLlmInvoker(TestCase):
         debug_prints = [call[0][0] for call in mock_print.call_args_list]
         self.assertIn("[DEBUG] Processing chat message with chat_id=-1, model=test-model", debug_prints)
         self.assertIn("[DEBUG] Chat message processed, response keys: dict_keys(['assistant_response', 'chat_id'])", debug_prints)
+        self.assertIn("[DEBUG] Successfully parsed assistant_response JSON", debug_prints)
+
+    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.cli_invoke')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_with_explicit_source_files(self, mock_collect, mock_cli, mock_spinner):
+        explicit_files = {"explicit.py": "content"}
+        self.plugin_manager.handle_command.return_value = None # Fallback to API
+        mock_cli.return_value = {"assistant_response": "{}", "chat_id": 1}
+
+        llm_invoker.invoke_llm(
+            "p", self.conf, self.console, self.plugin_manager,
+            explicit_source_files=explicit_files
+        )
+
+        mock_collect.assert_not_called()
+        mock_cli.assert_called_once()
+        self.assertEqual(mock_cli.call_args[1]['source_files'], explicit_files)
+
+    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.cli_invoke')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_with_all_command(self, mock_collect, mock_cli, mock_spinner):
+        mock_collect.return_value = self.source_files
+        self.plugin_manager.handle_command.return_value = None # Fallback to API
+        mock_cli.return_value = {"assistant_response": "{}", "chat_id": 1}
+
+        llm_invoker.invoke_llm("/all do something", self.conf, self.console, self.plugin_manager)
+
+        mock_collect.assert_called_once()
+        mock_cli.assert_called_once()
+        self.assertEqual(mock_cli.call_args[1]['message'], "do something")
+        self.assertEqual(mock_cli.call_args[1]['source_files'], self.source_files)
+
+    @patch('aye.controller.llm_invoker.rprint')
+    def test_get_rag_context_files_skips_large_file(self, mock_rprint):
+        mock_index_manager = MagicMock()
+        mock_chunk = VectorIndexResult(file_path="large.py", score=0.9, content="")
+        mock_index_manager.query.return_value = [mock_chunk]
+        self.conf.index_manager = mock_index_manager
+        
+        large_content = "a" * (llm_invoker.CONTEXT_HARD_LIMIT + 1)
+        
+        with patch('pathlib.Path.is_file', return_value=True), \
+             patch('pathlib.Path.read_text', return_value=large_content):
+            
+            result = llm_invoker._get_rag_context_files("p", self.conf, verbose=True)
+
+        self.assertEqual(result, {})
+        mock_rprint.assert_any_call(f"[yellow]Skipping large file large.py ({len(large_content.encode('utf-8')) / 1024:.1f}KB) to stay within payload limits.[/]")
+
+    def test_get_rag_context_files_no_chunks(self):
+        mock_index_manager = MagicMock()
+        mock_index_manager.query.return_value = []
+        self.conf.index_manager = mock_index_manager
+        
+        result = llm_invoker._get_rag_context_files("p", self.conf, verbose=False)
+        self.assertEqual(result, {})
+
+    @patch('aye.controller.llm_invoker.rprint')
+    def test_get_rag_context_files_file_read_error(self, mock_rprint):
+        mock_index_manager = MagicMock()
+        mock_chunk = VectorIndexResult(file_path="bad.py", score=0.9, content="")
+        mock_index_manager.query.return_value = [mock_chunk]
+        self.conf.index_manager = mock_index_manager
+
+        with patch('pathlib.Path.is_file', return_value=True), \
+             patch('pathlib.Path.read_text', side_effect=IOError("read error")):
+            
+            result = llm_invoker._get_rag_context_files("p", self.conf, verbose=True)
+
+        self.assertEqual(result, {})
+        mock_rprint.assert_any_call("[red]Could not read file bad.py: read error[/red]")
+
+    @patch('builtins.print')
+    def test_parse_api_response_debug_mode(self, mock_print):
+        llm_invoker.DEBUG = True
+        
+        # Test JSON failure
+        llm_invoker._parse_api_response({"assistant_response": "not json"})
+        debug_prints = [c[0][0] for c in mock_print.call_args_list]
+        self.assertIn("[DEBUG] Failed to parse assistant_response as JSON: "
+                      "Expecting value: line 1 column 1 (char 0). Treating as plain text.", debug_prints)
+        
+        mock_print.reset_mock()
+
+        # Test JSON success
+        llm_invoker._parse_api_response({"assistant_response": "{}"})
+        debug_prints = [c[0][0] for c in mock_print.call_args_list]
         self.assertIn("[DEBUG] Successfully parsed assistant_response JSON", debug_prints)

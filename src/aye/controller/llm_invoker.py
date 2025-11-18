@@ -27,7 +27,9 @@ def _get_rag_context_files(
     if not hasattr(conf, 'index_manager') or not conf.index_manager:
         return source_files
 
-    rprint("[cyan]Searching for relevant context...[/]")
+    if verbose:
+        rprint("[cyan]Searching for relevant context...[/]")
+
     retrieved_chunks: List[VectorIndexResult] = conf.index_manager.query(
         prompt, n_results=300, min_relevance=RELEVANCE_THRESHOLD
     )
@@ -114,21 +116,25 @@ def _print_context_message(
     """Prints a message indicating which files are being included."""
     if verbose:
         if source_files:
-            rprint(f"[yellow]Included with prompt: {', '.join(source_files.keys())}[/]")
+            if verbose:
+                rprint(f"[yellow]Included with prompt: {', '.join(source_files.keys())}[/]")
+            else:
+                rprint(f"[yellow]To see list of files included with prompt turn verbose on[/]")
         else:
             rprint("[yellow]No files found to include with prompt.[/]")
         return
 
-    if not source_files:
+    if not source_files and verbose:
         rprint("[yellow]No files found. Sending prompt without code context.[/]")
         return
 
-    if use_all_files:
-        rprint(f"[cyan]Including all {len(source_files)} project file(s).[/]")
-    elif explicit_source_files is not None:
-        rprint(f"[cyan]Including {len(source_files)} specified file(s).[/]")
-    else:
-        rprint(f"[cyan]Found {len(source_files)} relevant file(s).[/]")
+    if verbose:
+        if use_all_files:
+            rprint(f"[cyan]Including all {len(source_files)} project file(s).[/]")
+        elif explicit_source_files is not None:
+            rprint(f"[cyan]Including {len(source_files)} specified file(s).[/]")
+        else:
+            rprint(f"[cyan]Found {len(source_files)} relevant file(s).[/]")
 
 
 def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[int]]:
@@ -176,7 +182,7 @@ def invoke_llm(
     source_files, use_all_files, prompt = _determine_source_files(
         prompt, conf, verbose, explicit_source_files
     )
-    
+   
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
     
     with thinking_spinner(console):
