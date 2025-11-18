@@ -183,9 +183,9 @@ def chat_repl(conf: Any) -> None:
             prompt = session.prompt(prompt_str)
 
             # Handle 'with' command before tokenizing. It has its own flow.
-            if prompt.strip().lower().startswith("with ") and " : " in prompt:
+            if prompt.strip().lower().startswith("with ") and ":" in prompt:
                 try:
-                    parts = prompt.split(" : ", 1)
+                    parts = prompt.split(":", 1)
                     file_list_str, new_prompt_str = parts
                     file_list_str = file_list_str.strip()[4:].strip()
 

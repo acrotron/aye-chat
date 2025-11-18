@@ -82,9 +82,10 @@ class IndexManager:
     1. Coarse Indexing: A fast, file-per-chunk pass for immediate usability.
     2. Refinement: A background process that replaces coarse chunks with fine-grained ones.
     """
-    def __init__(self, root_path: Path, file_mask: str):
+    def __init__(self, root_path: Path, file_mask: str, verbose: bool = False):
         self.root_path = root_path
         self.file_mask = file_mask
+        self.verbose = verbose
         self.index_dir = root_path / ".aye"
         self.hash_index_path = self.index_dir / "file_index.json"
         self.SAVE_INTERVAL = 20  # Save progress after every N files
@@ -124,10 +125,11 @@ class IndexManager:
                 try:
                     self.collection = vector_db.initialize_index(self.root_path)
                     self._is_initialized = True
-                    rprint("[bold cyan]RAG system is now active.[/]")
+                    if self.verbose:
+                        rprint("[bold cyan]Code lookup is now active.[/]")
                     return True
                 except Exception as e:
-                    rprint(f"[red]Failed to initialize RAG system: {e}[/red]")
+                    rprint(f"[red]Failed to initialize local code search: {e}[/red]")
                     self._is_initialized = True  # Mark as "initialized" to avoid retrying
                     self.collection = None
                     return False
@@ -197,12 +199,12 @@ class IndexManager:
         """
         if not self._is_initialized and not self._lazy_initialize():
             if verbose and onnx_manager.get_model_status() == "DOWNLOADING":
-                rprint("[yellow]RAG system is initializing (downloading models)... Project scan will begin shortly.[/]")
+                rprint("[yellow]Code lookup is initializing (downloading models)... Project scan will begin shortly.[/]")
             return
 
         if not self.collection:
             if verbose:
-                rprint("[yellow]RAG system is disabled. Skipping project scan.[/]")
+                rprint("[yellow]Code lookup is disabled. Skipping project scan.[/]")
             return
 
         old_index: Dict[str, Any] = {}
@@ -327,10 +329,10 @@ class IndexManager:
 
     def run_sync_in_background(self):
         """
-        Waits for the RAG system to be ready, then runs the indexing and
+        Waits for the local code search to be ready, then runs the indexing and
         refinement process in the background.
         """
-        # Wait for the RAG system to be ready. This will block the background thread,
+        # Wait for the local code search to be ready. This will block the background thread,
         # but not the main application thread.
         while not self._is_initialized:
             if self._lazy_initialize():
@@ -341,7 +343,7 @@ class IndexManager:
             time.sleep(1)
 
         if not self.collection:
-            return  # RAG is disabled, so no indexing work to do.
+            return  # RAG system is disabled, so no indexing work to do.
 
         if not self.has_work():
             return
@@ -386,11 +388,11 @@ class IndexManager:
     def query(self, query_text: str, n_results: int = 10, min_relevance: float = 0.0) -> List[VectorIndexResult]:
         if not self._is_initialized and not self._lazy_initialize():
             if onnx_manager.get_model_status() == "DOWNLOADING":
-                rprint("[yellow]RAG system is still initializing (downloading models)... Search is temporarily disabled.[/]")
+                rprint("[yellow]Code lookup is still initializing (downloading models)... Search is temporarily disabled.[/]")
             return []
 
         if not self.collection:
-            return []  # RAG is disabled.
+            return []  # RAG system is disabled.
             
         return vector_db.query_index(
             collection=self.collection,
