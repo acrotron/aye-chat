@@ -173,27 +173,14 @@ def chat_repl(conf: Any) -> None:
         except (ValueError, TypeError):
             chat_id_file.unlink(missing_ok=True)
 
-    first_iteration = True
     while True:
         try:
-            if not first_iteration:
-                # After the first command, check for file changes and trigger indexing if needed.
-                if not index_manager.is_indexing():
-                    index_manager.prepare_sync(verbose=False)
-                    if index_manager.has_work():
-                        if conf.verbose:
-                            rprint("[cyan]Changes detected, starting background indexing...[/]")
-                        thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
-                        thread.start()
-
             prompt_str = print_prompt()
             if conf.index_manager.is_indexing() and conf.verbose:
                 progress = conf.index_manager.get_progress_display()
                 prompt_str = f"(ツ ({progress}) » "
 
             prompt = session.prompt(prompt_str)
-
-            first_iteration = False
 
             # Handle 'with' command before tokenizing. It has its own flow.
             if prompt.strip().lower().startswith("with ") and ":" in prompt:
@@ -338,6 +325,13 @@ def chat_repl(conf: Any) -> None:
                         if "error" in shell_response:
                             rprint(f"[red]Error:[/] {shell_response['error']}")
                 else:
+                    # This is the LLM path. Sync the index here before invoking.
+                    if not index_manager.is_indexing():
+                        index_manager.prepare_sync(verbose=conf.verbose)
+                        if index_manager.has_work():
+                            thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
+                            thread.start()
+
                     llm_response = invoke_llm(prompt=prompt, conf=conf, console=console, plugin_manager=conf.plugin_manager, chat_id=chat_id, verbose=conf.verbose)
                     if llm_response:
                         new_chat_id = process_llm_response(response=llm_response, conf=conf, console=console, prompt=prompt, chat_id_file=chat_id_file if llm_response.chat_id else None)
