@@ -9,6 +9,7 @@ from rich import print as rprint
 from .plugin_base import Plugin
 
 LLM_TIMEOUT = 600.0
+LLM_OUTPUT_TOKENS = 49152
 
 
 # Shared system prompt for all local model handlers
@@ -188,7 +189,7 @@ class LocalModelPlugin(Plugin):
         user_message = self._build_user_message(prompt, source_files)
         messages = [{"role": "system", "content": SYSTEM_PROMPT}] + self.chat_history[conv_id] + [{"role": "user", "content": user_message}]
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": 65536, "response_format": {"type": "json_object"}}
+        payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": LLM_OUTPUT_TOKENS, "response_format": {"type": "json_object"}}
         
         try:
             with httpx.Client(timeout=LLM_TIMEOUT) as client:
@@ -229,7 +230,7 @@ class LocalModelPlugin(Plugin):
         contents = [{"role": "user" if msg["role"] == "user" else "model", "parts": [{"text": msg["content"]}]} for msg in self.chat_history[conv_id]]
         contents.append({"role": "user", "parts": [{"text": user_message}]})
         
-        payload = {"contents": contents, "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]}, "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.95, "maxOutputTokens": 65536, "responseMimeType": "application/json"}}
+        payload = {"contents": contents, "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]}, "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.95, "maxOutputTokens": LLM_OUTPUT_TOKENS, "responseMimeType": "application/json"}}
 
         try:
             with httpx.Client(timeout=LLM_TIMEOUT) as client:
