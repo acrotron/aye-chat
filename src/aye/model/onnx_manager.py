@@ -32,6 +32,23 @@ def get_model_status():
                 _status = "NOT_DOWNLOADED"
         return _status
 
+import chromadb
+from chromadb.utils import embedding_functions
+
+# this artificial workaround is to trigger the download of a model
+# in our environment: for some reason, regular things like 
+# ONNXMiniLM_L6_V2() invocation does not work.
+def download_onnx():
+    print("Preparing the system for the first run...")
+    client = chromadb.Client()
+    ef = embedding_functions.DefaultEmbeddingFunction()
+    coll = client.create_collection(name="my_collection", embedding_function=ef)
+
+    coll.add(
+        documents=["Sample text 1", "Sample text 2"],
+        ids=["id1", "id2"]
+    )
+
 def _download_model_sync():
     """Blocking function to download the model and create a flag file on success."""
     global _status
@@ -43,8 +60,7 @@ def _download_model_sync():
             _status = "DOWNLOADING"
         
         # This is the blocking call that downloads the model files on first run.
-        with suppress_stdout_stderr():
-            ONNXMiniLM_L6_V2()
+        download_onnx()
         
         # If the download succeeds, create the flag file for future checks.
         _model_flag_file.parent.mkdir(parents=True, exist_ok=True)

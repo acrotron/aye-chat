@@ -122,9 +122,9 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str]) -
     # Load verbose config first
     conf.verbose = get_user_config("verbose", "on").lower() == "on"
 
-    # 1. Kick off the ONNX model download in the background if it's the first run.
-    #    This allows the app to start up without waiting for the download.
-    onnx_manager.download_model_if_needed()
+    # 1. Ensure the ONNX model is downloaded before proceeding. This is a blocking
+    #    operation required for the RAG system to initialize correctly.
+    onnx_manager.download_model_if_needed(background=False)
 
     # 2. Find and set the project root
     start_dir = root if root else Path.cwd()
@@ -145,7 +145,7 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str]) -
         conf.file_mask = file_mask
 
     # 5. Initialize the IndexManager, which handles vector DB and file scanning
-    conf.index_manager = IndexManager(conf.root, conf.file_mask)
+    conf.index_manager = IndexManager(conf.root, conf.file_mask, verbose=conf.verbose)
 
     # 6. Perform initial file scan and prepare for background indexing
     if conf.verbose:
