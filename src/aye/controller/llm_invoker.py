@@ -128,12 +128,13 @@ def _print_context_message(
         rprint("[yellow]No files found. Sending prompt without code context.[/]")
         return
 
-    if use_all_files:
-        rprint(f"[cyan]Including all {len(source_files)} project file(s).[/]")
-    elif explicit_source_files is not None:
-        rprint(f"[cyan]Including {len(source_files)} specified file(s).[/]")
-    else:
-        rprint(f"[cyan]Found {len(source_files)} relevant file(s).[/]")
+    if verbose:
+        if use_all_files:
+            rprint(f"[cyan]Including all {len(source_files)} project file(s).[/]")
+        elif explicit_source_files is not None:
+            rprint(f"[cyan]Including {len(source_files)} specified file(s).[/]")
+        else:
+            rprint(f"[cyan]Found {len(source_files)} relevant file(s).[/]")
 
 
 def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[int]]:

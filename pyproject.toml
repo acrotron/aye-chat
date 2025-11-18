@@ -43,3 +43,7 @@ aye = "aye.__main__:app"
 package-dir = {"" = "src"}          # “src/” is the source root
 packages = ["aye"]                 # the only package we ship
 include-package-data = true
+
+[tool.setuptools_scm]
+# This regex allows setuptools-scm to parse versions from tags with or without a 'v' prefix (e.g., 'v1.2.3' or '1.2.3').
+tag_regex = "^(?:v)?(?P<version>[^\\+]+)$"
