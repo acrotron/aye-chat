@@ -213,7 +213,7 @@ class TestRepl(TestCase):
             self.assertEqual(mock_help.call_count, 2) # Once on startup (verbose), once for 'help' command
 
             expected_plugin_calls = [
-                call('get_completer', {'commands': ['with', 'new', 'history', 'diff', 'restore', 'undo', 'keep', 'model', 'verbose', 'exit', 'quit', ':q', 'help', 'cd']}),
+                call('get_completer', {'commands': ['with', 'new', 'history', 'diff', 'restore', 'undo', 'keep', 'model', 'verbose', 'debug', 'exit', 'quit', ':q', 'help', 'cd']}),
                 call('new_chat', {'root': conf.root}),
                 call('execute_shell_command', {'command': 'ls', 'args': ['-l']}),
                 call('execute_shell_command', {'command': 'a', 'args': ['real', 'prompt']})
