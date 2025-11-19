@@ -1,10 +1,16 @@
-# Building an Intelligent Coding Assistant: A Deep Dive into Aye Chat's RAG Implementation
+---
+title: "How We Built a Local-First, Privacy-Focused RAG for Our AI Terminal"
+date: 2025-11-16
+draft: false
+summary: "A detailed exploration of the design and implementation of the Retrieval-Augmented Generation (RAG) system in Aye Chat, focusing on privacy, performance, and user experience."
+tags: ["rag", "ai", "indexing", "privacy", "deep-dive"]
+---
 
-## Executive Summary
+## Overview
 
 This document details the design and implementation of the Retrieval-Augmented Generation (RAG) system in Aye Chat, an AI coding assistant. The RAG system addresses the core challenge of providing Large Language Models (LLMs) with project-specific context. Our solution prioritizes privacy, performance, and user experience by using a local-first approach. Key components include a lightweight, on-device ONNX embedding model and the embeddable ChromaDB vector database, which avoid dependencies on external APIs and heavy deep learning frameworks.
 
-The architecture features a two-phase progressive indexing strategy: an initial, rapid coarse indexing of entire files for immediate availability, followed by a background process that refines the index with smaller, overlapping code chunks. To ensure a seamless user experience, all indexing is performed in low-priority, daemonized background threads, with CPU usage limits and interruptible processing that saves progress to disk. Finally, we intelligently pack the most relevant code into the LLM prompt, managing context window size with soft and hard limits, while also providing an escape hatch to include all files when needed. The result is a powerful, context-aware, and non-intrusive coding assistant for the terminal.
+The architecture features a two-phase progressive indexing strategy: an initial, rapid coarse indexing of entire files for immediate availability, followed by a background process that refines the index with **semantic, AST-based chunks (e.g., functions, classes) using `tree-sitter`**. To ensure a seamless user experience, all indexing is performed in low-priority, daemonized background threads, with CPU usage limits and interruptible processing that saves progress to disk. Finally, we intelligently pack the most relevant code into the LLM prompt, managing context window size with soft and hard limits, while also providing an escape hatch to include all files when needed. The result is a powerful, context-aware, and non-intrusive coding assistant for the terminal.
 
 Large Language Models (LLMs) are incredibly powerful, but they have a fundamental limitation when it comes to helping with software development: they are stateless and lack awareness of your project's codebase. You can paste code into the prompt, but this is manual, cumbersome, and limited by context window sizes. How can a coding assistant provide truly helpful, context-aware answers about *your* code?
 
@@ -97,18 +103,48 @@ def update_index_coarse(
 
 This process is extremely fast. It gives the user a usable, albeit imprecise, search index almost immediately. Searching at this stage can identify which *files* are relevant, even if it can't pinpoint the exact lines of code.
 
-**Phase 2: Refined Indexing**
-After the coarse pass is complete, a background process kicks in. It takes each file that was coarsely indexed and replaces its single entry with multiple, fine-grained chunks. We use a simple line-based chunker for this, which splits files into smaller, overlapping segments.
+**Phase 2: Refined Indexing with `tree-sitter`**
+After the coarse pass is complete, a background process kicks in. This is where the real intelligence lies. Instead of simply splitting files by lines, we now use `tree-sitter` to perform **semantic chunking**.
+
+As seen in `aye/model/ast_chunker.py`, we parse the source code into an Abstract Syntax Tree (AST). We then run language-specific queries against this tree to extract meaningful, self-contained code blocks like functions, classes, methods, or interfaces.
+
+```python
+# aye/model/ast_chunker.py
+
+CHUNK_QUERIES = {
+    "python": """
+    (function_definition) @chunk
+    (class_definition) @chunk
+    """,
+    "javascript": """
+    (function_declaration) @chunk
+    (class_declaration) @chunk
+    ...
+    """,
+    # ... and so on for other languages
+}
+```
+
+Each of these AST nodes becomes a "document" in our vector database. This is a massive improvement over naive chunking because each vector now represents a complete logical unit of code, leading to far more precise and relevant search results.
+
+The `refine_file_in_index` function in `aye/model/vector_db.py` orchestrates this: it deletes the old whole-file entry and upserts the new, semantically-chunked documents. For languages not yet supported by our AST chunker, or if parsing fails, we gracefully fall back to a simple line-based chunker to ensure all files are indexed.
 
 ```python
 # aye/model/vector_db.py
 
 def refine_file_in_index(collection: Any, file_path: str, content: str):
-    # 1. Delete the old coarse chunk
+    # 1. Delete the old coarse chunk...
     collection.delete(ids=[file_path])
 
     # 2. Create and upsert the new fine-grained chunks.
-    chunks = _chunk_file(content)
+    language_name = get_language_from_file_path(file_path)
+    chunks = []
+    if language_name:
+        chunks = ast_chunker(content, language_name)
+
+    # Fallback to line-based chunking...
+    if not chunks:
+        chunks = _chunk_file(content)
     # ...
     collection.upsert(documents=chunks, metadatas=metadatas, ids=ids)
 ```
@@ -178,9 +214,37 @@ if current_size + file_size > CONTEXT_HARD_LIMIT:
 
 Finally, for full user control, we added the `/all` command. If a user's prompt starts with `/all`, we bypass RAG entirely and include every single file in the project that matches the file mask. This is a powerful escape hatch for when the user knows better than the search algorithm.
 
+## Part 5: Known Limitations and Future Work
+
+This implementation successfully establishes a robust, performant, and privacy-preserving foundation. With the move to AST-based semantic chunking, we've significantly improved the core retrieval logic. However, there are always opportunities for enhancement. Here is our roadmap for making retrieval quality even better.
+
+### 1. Expanding Language Support and Refining AST Queries
+
+While our `tree-sitter` implementation covers many popular languages, the quality of chunking is only as good as the AST queries we write.
+
+**The Path Forward:** We plan to continuously expand the set of supported languages. For existing languages, we will refine our AST queries to handle more edge cases and different coding patterns, ensuring we capture the most logical and self-contained units of code. This is an ongoing process of improvement to maximize the semantic value of our chunks.
+
+### 2. More Precise Context Assembly
+
+Currently, the system retrieves relevant chunks but then includes the *entire content of the parent file* in the LLM prompt. While simple and often effective (as it provides broader context), this can be inefficient. If a relevant chunk is found in a large file, the prompt becomes flooded with irrelevant code, which can confuse the LLM and lead to the "lost in the middle" problem where critical information is ignored.
+
+**The Path Forward:** We will shift to a more surgical approach. Instead of sending the entire file, we will assemble context directly from the top-k retrieved chunks. We can also experiment with including limited surrounding context, such as the parent function signature or class definition for a given chunk, to provide local awareness without overwhelming the context window.
+
+### 3. Exploring Code-Specific Embedding Models
+
+We chose `ONNXMiniLM_L6_V2` for its small footprint and ease of deployment. It is a pragmatic choice for a general-purpose model. However, it has not been specifically trained on source code.
+
+**The Path Forward:** We will evaluate and benchmark specialized embedding models that are fine-tuned on code corpora. Models from families like BGE or other code-specific encoders could provide a significant lift in retrieval accuracy by better understanding the semantic nuances of programming languages.
+
+### 4. Advanced Ranking and Re-ranking
+
+The current ranking logic is simple: rank files based on their single highest-scoring chunk. This can be improved.
+
+**The Path Forward:** We plan to explore more sophisticated ranking techniques. For example, **Reciprocal Rank Fusion (RRF)** could be used to generate a more robust file score by considering all retrieved chunks from that file, not just the best one. Furthermore, we may implement a **second-stage re-ranker**. This would involve taking the top N results from the initial vector search and passing them through a lightweight but more powerful cross-encoder model to re-order them for final inclusion in the prompt, boosting precision.
+
 ## Conclusion
 
-Building the RAG system for Aye Chat was a journey of careful trade-offs. We prioritized user experience, privacy, and performance at every step. By choosing a lightweight local model and database, implementing a progressive background indexing strategy, and carefully managing system resources, we've created a feature that provides powerful, context-aware assistance without getting in the user's way. The result is a smarter, more helpful coding companion for the command line.
+Building the RAG system for Aye Chat was a journey of careful trade-offs. The initial version successfully establishes a performant, private, and non-intrusive foundation. By choosing a lightweight local model and database, implementing a progressive background indexing strategy, and carefully managing system resources, we've created a feature that provides context-aware assistance without getting in the user's way. The current implementation is a strong starting point, and we are excited to build upon it by incorporating the more advanced retrieval techniques outlined in our roadmap. The result will be an even smarter, more helpful coding companion for the command line.
 
 ---
 ## About Aye Chat

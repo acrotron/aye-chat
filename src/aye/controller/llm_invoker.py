@@ -9,8 +9,11 @@ from aye.model.api import cli_invoke
 from aye.model.models import LLMResponse, LLMSource, VectorIndexResult
 from aye.presenter.ui_utils import thinking_spinner
 from aye.model.source_collector import collect_sources
+from aye.model.auth import get_user_config
 
-DEBUG = False
+def _is_debug():
+    return get_user_config("debug", "off").lower() == "on"
+
 CONTEXT_TARGET_SIZE = 180 * 1024  # 180KB, ~40K tokens in English language
 CONTEXT_HARD_LIMIT = 200 * 1024   # 200KB, hard safety limit for API payload
 RELEVANCE_THRESHOLD = -1.0  # Accept all results from vector search, even with negative scores.
@@ -34,7 +37,7 @@ def _get_rag_context_files(
         prompt, n_results=300, min_relevance=RELEVANCE_THRESHOLD
     )
 
-    if DEBUG and retrieved_chunks:
+    if _is_debug() and retrieved_chunks:
         rprint("[yellow]Retrieved context chunks (by relevance):[/]")
         for chunk in retrieved_chunks:
             rprint(f"  - Score: {chunk.score:.4f}, File: {chunk.file_path}")
@@ -151,10 +154,10 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
 
     try:
         parsed = json.loads(assistant_resp_str)
-        if DEBUG:
+        if _is_debug():
             print(f"[DEBUG] Successfully parsed assistant_response JSON")
     except json.JSONDecodeError as e:
-        if DEBUG:
+        if _is_debug():
             print(f"[DEBUG] Failed to parse assistant_response as JSON: {e}. Treating as plain text.")
         
         if "error" in assistant_resp_str.lower():
@@ -204,7 +207,7 @@ def invoke_llm(
             )
         
         # 2. Fall back to API
-        if DEBUG:
+        if _is_debug():
             print(f"[DEBUG] Processing chat message with chat_id={chat_id or -1}, model={conf.selected_model}")
         
         api_resp = cli_invoke(
@@ -214,7 +217,7 @@ def invoke_llm(
             model=conf.selected_model
         )
         
-        if DEBUG:
+        if _is_debug():
             print(f"[DEBUG] Chat message processed, response keys: {api_resp.keys() if api_resp else 'None'}")
 
     # 3. Parse API response

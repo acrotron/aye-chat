@@ -14,13 +14,10 @@ class TestModelApi(TestCase):
         self.base_url = "https://api.ayechat.ai"
         self.token = "fake_token"
         os.environ["AYE_TOKEN"] = self.token  # Set env for testing
-        # Disable debug prints for tests
-        api.DEBUG = False
 
     def tearDown(self):
         if "AYE_TOKEN" in os.environ:
             del os.environ["AYE_TOKEN"]
-        api.DEBUG = False
 
     @patch('aye.model.api.get_token')
     def test_auth_headers(self, mock_get_token):
@@ -246,9 +243,8 @@ class TestModelApi(TestCase):
         mock_client.return_value.__enter__.return_value.post.assert_called_once()
 
     @patch('builtins.print')
-    def test_debug_mode_prints(self, mock_print):
-        api.DEBUG = True
-
+    @patch('aye.model.api.get_user_config', return_value='on')
+    def test_debug_mode_prints(self, mock_get_config, mock_print):
         # Test cli_invoke
         with patch('httpx.Client') as mock_client, \
              patch('httpx.get') as mock_get, \

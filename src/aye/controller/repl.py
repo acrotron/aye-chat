@@ -101,6 +101,19 @@ def handle_verbose_command(tokens: list):
         current = get_user_config("verbose", "off")
         rprint(f"[yellow]Verbose mode is {current.title()}[/]")
 
+def handle_debug_command(tokens: list):
+    """Handle the 'debug' command."""
+    if len(tokens) > 1:
+        val = tokens[1].lower()
+        if val in ("on", "off"):
+            set_user_config("debug", val)
+            rprint(f"[green]Debug mode set to {val.title()}[/]")
+        else:
+            rprint("[red]Usage: debug on|off[/]")
+    else:
+        current = get_user_config("debug", "off")
+        rprint(f"[yellow]Debug mode is {current.title()}[/]")
+
 def print_startup_header(conf: Any):
     """Prints the session context, current model, and welcome message."""
     try:
@@ -141,7 +154,7 @@ def collect_and_send_feedback(chat_id: int):
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "exit", "quit", ":q", "help", "cd"]
+    BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "exit", "quit", ":q", "help", "cd"]
     completer_response = conf.plugin_manager.handle_command("get_completer", {"commands": BUILTIN_COMMANDS})
     completer = completer_response["completer"] if completer_response else None
 
@@ -255,6 +268,8 @@ def chat_repl(conf: Any) -> None:
             elif lowered_first == "verbose":
                 handle_verbose_command(tokens)
                 conf.verbose = get_user_config("verbose", "off").lower() == "on"
+            elif lowered_first == "debug":
+                handle_debug_command(tokens)
             elif lowered_first == "diff":
                 args = tokens[1:]
                 if not args:

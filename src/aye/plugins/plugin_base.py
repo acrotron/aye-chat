@@ -1,17 +1,21 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from rich import print as rprint
+from aye.model.auth import get_user_config
 
 class Plugin(ABC):
     name: str
     version: str = "1.0.0"
     premium: str = "free"  # one of: free, pro, team, enterprise
     verbose: bool = False
-    debug: bool = False
+
+    @property
+    def debug(self) -> bool:
+        """Dynamically checks if debug mode is enabled."""
+        return get_user_config("debug", "off").lower() == "on"
 
     def init(self, cfg: Dict[str, Any]) -> None:
         self.verbose = bool(cfg.get("verbose", False))
-        self.debug = bool(cfg.get("debug", False))
 
         if self.debug:
             rprint(f"[bold yellow]Plugin config: {cfg}[/]")
