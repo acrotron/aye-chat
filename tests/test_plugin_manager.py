@@ -25,9 +25,9 @@ class TestPluginManager(TestCase):
     def setUp(self):
         self.plugin_manager = PluginManager()
 
-    @patch('aye.controller.plugin_manager.DEBUG', True)
+    @patch('aye.controller.plugin_manager.get_user_config', return_value='on')
     @patch('aye.controller.plugin_manager.rprint')
-    def test_init_verbose(self, mock_rprint):
+    def test_init_verbose(self, mock_rprint, mock_get_cfg):
         manager = PluginManager(verbose=True)
         mock_rprint.assert_called_once_with("[bold yellow]Plugin Manager initialized with tier: free[/]")
 

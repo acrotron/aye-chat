@@ -4,7 +4,7 @@ import time
 from typing import Any, Dict, Optional
 
 import httpx
-from aye.model.auth import get_token
+from aye.model.auth import get_token, get_user_config
 
 # -------------------------------------------------
 # 👉  EDIT THIS TO POINT TO YOUR SERVICE
@@ -12,7 +12,9 @@ from aye.model.auth import get_token
 api_url = os.environ.get("AYE_CHAT_API_URL")
 BASE_URL = api_url if api_url else "https://api.ayechat.ai"
 TIMEOUT = 900.0
-DEBUG = False
+
+def _is_debug():
+    return get_user_config("debug", "off").lower() == "on"
 
 
 def _auth_headers() -> Dict[str, str]:
@@ -66,16 +68,16 @@ def cli_invoke(chat_id=-1, message="", source_files={},
         payload["model"] = model
     url = f"{BASE_URL}/invoke_cli"
 
-    if (DEBUG):
+    if _is_debug():
         print(f"[DEBUG] Sending request to {url}")
         print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
         print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
 
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
-        if (DEBUG): print(f"[DEBUG] Initial response status: {resp.status_code}")
+        if _is_debug(): print(f"[DEBUG] Initial response status: {resp.status_code}")
         data = _check_response(resp)
-        if (DEBUG): print(f"[DEBUG] Initial response data: {data}")
+        if _is_debug(): print(f"[DEBUG] Initial response data: {data}")
 
     # If server already returned the final payload, just return it
     # (previous logic kept for compatibility)
@@ -84,7 +86,7 @@ def cli_invoke(chat_id=-1, message="", source_files={},
 
     # Otherwise poll the presigned GET URL until the object exists, then download+return it
     response_url = data["response_url"]
-    if (DEBUG): print(f"[DEBUG] Polling response URL: {response_url}")
+    if _is_debug(): print(f"[DEBUG] Polling response URL: {response_url}")
     deadline = time.time() + poll_timeout
     last_status = None
     poll_count = 0
@@ -92,20 +94,20 @@ def cli_invoke(chat_id=-1, message="", source_files={},
     while time.time() < deadline:
         try:
             poll_count += 1
-            if (DEBUG): print(f"[DEBUG] Poll attempt {poll_count}, status: {last_status}")
+            if _is_debug(): print(f"[DEBUG] Poll attempt {poll_count}, status: {last_status}")
             r = httpx.get(response_url, timeout=TIMEOUT)  # default verify=True
             last_status = r.status_code
-            if (DEBUG): print(f"[DEBUG] Poll response status: {r.status_code}")
+            if _is_debug(): print(f"[DEBUG] Poll response status: {r.status_code}")
             if r.status_code == 200:
-                if (DEBUG): print(f"[DEBUG] Response body length: {len(r.text)} bytes")
-                if (DEBUG): print(f"[DEBUG] Response body preview: {r.text[:200]}")
+                if _is_debug(): print(f"[DEBUG] Response body length: {len(r.text)} bytes")
+                if _is_debug(): print(f"[DEBUG] Response body preview: {r.text[:200]}")
                 try:
                     result = r.json()
-                    if (DEBUG): print(f"[DEBUG] Successfully parsed JSON response")
+                    if _is_debug(): print(f"[DEBUG] Successfully parsed JSON response")
                     return result
                 except json.JSONDecodeError as e:
-                    if (DEBUG): print(f"[DEBUG] JSON decode error: {e}")
-                    if (DEBUG): print(f"[DEBUG] Full response text: {r.text}")
+                    if _is_debug(): print(f"[DEBUG] JSON decode error: {e}")
+                    if _is_debug(): print(f"[DEBUG] Full response text: {r.text}")
                     raise
             if r.status_code in (403, 404):
                 time.sleep(poll_interval)
@@ -113,7 +115,7 @@ def cli_invoke(chat_id=-1, message="", source_files={},
             r.raise_for_status()  # other non‑2xx errors are unexpected
         except httpx.RequestError as e:
             # transient network issue; retry
-            if (DEBUG): print(f"[DEBUG] Network error: {e}")
+            if _is_debug(): print(f"[DEBUG] Network error: {e}")
             time.sleep(poll_interval)
             continue
 
@@ -125,14 +127,14 @@ def fetch_plugin_manifest(dry_run: bool = False):
     url = f"{BASE_URL}/plugins"
     payload = {"dry_run": dry_run}
 
-    if (DEBUG):
+    if _is_debug():
         print(f"[DEBUG] Sending request to {url}")
         print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
         print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
 
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
-        if (DEBUG): print(f"[DEBUG] Response status: {resp.status_code}")
+        if _is_debug(): print(f"[DEBUG] Response status: {resp.status_code}")
         _check_response(resp)  # will raise on error and print the message
         return resp.json()
 
@@ -142,13 +144,13 @@ def fetch_server_time(dry_run: bool = False) -> int:
     url = f"{BASE_URL}/time"
     params = {"dry_run": dry_run}
 
-    if (DEBUG):
+    if _is_debug():
         print(f"[DEBUG] Sending request to {url}")
         print(f"[DEBUG] Query params: {json.dumps(params, indent=2)}")
 
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.get(url, params=params)
-        if (DEBUG): print(f"[DEBUG] Response status: {resp.status_code}")
+        if _is_debug(): print(f"[DEBUG] Response status: {resp.status_code}")
         if not resp.ok:
             # Use the same helper for consistency but avoid raising for 200‑like cases
             try:
@@ -168,7 +170,7 @@ def send_feedback(feedback_text: str, chat_id: int = 0):
     url = f"{BASE_URL}/feedback"
     payload = {"feedback": feedback_text, "chat_id": chat_id}
 
-    if (DEBUG):
+    if _is_debug():
         print(f"[DEBUG] Sending request to {url}")
         print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
         print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
@@ -177,8 +179,8 @@ def send_feedback(feedback_text: str, chat_id: int = 0):
         with httpx.Client(timeout=10.0, verify=True) as client:
             # Fire-and-forget call. Errors are ignored to not block exit.
             resp = client.post(url, json=payload, headers=_auth_headers())
-            if (DEBUG): print(f"[DEBUG] Response status: {resp.status_code}")
+            if _is_debug(): print(f"[DEBUG] Response status: {resp.status_code}")
     except Exception as e:
         # Silently ignore all errors, but log in debug mode.
-        if (DEBUG): print(f"[DEBUG] Error sending feedback: {e}")
+        if _is_debug(): print(f"[DEBUG] Error sending feedback: {e}")
         pass

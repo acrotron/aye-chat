@@ -18,10 +18,9 @@ class TestLlmInvoker(TestCase):
         self.console = MagicMock()
         self.plugin_manager = MagicMock()
         self.source_files = {"main.py": "print('hello')"}
-        llm_invoker.DEBUG = False
 
     def tearDown(self):
-        llm_invoker.DEBUG = False
+        pass
 
     @patch('aye.controller.llm_invoker.collect_sources')
     @patch('aye.controller.llm_invoker.thinking_spinner')
@@ -200,8 +199,8 @@ class TestLlmInvoker(TestCase):
     @patch('aye.controller.llm_invoker.collect_sources')
     @patch('aye.controller.llm_invoker.thinking_spinner')
     @patch('aye.controller.llm_invoker.cli_invoke')
-    def test_invoke_llm_debug_mode(self, mock_cli_invoke, mock_spinner, mock_collect, mock_print):
-        llm_invoker.DEBUG = True
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='on')
+    def test_invoke_llm_debug_mode(self, mock_get_cfg, mock_cli_invoke, mock_spinner, mock_collect, mock_print):
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
         mock_cli_invoke.return_value = {
@@ -296,9 +295,8 @@ class TestLlmInvoker(TestCase):
         mock_rprint.assert_any_call("[red]Could not read file bad.py: read error[/red]")
 
     @patch('builtins.print')
-    def test_parse_api_response_debug_mode(self, mock_print):
-        llm_invoker.DEBUG = True
-        
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='on')
+    def test_parse_api_response_debug_mode(self, mock_get_cfg, mock_print):
         # Test JSON failure
         llm_invoker._parse_api_response({"assistant_response": "not json"})
         debug_prints = [c[0][0] for c in mock_print.call_args_list]
