@@ -10,6 +10,7 @@ from aye.model.models import LLMResponse, LLMSource, VectorIndexResult
 from aye.presenter.ui_utils import thinking_spinner
 from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
+from aye.model.offline_llm_manager import is_offline_model
 
 def _is_debug():
     return get_user_config("debug", "off").lower() == "on"
@@ -159,6 +160,8 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
     except json.JSONDecodeError as e:
         if _is_debug():
             print(f"[DEBUG] Failed to parse assistant_response as JSON: {e}. Treating as plain text.")
+            print(f"[DEBUG] LLM response: {resp}")
+            
         
         if "error" in assistant_resp_str.lower():
             chat_title = resp.get('chat_title', 'Unknown')
@@ -206,7 +209,20 @@ def invoke_llm(
                 source=LLMSource.LOCAL
             )
         
-        # 2. Fall back to API
+        # 2. Check if this was supposed to be an offline model
+        if is_offline_model(conf.selected_model):
+            # Offline model failed or not ready - don't fall back to API
+            error_msg = f"Offline model '{conf.selected_model}' is not available. Please ensure it's downloaded and ready."
+            if verbose:
+                rprint(f"[red]{error_msg}[/]")
+            return LLMResponse(
+                summary=error_msg,
+                updated_files=[],
+                chat_id=None,
+                source=LLMSource.LOCAL
+            )
+        
+        # 3. Fall back to API only for non-offline models
         if _is_debug():
             print(f"[DEBUG] Processing chat message with chat_id={chat_id or -1}, model={conf.selected_model}")
         
@@ -220,7 +236,7 @@ def invoke_llm(
         if _is_debug():
             print(f"[DEBUG] Chat message processed, response keys: {api_resp.keys() if api_resp else 'None'}")
 
-    # 3. Parse API response
+    # 4. Parse API response
     assistant_resp, new_chat_id = _parse_api_response(api_resp)
     
     return LLMResponse(

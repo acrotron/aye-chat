@@ -11,10 +11,10 @@ _config: Dict[str, Any] = {}
 
 # Models configuration (order unchanged)
 MODELS = [
-    #{"id": "openai/gpt-oss-120b", "name": "OpenAI: GPT OSS 120b"},
+    #{"": "openai/gpt-oss-120b", "name": "OpenAI: GPT OSS 120b"},
     {"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1"},
     {"id": "x-ai/grok-4-fast", "name": "xAI: Grok 4 Fast"},
-    #{"id": "qwen/qwen3-coder", "name": "Qwen: Qwen3 Coder"},
+    #{"": "qwen/qwen3-coder", "name": "Qwen: Qwen3 Coder"},
     #{"id": "deepseek/deepseek-chat-v3-0324", "name": "DeepSeek: DeepSeek V3 0324"},
     {"id": "google/gemini-2.0-flash-001", "name": "Google: Gemini 2.0 Flash"},
     {"id": "moonshotai/kimi-k2-0905", "name": "MoonshotAI: Kimi K2 0905"},
@@ -22,6 +22,10 @@ MODELS = [
     {"id": "google/gemini-3-pro-preview", "name": "Google: Gemini 3 Pro Preview"},
     {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5"},
     #{"id": "anthropic/claude-opus-4.1", "name": "Anthropic: Claude Opus 4.1"}
+    
+    # Offline models
+    #{"id": "offline/deepseek-coder-6.7b", "name": "DeepSeek Coder 6.7B (Offline)", "type": "offline", "size_gb": 3.8},
+    {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.2},
 ]
 
 # Default model identifier – kept separate so the order of MODELS stays unchanged.
