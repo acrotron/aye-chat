@@ -8,6 +8,7 @@ from rich import print as rprint
 import pathspec  # pip install pathspec
 
 from .plugin_base import Plugin
+from aye.model.config import DEFAULT_IGNORE_SET
 
 # Predefined list of source code extensions to consider
 SOURCE_EXTENSIONS = {
@@ -38,7 +39,7 @@ class AutoDetectMaskPlugin(Plugin):
         directory and all parent directories. This ensures that detection respects
         the same ignore rules as file collection.
         """
-        patterns = []
+        patterns = list(DEFAULT_IGNORE_SET)
         current_path = root.resolve()
 
         while True:

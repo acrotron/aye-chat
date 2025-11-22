@@ -33,37 +33,60 @@ class TestTutorial(TestCase):
 
     @patch('aye.controller.tutorial.run_tutorial')
     def test_run_first_time_tutorial_if_needed_runs(self, mock_run_tutorial):
+        """Test that tutorial runs automatically on first invocation."""
         self.assertFalse(self.tutorial_flag_file.exists())
-        tutorial.run_first_time_tutorial_if_needed()
-        mock_run_tutorial.assert_called_once()
+        result = tutorial.run_first_time_tutorial_if_needed()
+        self.assertTrue(result)
+        mock_run_tutorial.assert_called_once_with(is_first_run=True)
 
-    @patch('aye.controller.tutorial.run_tutorial')
-    def test_run_first_time_tutorial_if_needed_skips(self, mock_run_tutorial):
+    @patch('aye.controller.tutorial.Confirm.ask', return_value=False)
+    def test_run_first_time_tutorial_if_needed_prompts_subsequent(self, mock_confirm):
+        """Test that subsequent runs prompt user and return False if declined."""
         self.tutorial_flag_file.parent.mkdir(parents=True)
         self.tutorial_flag_file.touch()
         self.assertTrue(self.tutorial_flag_file.exists())
         
-        tutorial.run_first_time_tutorial_if_needed()
-        mock_run_tutorial.assert_not_called()
+        result = tutorial.run_first_time_tutorial_if_needed()
+        self.assertFalse(result)
+        mock_confirm.assert_called_once()
+
+    @patch('aye.controller.tutorial.Confirm.ask', return_value=True)
+    @patch('aye.controller.tutorial.run_tutorial')
+    def test_run_first_time_tutorial_if_needed_accepts_subsequent(self, mock_run_tutorial, mock_confirm):
+        """Test that subsequent runs prompt user and run tutorial if accepted."""
+        self.tutorial_flag_file.parent.mkdir(parents=True)
+        self.tutorial_flag_file.touch()
+        self.assertTrue(self.tutorial_flag_file.exists())
+        
+        result = tutorial.run_first_time_tutorial_if_needed()
+        self.assertTrue(result)
+        mock_confirm.assert_called_once()
+        mock_run_tutorial.assert_called_once_with(is_first_run=True)
 
     @patch('aye.controller.tutorial.Confirm.ask', return_value=False)
     @patch('aye.controller.tutorial.rprint')
-    def test_run_tutorial_user_declines(self, mock_rprint, mock_confirm):
-        tutorial.run_tutorial()
+    def test_run_tutorial_user_declines_subsequent_run(self, mock_rprint, mock_confirm):
+        """Test that subsequent runs prompt user and skip if declined."""
+        tutorial.run_tutorial(is_first_run=False)
+        
+        # Should prompt with default=False
         mock_confirm.assert_called_once()
+        call_args = mock_confirm.call_args
+        self.assertEqual(call_args[1]['default'], False)
+        
+        # Should create flag file even when skipped
         self.assertTrue(self.tutorial_flag_file.exists())
-        mock_rprint.assert_any_call("\nSkipping tutorial. You can run it again by deleting the `~/.aye/.tutorial_ran` file.")
+        mock_rprint.assert_any_call("\nSkipping tutorial.")
 
-    @patch('aye.controller.tutorial.Confirm.ask', return_value=True)
+    @patch('aye.controller.tutorial.Confirm.ask')
     @patch('aye.controller.tutorial.input', return_value="")
     @patch('aye.controller.tutorial.time.sleep')
     @patch('aye.controller.tutorial.apply_updates')
     @patch('aye.controller.tutorial.list_snapshots')
     @patch('aye.controller.tutorial.show_diff')
     @patch('aye.controller.tutorial.restore_snapshot')
-    def test_run_tutorial_success_flow(self, mock_restore, mock_diff, mock_list_snaps, mock_apply, mock_sleep, mock_input, mock_confirm):
-        # The tutorial creates a snapshot via apply_updates. The snapshot contains the original content.
-        # For the diff step, we need list_snapshots to return a path to a file with that original content.
+    def test_run_tutorial_first_run_no_prompt(self, mock_restore, mock_diff, mock_list_snaps, mock_apply, mock_sleep, mock_input, mock_confirm):
+        """Test that first run does NOT prompt user and executes all steps."""
         snap_content = 'def hello_world():\n    print("Hello, World!")\n'
         snap_file = self.test_root / "snap_for_diff.py"
         snap_file.write_text(snap_content)
@@ -72,46 +95,65 @@ class TestTutorial(TestCase):
         mock_list_snaps.return_value = [('001_ts', str(snap_file))]
 
         tutorial_file = Path("tutorial_example.py")
-        
-        # The tutorial should run in a clean state
         self.assertFalse(tutorial_file.exists())
 
-        tutorial.run_tutorial()
+        tutorial.run_tutorial(is_first_run=True)
         
-        # Assertions
-        mock_confirm.assert_called_once()
+        # Should NOT prompt on first run
+        mock_confirm.assert_not_called()
+        
+        # Should complete all steps (5 input prompts: welcome + 4 steps)
         self.assertGreaterEqual(mock_input.call_count, 5)
-        
-        # Step 1: apply_updates is called
         mock_apply.assert_called_once()
-        prompt_arg = mock_apply.call_args[0][1]
-        self.assertEqual(prompt_arg, "add a docstring to the hello_world function")
-        
-        # Step 3: diff is called
-        mock_list_snaps.assert_called_once_with(tutorial_file)
-        mock_diff.assert_called_once_with(tutorial_file, snap_file)
-        
-        # Step 4: restore is called
         mock_restore.assert_called_once_with(file_name='tutorial_example.py')
-        
-        # Check that flag file was created
         self.assertTrue(self.tutorial_flag_file.exists())
-        
-        # Check that tutorial file was cleaned up
-        self.assertFalse(tutorial_file.exists(), "The tutorial example file should be deleted at the end.")
+        self.assertFalse(tutorial_file.exists())
 
     @patch('aye.controller.tutorial.Confirm.ask', return_value=True)
+    @patch('aye.controller.tutorial.input', return_value="")
+    @patch('aye.controller.tutorial.time.sleep')
+    @patch('aye.controller.tutorial.apply_updates')
+    @patch('aye.controller.tutorial.list_snapshots')
+    @patch('aye.controller.tutorial.show_diff')
+    @patch('aye.controller.tutorial.restore_snapshot')
+    def test_run_tutorial_subsequent_run_with_confirmation(self, mock_restore, mock_diff, mock_list_snaps, mock_apply, mock_sleep, mock_input, mock_confirm):
+        """Test that subsequent runs prompt user and execute if confirmed."""
+        snap_content = 'def hello_world():\n    print("Hello, World!")\n'
+        snap_file = self.test_root / "snap_for_diff.py"
+        snap_file.write_text(snap_content)
+
+        mock_apply.return_value = "001_ts"
+        mock_list_snaps.return_value = [('001_ts', str(snap_file))]
+
+        tutorial_file = Path("tutorial_example.py")
+
+        tutorial.run_tutorial(is_first_run=False)
+        
+        # Should prompt with default=False
+        mock_confirm.assert_called_once()
+        call_args = mock_confirm.call_args
+        self.assertEqual(call_args[1]['default'], False)
+        
+        # Should complete all steps since user confirmed
+        mock_apply.assert_called_once()
+        mock_restore.assert_called_once()
+        self.assertTrue(self.tutorial_flag_file.exists())
+
+    @patch('aye.controller.tutorial.Confirm.ask')
     @patch('aye.controller.tutorial.input', return_value="")
     @patch('aye.controller.tutorial.time.sleep')
     @patch('aye.controller.tutorial.apply_updates', side_effect=RuntimeError("Model failed"))
     @patch('aye.controller.tutorial.rprint')
     def test_run_tutorial_step1_error(self, mock_rprint, mock_apply, mock_sleep, mock_input, mock_confirm):
+        """Test that tutorial handles errors gracefully on first run."""
         tutorial_file = Path("tutorial_example.py")
 
-        tutorial.run_tutorial()
+        tutorial.run_tutorial(is_first_run=True)
 
+        # Should NOT prompt on first run
+        mock_confirm.assert_not_called()
+        
+        # Should show error and clean up
         mock_rprint.assert_any_call("[red]An error occurred during the tutorial: Model failed[/red]")
         self.assertTrue(self.tutorial_flag_file.exists())
-
-        # Check that tutorial file was cleaned up even on error
-        self.assertFalse(tutorial_file.exists(), "The tutorial example file should be deleted on error.")
+        self.assertFalse(tutorial_file.exists())

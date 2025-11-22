@@ -127,8 +127,13 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str]) -
     onnx_manager.download_model_if_needed(background=False)
 
     # 2. Find and set the project root
-    start_dir = root if root else Path.cwd()
-    conf.root = find_project_root(start_dir)
+    # If --root is explicitly provided, use it directly without searching for parent index
+    if root:
+        conf.root = root.resolve()
+    else:
+        # No explicit root provided, search for existing project root
+        start_dir = Path.cwd()
+        conf.root = find_project_root(start_dir)
 
     # 3. Initialize Plugin Manager and add to conf
     plugin_manager = PluginManager(verbose=conf.verbose)
