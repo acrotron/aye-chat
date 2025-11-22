@@ -126,7 +126,7 @@ MODELS = [
     
     # Offline models
     #{"id": "offline/deepseek-coder-6.7b", "name": "DeepSeek Coder 6.7B (Offline)", "type": "offline", "size_gb": 3.8},
-    {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.2},
+    {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.7},
 ]
 
 # Default model identifier – kept separate so the order of MODELS stays unchanged.

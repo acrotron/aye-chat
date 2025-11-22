@@ -156,7 +156,7 @@ class OfflineLLMPlugin(Plugin):
         
         props = llm_response.get("properties")
         if not props:
-            props = empty_response
+            props = llm_response
 
         res = {
             "summary": props.get("answer_summary", ""),
