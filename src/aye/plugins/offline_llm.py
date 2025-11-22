@@ -143,24 +143,36 @@ class OfflineLLMPlugin(Plugin):
 
     def _parse_llm_response(self, generated_text: str) -> Dict[str, Any]:
         """Parse LLM response text and convert to expected format."""
+        empty_response = {
+                "answer_summary": "No response",
+                "source_files": []
+        }
+
         try:
             llm_response = json.loads(generated_text)
-        except json.JSONDecodeError:
-            llm_response = {
-                "answer_summary": generated_text,
-                "source_files": []
-            }
+        except json.JSONDecodeError as e:
+            print(e)
+            llm_response = empty_response
         
-        return {
-            "summary": llm_response.get("answer_summary", ""),
+        props = llm_response.get("properties")
+        if not props:
+            props = empty_response
+
+        res = {
+            "summary": props.get("answer_summary", ""),
             "updated_files": [
                 {
                     "file_name": f.get("file_name"),
                     "file_content": f.get("file_content")
                 }
-                for f in llm_response.get("source_files", [])
+                for f in props.get("source_files", [])
             ]
         }
+
+        if self.debug:
+            print("----- returning from parse_llm_resp -----")
+            print(res)
+        return res
 
     def _create_error_response(self, error_msg: str) -> Dict[str, Any]:
         """Create a standardized error response."""
@@ -174,10 +186,10 @@ class OfflineLLMPlugin(Plugin):
     def _generate_response(self, model_id: str, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Generate a response using the offline model."""
         if not self._load_model(model_id):
-            return None
+            return self._create_error_response(f"Failed to load offline model '{model_id}'.")
             
         if not self._llm_instance:
-            return None
+            return self._create_error_response(f"Model instance for '{model_id}' not available after load attempt.")
 
         conv_id = self._get_conversation_id(chat_id)
         if conv_id not in self.chat_history:
@@ -192,30 +204,50 @@ class OfflineLLMPlugin(Plugin):
         
         # Format for llama.cpp chat completion
         try:
+            if self.debug:
+                print(messages)
             response = self._llm_instance.create_chat_completion(
                 messages=messages,
                 temperature=0.7,
                 max_tokens=4096,
                 response_format={"type": "json_object"}
             )
+
+            if self.debug:
+                print(response)
+                print("----------------")
             
             if response and "choices" in response and response["choices"]:
                 generated_text = response["choices"][0]["message"]["content"]
                 
+                if self.debug:
+                    print(generated_text)
+                    print("----------------")
+
                 # Update chat history
                 self.chat_history[conv_id].append({"role": "user", "content": user_message})
                 self.chat_history[conv_id].append({"role": "assistant", "content": generated_text})
                 self._save_history()
                 
-                return self._parse_llm_response(generated_text)
+                res = self._parse_llm_response(generated_text)
+
+                if self.debug:
+                    print("----- parse_llm_resp -------")
+                    print(res)
+                    print("----------------")
+                return res
             else:
                 return self._create_error_response("No response generated from offline model")
                 
         except Exception as e:
+            print(f"Error generating response: {e}")
             return self._create_error_response(f"Error generating response: {e}")
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Handle commands for the offline LLM plugin."""
+
+        if self.debug:
+            print("[DEBUG] offline_llm on_command entering...")
         
         if command_name == "download_offline_model":
             model_id = params.get("model_id", "")
@@ -252,9 +284,8 @@ class OfflineLLMPlugin(Plugin):
                 
             # Check if model is ready
             if get_model_status(model_id) != "READY":
-                if self.verbose:
-                    rprint(f"[yellow]Offline model {model_id} not ready.[/]")
-                return None
+                msg = f"Offline model '{model_id}' is not ready. Please download it via the 'model' command."
+                return self._create_error_response(msg)
                 
             prompt = params.get("prompt", "").strip()
             source_files = params.get("source_files", {})
@@ -264,6 +295,10 @@ class OfflineLLMPlugin(Plugin):
             self.history_file = Path(root) / ".aye" / "offline_chat_history.json" if root else Path.cwd() / ".aye" / "offline_chat_history.json"
             self._load_history()
 
-            return self._generate_response(model_id, prompt, source_files, chat_id)
+            res = self._generate_response(model_id, prompt, source_files, chat_id)
+            if self.debug:
+                print("[DEBUG] -------- end of offline_llm -------")
+                print(res)
+            return res
             
         return None
