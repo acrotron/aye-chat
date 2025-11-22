@@ -13,7 +13,7 @@ class TestRepl(TestCase):
         self.session = MagicMock()
 
     @patch('os.chdir')
-    @patch('aye.controller.repl.rprint')
+    @patch('aye.controller.command_handlers.rprint')
     def test_handle_cd_command_success(self, mock_rprint, mock_chdir):
         target_dir = '/tmp'
         
@@ -26,7 +26,7 @@ class TestRepl(TestCase):
         mock_rprint.assert_called_once_with(str(Path(target_dir)))
 
     @patch('os.chdir')
-    @patch('aye.controller.repl.rprint')
+    @patch('aye.controller.command_handlers.rprint')
     def test_handle_cd_command_home(self, mock_rprint, mock_chdir):
         home_dir = str(Path.home())
         with patch('pathlib.Path.cwd', return_value=Path(home_dir)):
@@ -34,31 +34,34 @@ class TestRepl(TestCase):
         mock_chdir.assert_called_once_with(home_dir)
 
     @patch('os.chdir', side_effect=FileNotFoundError("No such file or directory"))
-    @patch('aye.controller.repl.print_error')
+    @patch('aye.controller.command_handlers.print_error')
     def test_handle_cd_command_failure(self, mock_print_error, mock_chdir):
         result = repl.handle_cd_command(['cd', '/nonexistent'], self.conf)
         self.assertFalse(result)
         mock_chdir.assert_called_once_with('/nonexistent')
         mock_print_error.assert_called_once()
 
-    @patch('aye.controller.repl.rprint')
-    @patch('aye.controller.repl.set_user_config')
+    @patch('aye.controller.command_handlers.rprint')
+    @patch('aye.controller.command_handlers.set_user_config')
     def test_handle_model_command_list_and_select(self, mock_set_config, mock_rprint):
         self.conf.selected_model = MODELS[0]['id']
-        self.session.prompt.return_value = "2" # Select the second model
+        self.conf.plugin_manager = MagicMock()
+        self.conf.plugin_manager.handle_command.return_value = None
+        self.session.prompt.return_value = "2"
         
         repl.handle_model_command(self.session, MODELS, self.conf, ['model'])
         
         self.session.prompt.assert_called_once()
         self.assertEqual(self.conf.selected_model, MODELS[1]['id'])
         mock_set_config.assert_called_once_with("selected_model", MODELS[1]['id'])
-        # Check for the success message
         self.assertIn(f"Selected: {MODELS[1]['name']}", str(mock_rprint.call_args_list))
 
-    @patch('aye.controller.repl.rprint')
-    @patch('aye.controller.repl.set_user_config')
+    @patch('aye.controller.command_handlers.rprint')
+    @patch('aye.controller.command_handlers.set_user_config')
     def test_handle_model_command_direct_select(self, mock_set_config, mock_rprint):
         self.conf.selected_model = MODELS[0]['id']
+        self.conf.plugin_manager = MagicMock()
+        self.conf.plugin_manager.handle_command.return_value = None
         
         repl.handle_model_command(self.session, MODELS, self.conf, ['model', '3'])
         
@@ -67,13 +70,16 @@ class TestRepl(TestCase):
         mock_set_config.assert_called_once_with("selected_model", MODELS[2]['id'])
         self.assertIn(f"Selected model: {MODELS[2]['name']}", str(mock_rprint.call_args_list))
 
-    @patch('aye.controller.repl.rprint')
-    @patch('aye.controller.repl.set_user_config')
+    @patch('aye.controller.command_handlers.rprint')
+    @patch('aye.controller.command_handlers.set_user_config')
     def test_handle_model_command_invalid_input(self, mock_set_config, mock_rprint):
         self.conf.selected_model = MODELS[0]['id']
+        self.conf.plugin_manager = MagicMock()
+        self.conf.plugin_manager.handle_command.return_value = None
+        
         repl.handle_model_command(self.session, MODELS, self.conf, ['model', '99'])
         mock_set_config.assert_not_called()
-        mock_rprint.assert_any_call("[red]Invalid model number.[/]" )
+        mock_rprint.assert_any_call("[red]Invalid model number.[/]")
 
         repl.handle_model_command(self.session, MODELS, self.conf, ['model', 'abc'])
         mock_set_config.assert_not_called()
@@ -83,8 +89,8 @@ class TestRepl(TestCase):
         repl.handle_model_command(self.session, MODELS, self.conf, ['model'])
         mock_rprint.assert_any_call("[red]Invalid input.[/]")
 
-    @patch('aye.controller.repl.rprint')
-    @patch('aye.controller.repl.set_user_config')
+    @patch('aye.controller.command_handlers.rprint')
+    @patch('aye.controller.command_handlers.set_user_config')
     def test_handle_verbose_command(self, mock_set_config, mock_rprint):
         # Toggle on
         repl.handle_verbose_command(['verbose', 'on'])
@@ -100,8 +106,8 @@ class TestRepl(TestCase):
         repl.handle_verbose_command(['verbose', 'invalid'])
         mock_rprint.assert_any_call("[red]Usage: verbose on|off[/]")
 
-    @patch('aye.controller.repl.get_user_config', return_value='off')
-    @patch('aye.controller.repl.rprint')
+    @patch('aye.controller.command_handlers.get_user_config', return_value='off')
+    @patch('aye.controller.command_handlers.rprint')
     def test_handle_verbose_command_status(self, mock_rprint, mock_get_config):
         repl.handle_verbose_command(['verbose'])
         mock_get_config.assert_called_with("verbose", "off")

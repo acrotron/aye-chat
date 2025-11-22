@@ -39,7 +39,7 @@ from chromadb.utils import embedding_functions
 # in our environment: for some reason, regular things like 
 # ONNXMiniLM_L6_V2() invocation does not work.
 def download_onnx():
-    print("Preparing the system for the first run...")
+    print("Preparing the system...")
     client = chromadb.Client()
     ef = embedding_functions.DefaultEmbeddingFunction()
     coll = client.create_collection(name="my_collection", embedding_function=ef)

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional, Any
 import shlex
 import threading
+import glob
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
@@ -27,92 +28,16 @@ from aye.controller.tutorial import run_first_time_tutorial_if_needed
 from aye.controller.llm_invoker import invoke_llm
 from aye.controller.llm_handler import process_llm_response, handle_llm_error
 from aye.controller import commands
+from aye.controller.command_handlers import (
+    handle_cd_command,
+    handle_model_command,
+    handle_verbose_command,
+    handle_debug_command,
+    handle_with_command
+)
 
 DEBUG = False
 plugin_manager = None # HACK: for broken test patch to work
-
-def handle_cd_command(tokens: list[str], conf: Any) -> bool:
-    """Handle 'cd' command: change directory and update conf.root."""
-    if len(tokens) < 2:
-        target_dir = str(Path.home())
-    else:
-        target_dir = ' '.join(tokens[1:])
-    try:
-        os.chdir(target_dir)
-        conf.root = Path.cwd()
-        rprint(str(conf.root))
-        return True
-    except Exception as e:
-        print_error(e)
-        return False
-
-def handle_model_command(session: PromptSession, models: list, conf: Any, tokens: list):
-    """Handle the 'model' command for model selection."""
-    if len(tokens) > 1:
-        try:
-            num = int(tokens[1])
-            if 1 <= num <= len(models):
-                selected_id = models[num - 1]["id"]
-                conf.selected_model = selected_id
-                set_user_config("selected_model", selected_id)
-                rprint(f"[green]Selected model: {models[num - 1]['name']}[/]")
-            else:
-                rprint("[red]Invalid model number.[/]")
-        except ValueError:
-            rprint("[red]Invalid input. Use a number.[/]")
-        return
-
-    current_id = conf.selected_model
-    current_name = next((m['name'] for m in models if m['id'] == current_id), "Unknown")
-
-    rprint(f"[yellow]Currently selected:[/] {current_name}\n")
-    rprint("[yellow]Available models:[/]")
-    for i, m in enumerate(models, 1):
-        rprint(f"  {i}. {m['name']}")
-    rprint("")
-
-    if not session:
-        return
-
-    choice = session.prompt("Enter model number to select (or Enter to keep current): ").strip()
-    if choice:
-        try:
-            num = int(choice)
-            if 1 <= num <= len(models):
-                selected_id = models[num - 1]["id"]
-                conf.selected_model = selected_id
-                set_user_config("selected_model", selected_id)
-                rprint(f"[green]Selected: {models[num - 1]['name']}[/]")
-            else:
-                rprint("[red]Invalid number.[/]")
-        except ValueError:
-            rprint("[red]Invalid input.[/]")
-
-def handle_verbose_command(tokens: list):
-    """Handle the 'verbose' command."""
-    if len(tokens) > 1:
-        val = tokens[1].lower()
-        if val in ("on", "off"):
-            set_user_config("verbose", val)
-            rprint(f"[green]Verbose mode set to {val.title()}[/]")
-        else:
-            rprint("[red]Usage: verbose on|off[/]")
-    else:
-        current = get_user_config("verbose", "off")
-        rprint(f"[yellow]Verbose mode is {current.title()}[/]")
-
-def handle_debug_command(tokens: list):
-    """Handle the 'debug' command."""
-    if len(tokens) > 1:
-        val = tokens[1].lower()
-        if val in ("on", "off"):
-            set_user_config("debug", val)
-            rprint(f"[green]Debug mode set to {val.title()}[/]")
-        else:
-            rprint("[red]Usage: debug on|off[/]")
-    else:
-        current = get_user_config("debug", "off")
-        rprint(f"[yellow]Debug mode is {current.title()}[/]")
 
 def print_startup_header(conf: Any):
     """Prints the session context, current model, and welcome message."""
@@ -166,7 +91,7 @@ def chat_repl(conf: Any) -> None:
     index_manager = conf.index_manager
     if index_manager.has_work():
         if conf.verbose:
-            rprint("[cyan]Starting background indexing...[/]")
+            rprint("[cyan]Starting background indexing...")
         thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
         thread.start()
 
@@ -197,54 +122,9 @@ def chat_repl(conf: Any) -> None:
 
             # Handle 'with' command before tokenizing. It has its own flow.
             if prompt.strip().lower().startswith("with ") and ":" in prompt:
-                try:
-                    parts = prompt.split(":", 1)
-                    file_list_str, new_prompt_str = parts
-                    file_list_str = file_list_str.strip()[4:].strip()
-
-                    if not file_list_str:
-                        rprint("[red]Error: File list cannot be empty for 'with' command.[/red]")
-                        continue
-                    if not new_prompt_str.strip():
-                        rprint("[red]Error: Prompt cannot be empty after the colon.[/red]")
-                        continue
-
-                    files_to_include = [f.strip() for f in file_list_str.replace(",", " ").split() if f.strip()]
-                    explicit_source_files = {}
-                    all_files_found = True
-                    for file_name in files_to_include:
-                        file_path = conf.root / file_name
-                        if not file_path.is_file():
-                            rprint(f"[yellow]File not found, skipping: {file_name}[/yellow]")
-                            all_files_found = False
-                            break
-                        try:
-                            explicit_source_files[file_name] = file_path.read_text(encoding="utf-8")
-                        except Exception as e:
-                            rprint(f"[red]Could not read file '{file_name}': {e}[/red]")
-                            all_files_found = False
-                            break
-                    
-                    if not all_files_found:
-                        continue
-
-                    llm_response = invoke_llm(
-                        prompt=new_prompt_str.strip(),
-                        conf=conf,
-                        console=console,
-                        plugin_manager=conf.plugin_manager,
-                        chat_id=chat_id,
-                        verbose=conf.verbose,
-                        explicit_source_files=explicit_source_files
-                    )
-                    if llm_response:
-                        new_chat_id = process_llm_response(response=llm_response, conf=conf, console=console, prompt=new_prompt_str.strip(), chat_id_file=chat_id_file if llm_response.chat_id else None)
-                        if new_chat_id is not None:
-                            chat_id = new_chat_id
-                    else:
-                        rprint("[yellow]No response from LLM.[/]")
-                except Exception as exc:
-                    handle_llm_error(exc)
+                new_chat_id = handle_with_command(prompt, conf, console, chat_id, chat_id_file)
+                if new_chat_id is not None:
+                    chat_id = new_chat_id
                 continue
 
             if not prompt.strip():

@@ -18,17 +18,18 @@ $ aye chat
 > fix the bug in server.py
 ✓ Fixed undefined variable on line 42
 
-> ls -la
-[shows your actual files]
+> vim server.py
+[opens real vim, returns to chat after]
 
 > refactor: make it async
 ✓ Updated server.py with async/await
 
+> pytest
+✗ Tests fail
+
 > restore
 ✓ Reverted last changes
 
-> vim config.json
-[opens real vim, returns to chat after]
 ```
 
 **No copy-pasting. No context switching. AI edits your files directly.**

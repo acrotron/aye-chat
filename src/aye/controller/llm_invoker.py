@@ -10,6 +10,7 @@ from aye.model.models import LLMResponse, LLMSource, VectorIndexResult
 from aye.presenter.ui_utils import thinking_spinner
 from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
+from aye.model.offline_llm_manager import is_offline_model
 
 def _is_debug():
     return get_user_config("debug", "off").lower() == "on"
@@ -159,6 +160,8 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
     except json.JSONDecodeError as e:
         if _is_debug():
             print(f"[DEBUG] Failed to parse assistant_response as JSON: {e}. Treating as plain text.")
+            print(f"[DEBUG] LLM response: {resp}")
+            
         
         if "error" in assistant_resp_str.lower():
             chat_title = resp.get('chat_title', 'Unknown')
@@ -189,7 +192,7 @@ def invoke_llm(
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
     
     with thinking_spinner(console):
-        # 1. Try local model first
+        # 1. Try local/offline model plugins first
         local_response = plugin_manager.handle_command("local_model_invoke", {
             "prompt": prompt,
             "model_id": conf.selected_model,
@@ -197,7 +200,7 @@ def invoke_llm(
             "chat_id": chat_id,
             "root": conf.root
         })
-        
+
         if local_response is not None:
             return LLMResponse(
                 summary=local_response.get("summary", ""),
@@ -206,7 +209,7 @@ def invoke_llm(
                 source=LLMSource.LOCAL
             )
         
-        # 2. Fall back to API
+        # 2. Fall back to API for non-plugin models (e.g. official OpenAI, Anthropic)
         if _is_debug():
             print(f"[DEBUG] Processing chat message with chat_id={chat_id or -1}, model={conf.selected_model}")
         

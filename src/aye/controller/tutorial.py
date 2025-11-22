@@ -19,9 +19,12 @@ def _print_step(title, text, simulated_command=None):
     input("\nPress Enter to continue...\n")
 
 
-def run_tutorial():
+def run_tutorial(is_first_run: bool = True):
     """
-    Runs an interactive tutorial for first-time users.
+    Runs an interactive tutorial for users.
+    
+    Args:
+        is_first_run: If True, runs automatically. If False, prompts user first.
     
     Guides the user through:
     1. Sending a prompt to modify a file.
@@ -34,7 +37,14 @@ def run_tutorial():
     tutorial_flag_dir.mkdir(parents=True, exist_ok=True)
     tutorial_flag_file = tutorial_flag_dir / ".tutorial_ran"
 
-    # Welcome message and confirmation
+    # If not first run, prompt user
+    if not is_first_run:
+        if not Confirm.ask("\n[bold]Do you want to run the tutorial?[/bold]", default=False):
+            rprint("\nSkipping tutorial.")
+            tutorial_flag_file.touch()
+            return
+
+    # Welcome message
     rprint(Panel(
         "[bold green]Welcome to Aye Chat![/] This is a quick 4-step interactive tutorial to get you started.",
         title="[bold]First-Time User Tutorial[/bold]",
@@ -42,11 +52,6 @@ def run_tutorial():
         expand=False
     ))
     
-    if not Confirm.ask("\n[bold]Do you want to start the tutorial now?[/bold]", default=True):
-        rprint("\nSkipping tutorial. You can run it again by deleting the `~/.aye/.tutorial_ran` file.")
-        tutorial_flag_file.touch()
-        return
-
     # Create a temporary file for the tutorial
     temp_file = Path("tutorial_example.py")
     original_content = 'def hello_world():\n    print("Hello, World!")\n'
@@ -201,11 +206,16 @@ def run_tutorial():
 def run_first_time_tutorial_if_needed() -> bool:
     """
     Checks if the first-run tutorial should be executed and runs it.
-    Returns True if this was the first run (and the tutorial was run or skipped),
+    Returns True if this was the first run (and the tutorial was run),
     False otherwise.
     """
     tutorial_flag_file = Path.home() / ".aye" / ".tutorial_ran"
-    if not tutorial_flag_file.exists():
-        run_tutorial()
+    is_first_run = not tutorial_flag_file.exists()
+   
+    if is_first_run:
+        # First run: always run tutorial (no prompt)
+        run_tutorial(is_first_run=True)
         return True
+    
+    # Not first run: don't run tutorial automatically
     return False

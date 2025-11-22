@@ -3,6 +3,8 @@ from typing import Dict, Any, Set, List, Iterable
 from itertools import chain
 import pathspec
 
+from aye.model.config import DEFAULT_IGNORE_SET
+
 
 def _is_hidden(path: Path) -> bool:
     """Return True if *path* or any of its ancestors is a hidden directory.
@@ -28,7 +30,7 @@ def _load_patterns_from_file(file_path: Path) -> List[str]:
 
 def _load_ignore_patterns(root_path: Path) -> list[str]:
     """Load ignore patterns from .ayeignore and .gitignore files in the root directory and all parent directories."""
-    ignore_patterns: List[str] = []
+    ignore_patterns: List[str] = list(DEFAULT_IGNORE_SET)
     
     # Start from root_path and go up through all parent directories
     current_path = root_path.resolve()
