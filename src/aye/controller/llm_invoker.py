@@ -192,7 +192,7 @@ def invoke_llm(
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
     
     with thinking_spinner(console):
-        # 1. Try local model first
+        # 1. Try local/offline model plugins first
         local_response = plugin_manager.handle_command("local_model_invoke", {
             "prompt": prompt,
             "model_id": conf.selected_model,
@@ -200,7 +200,7 @@ def invoke_llm(
             "chat_id": chat_id,
             "root": conf.root
         })
-        
+
         if local_response is not None:
             return LLMResponse(
                 summary=local_response.get("summary", ""),
@@ -209,20 +209,7 @@ def invoke_llm(
                 source=LLMSource.LOCAL
             )
         
-        # 2. Check if this was supposed to be an offline model
-        if is_offline_model(conf.selected_model):
-            # Offline model failed or not ready - don't fall back to API
-            error_msg = f"Offline model '{conf.selected_model}' is not available. Please ensure it's downloaded and ready."
-            if verbose:
-                rprint(f"[red]{error_msg}[/]")
-            return LLMResponse(
-                summary=error_msg,
-                updated_files=[],
-                chat_id=None,
-                source=LLMSource.LOCAL
-            )
-        
-        # 3. Fall back to API only for non-offline models
+        # 2. Fall back to API for non-plugin models (e.g. official OpenAI, Anthropic)
         if _is_debug():
             print(f"[DEBUG] Processing chat message with chat_id={chat_id or -1}, model={conf.selected_model}")
         
@@ -236,7 +223,7 @@ def invoke_llm(
         if _is_debug():
             print(f"[DEBUG] Chat message processed, response keys: {api_resp.keys() if api_resp else 'None'}")
 
-    # 4. Parse API response
+    # 3. Parse API response
     assistant_resp, new_chat_id = _parse_api_response(api_resp)
     
     return LLMResponse(
