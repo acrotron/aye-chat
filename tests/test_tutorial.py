@@ -39,29 +39,14 @@ class TestTutorial(TestCase):
         self.assertTrue(result)
         mock_run_tutorial.assert_called_once_with(is_first_run=True)
 
-    @patch('aye.controller.tutorial.Confirm.ask', return_value=False)
-    def test_run_first_time_tutorial_if_needed_prompts_subsequent(self, mock_confirm):
-        """Test that subsequent runs prompt user and return False if declined."""
+    def test_run_first_time_tutorial_if_needed_subsequent_runs(self):
+        """Test that subsequent runs do not prompt or run tutorial."""
         self.tutorial_flag_file.parent.mkdir(parents=True)
         self.tutorial_flag_file.touch()
         self.assertTrue(self.tutorial_flag_file.exists())
         
         result = tutorial.run_first_time_tutorial_if_needed()
         self.assertFalse(result)
-        mock_confirm.assert_called_once()
-
-    @patch('aye.controller.tutorial.Confirm.ask', return_value=True)
-    @patch('aye.controller.tutorial.run_tutorial')
-    def test_run_first_time_tutorial_if_needed_accepts_subsequent(self, mock_run_tutorial, mock_confirm):
-        """Test that subsequent runs prompt user and run tutorial if accepted."""
-        self.tutorial_flag_file.parent.mkdir(parents=True)
-        self.tutorial_flag_file.touch()
-        self.assertTrue(self.tutorial_flag_file.exists())
-        
-        result = tutorial.run_first_time_tutorial_if_needed()
-        self.assertTrue(result)
-        mock_confirm.assert_called_once()
-        mock_run_tutorial.assert_called_once_with(is_first_run=True)
 
     @patch('aye.controller.tutorial.Confirm.ask', return_value=False)
     @patch('aye.controller.tutorial.rprint')

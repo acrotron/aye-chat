@@ -206,7 +206,7 @@ def run_tutorial(is_first_run: bool = True):
 def run_first_time_tutorial_if_needed() -> bool:
     """
     Checks if the first-run tutorial should be executed and runs it.
-    Returns True if this was the first run (and the tutorial was run or skipped),
+    Returns True if this was the first run (and the tutorial was run),
     False otherwise.
     """
     tutorial_flag_file = Path.home() / ".aye" / ".tutorial_ran"
@@ -217,14 +217,5 @@ def run_first_time_tutorial_if_needed() -> bool:
         run_tutorial(is_first_run=True)
         return True
     
-    # Only prompt on subsequent runs (not first run)
-    else:
-        if not Confirm.ask("\n[bold]Do you want to start the tutorial now?[/bold]", default=False):
-            rprint("\nSkipping tutorial.")
-            return False
-        else:
-            run_tutorial(is_first_run=True)
-            return True
-
     # Not first run: don't run tutorial automatically
     return False
