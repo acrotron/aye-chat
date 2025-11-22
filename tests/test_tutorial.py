@@ -76,7 +76,7 @@ class TestTutorial(TestCase):
         
         # Should create flag file even when skipped
         self.assertTrue(self.tutorial_flag_file.exists())
-        mock_rprint.assert_any_call("\nSkipping tutorial. You can run it again by deleting the `~/.aye/.tutorial_ran` file.")
+        mock_rprint.assert_any_call("\nSkipping tutorial.")
 
     @patch('aye.controller.tutorial.Confirm.ask')
     @patch('aye.controller.tutorial.input', return_value="")
