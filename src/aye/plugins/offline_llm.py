@@ -44,8 +44,8 @@ class OfflineLLMPlugin(Plugin):
             import llama_cpp
             return True
         except ImportError:
-            if self.verbose:
-                rprint("[yellow]llama-cpp-python not available for offline inference.[/]")
+            rprint("[yellow]llama-cpp-python not available for offline inference.[/]")
+            rprint("[yellow]Install it with `pip install llama-cpp-python`, restart and try again.[/]")
             return False
 
     def _load_model(self, model_id: str) -> bool:
