@@ -9,6 +9,7 @@ import weakref
 import time
 
 from rich import print as rprint
+from rich.prompt import Confirm
 
 from aye.model.models import VectorIndexResult
 from aye.model.source_collector import get_project_files
@@ -192,6 +193,64 @@ class IndexManager:
         new_meta = {"hash": current_hash, "mtime": mtime, "size": size, "refined": False}
         return "modified", new_meta
 
+    def _load_old_index(self) -> Dict[str, Any]:
+        """Load the existing hash index from disk, or return an empty dict if not found or invalid."""
+        old_index: Dict[str, Any] = {}
+        if self.hash_index_path.is_file():
+            try:
+                old_index = json.loads(self.hash_index_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, FileNotFoundError):
+                old_index = {}
+        return old_index
+
+    def _categorize_files(self, current_files: List[Path], old_index: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[str, Dict[str, Any]]]:
+        """Categorize current files into those needing coarse indexing, refinement, or unchanged."""
+        files_to_coarse_index: List[str] = []
+        files_to_refine: List[str] = []
+        new_index: Dict[str, Dict[str, Any]] = {}
+
+        for file_path in current_files:
+            rel_path_str = file_path.relative_to(self.root_path).as_posix()
+            status, meta = self._check_file_status(file_path, old_index)
+
+            if status == "modified":
+                files_to_coarse_index.append(rel_path_str)
+                if meta:
+                    new_index[rel_path_str] = meta
+            elif status == "needs_refinement":
+                files_to_refine.append(rel_path_str)
+                if meta:
+                    new_index[rel_path_str] = meta
+            elif status == "unchanged":
+                if meta:
+                    new_index[rel_path_str] = meta
+            # 'error' status is ignored
+
+        return files_to_coarse_index, files_to_refine, new_index
+
+    def _handle_deleted_files(self, current_file_paths_str: set, old_index: Dict[str, Any]):
+        """Handle files that have been deleted by removing them from the vector index."""
+        deleted_files = list(set(old_index.keys()) - current_file_paths_str)
+        if deleted_files:
+            if self.verbose:
+                rprint(f"  [red]Deleted:[/] {len(deleted_files)} file(s) from index.")
+            vector_db.delete_from_index(self.collection, deleted_files)
+        return deleted_files
+
+    def _warn_large_indexing(self, files_to_coarse_index: List[str], files_to_refine: List[str]):
+        """Warn the user if the number of files to index is very large and ask for confirmation."""
+        total_files_to_index = len(files_to_coarse_index) + len(files_to_refine)
+        if total_files_to_index > 500:
+            rprint(f"\n[bold yellow]⚠️  Whoa, I found {total_files_to_index:,} files to index![/]")
+            rprint("[yellow]Is this really how large your project is, or did some libraries get included by accident?[/]")
+            rprint("[yellow]You can use .gitignore or .ayeignore to exclude subfolders and files.[/]\n")
+            
+            if not Confirm.ask("[bold]Do you want to continue with indexing?[/bold]", default=False):
+                rprint("[cyan]Indexing cancelled. Please update your ignore files and restart aye chat.[/]")
+                return False
+            rprint("[cyan]Proceeding with indexing...\n")
+        return True
+
     def prepare_sync(self, verbose: bool = False) -> None:
         """
         Performs a fast scan for file changes and prepares lists of files for
@@ -207,40 +266,16 @@ class IndexManager:
                 rprint("[yellow]Code lookup is disabled. Skipping project scan.[/]")
             return
 
-        old_index: Dict[str, Any] = {}
-        if self.hash_index_path.is_file():
-            try:
-                old_index = json.loads(self.hash_index_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, FileNotFoundError):
-                old_index = {}
-
+        old_index = self._load_old_index()
         current_files = get_project_files(root_dir=str(self.root_path), file_mask=self.file_mask)
         
-        new_index: Dict[str, Dict[str, Any]] = {}
-        files_to_coarse_index: List[str] = []
-        files_to_refine: List[str] = []
+        files_to_coarse_index, files_to_refine, new_index = self._categorize_files(current_files, old_index)
         
         current_file_paths_str = {p.relative_to(self.root_path).as_posix() for p in current_files}
-
-        for file_path in current_files:
-            rel_path_str = file_path.relative_to(self.root_path).as_posix()
-            status, meta = self._check_file_status(file_path, old_index)
-
-            if status == "modified":
-                files_to_coarse_index.append(rel_path_str)
-                if meta: new_index[rel_path_str] = meta
-            elif status == "needs_refinement":
-                files_to_refine.append(rel_path_str)
-                if meta: new_index[rel_path_str] = meta
-            elif status == "unchanged":
-                if meta: new_index[rel_path_str] = meta
-            # 'error' status is ignored
-
-        deleted_files = list(set(old_index.keys()) - current_file_paths_str)
-        if deleted_files:
-            if verbose:
-                rprint(f"  [red]Deleted:[/] {len(deleted_files)} file(s) from index.")
-            vector_db.delete_from_index(self.collection, deleted_files)
+        deleted_files = self._handle_deleted_files(current_file_paths_str, old_index)
+        
+        if not self._warn_large_indexing(files_to_coarse_index, files_to_refine):
+            return
 
         if files_to_coarse_index:
             if verbose:
