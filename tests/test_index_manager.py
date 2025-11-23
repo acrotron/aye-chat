@@ -8,6 +8,7 @@ import time
 
 import aye.model.index_manager as index_manager
 
+
 class ImmediateExecutor:
     """A mock executor that runs tasks immediately in the same thread."""
     def __init__(self, *args, **kwargs): pass
@@ -20,6 +21,7 @@ class ImmediateExecutor:
         except Exception as e:
             future.result.side_effect = e
         return future
+
 
 class TestIndexManager(unittest.TestCase):
     def setUp(self):
@@ -125,6 +127,76 @@ class TestIndexManager(unittest.TestCase):
         self.assertEqual(status, 'error')
         self.assertIsNone(meta)
 
+    def test_check_file_status_read_error(self):
+        file_path = self.root_path / 'bad.py'
+        file_path.write_text('ok')
+        old_index = {'bad.py': {'hash': 'hash', 'mtime': 0, 'size': 0}}
+        with patch.object(Path, 'read_text', side_effect=UnicodeDecodeError('utf-8', b'', 0, 1, '')):
+            status, meta = self.manager._check_file_status(file_path, old_index)
+        self.assertEqual(status, 'error')
+        self.assertEqual(meta, old_index['bad.py'])
+
+    def test_load_old_index_missing_file(self):
+        self.assertEqual(self.manager._load_old_index(), {})
+
+    def test_load_old_index_invalid_json(self):
+        self.hash_index_path.parent.mkdir(parents=True, exist_ok=True)
+        self.hash_index_path.write_text('not json')
+        self.assertEqual(self.manager._load_old_index(), {})
+
+    def test_categorize_files(self):
+        file_a = self.root_path / 'a.py'
+        file_b = self.root_path / 'b.py'
+        file_a.write_text('a')
+        file_b.write_text('b')
+        statuses = {
+            'a.py': ('modified', {'hash': 'ha'}),
+            'b.py': ('needs_refinement', {'hash': 'hb'})
+        }
+
+        def fake_check(path, old):
+            return statuses[path.name]
+
+        with patch.object(self.manager, '_check_file_status', side_effect=fake_check):
+            coarse, refine, new_index = self.manager._categorize_files([file_a, file_b], {})
+
+        self.assertEqual(coarse, ['a.py'])
+        self.assertEqual(refine, ['b.py'])
+        self.assertEqual(new_index['a.py']['hash'], 'ha')
+        self.assertEqual(new_index['b.py']['hash'], 'hb')
+
+    def test_handle_deleted_files_no_deletion(self):
+        self.manager.collection = MagicMock()
+        old_index = {'a.py': {}, 'b.py': {}}
+        deleted = self.manager._handle_deleted_files({'a.py', 'b.py'}, old_index)
+        self.assertEqual(deleted, [])
+
+    @patch('aye.model.index_manager.vector_db.delete_from_index')
+    def test_handle_deleted_files_with_deletion(self, mock_delete):
+        self.manager.collection = MagicMock()
+        old_index = {'keep.py': {}, 'remove.py': {}}
+        deleted = self.manager._handle_deleted_files({'keep.py'}, old_index)
+        self.assertEqual(set(deleted), {'remove.py'})
+        mock_delete.assert_called_once_with(self.manager.collection, ['remove.py'])
+
+    @patch('aye.model.index_manager.Confirm.ask', return_value=False)
+    def test_warn_large_indexing_cancel(self, mock_confirm):
+        result = self.manager._warn_large_indexing(['file'] * 501, [])
+        self.assertFalse(result)
+        mock_confirm.assert_called_once()
+
+    @patch('aye.model.index_manager.Confirm.ask', return_value=True)
+    def test_warn_large_indexing_continue(self, mock_confirm):
+        result = self.manager._warn_large_indexing(['file'] * 501, [])
+        self.assertTrue(result)
+        mock_confirm.assert_called_once()
+
+    @patch('aye.model.index_manager.Confirm.ask')
+    def test_warn_large_indexing_no_prompt_for_small_lists(self, mock_confirm):
+        result = self.manager._warn_large_indexing(['file1'], ['file2'])
+        self.assertTrue(result)
+        mock_confirm.assert_not_called()
+
     @patch('aye.model.index_manager.get_project_files')
     @patch('aye.model.vector_db.delete_from_index')
     def test_prepare_sync_with_changes(self, mock_delete, mock_get_files):
@@ -136,7 +208,7 @@ class TestIndexManager(unittest.TestCase):
         file2.write_text('content2')
         file3_deleted = 'file3.py'
         mock_get_files.return_value = [file1, file2]
-        
+
         # Old index with file1 unrefined, file2 missing, file3 deleted
         old_index = {
             'file1.py': {'hash': self.manager._calculate_hash('content1'), 'mtime': file1.stat().st_mtime, 'size': file1.stat().st_size, 'refined': False},
@@ -144,12 +216,22 @@ class TestIndexManager(unittest.TestCase):
         }
         self.hash_index_path.parent.mkdir()
         self.hash_index_path.write_text(json.dumps(old_index))
-        
+
         self.manager.prepare_sync(verbose=True)
 
         self.assertEqual(self.manager._files_to_coarse_index, ['file2.py'])
         self.assertEqual(self.manager._files_to_refine, ['file1.py'])
         mock_delete.assert_called_once_with(self.manager.collection, [file3_deleted])
+
+    def test_prepare_sync_warn_cancel(self):
+        self.manager._is_initialized = True
+        self.manager.collection = MagicMock()
+        with patch('aye.model.index_manager.get_project_files', return_value=[]), \
+             patch.object(self.manager, '_warn_large_indexing', return_value=False) as mock_warn:
+            self.manager.prepare_sync(verbose=True)
+        self.assertFalse(self.manager._files_to_coarse_index)
+        self.assertFalse(self.manager._files_to_refine)
+        mock_warn.assert_called_once()
 
     def test_has_work(self):
         self.assertFalse(self.manager.has_work())
@@ -181,6 +263,72 @@ class TestIndexManager(unittest.TestCase):
         
         self.manager._is_refining = False
         self.assertEqual(self.manager.get_progress_display(), '')
+
+    def test_process_one_file_coarse_failure(self):
+        target = 'fail.py'
+        (self.root_path / target).write_text('ok')
+        self.assertEqual(self.manager._coarse_processed, 0)
+        with patch.object(Path, 'read_text', side_effect=Exception('boom')):
+            result = self.manager._process_one_file_coarse(target)
+        self.assertIsNone(result)
+        self.assertEqual(self.manager._coarse_processed, 1)
+
+    @patch('aye.model.index_manager.vector_db.update_index_coarse')
+    def test_process_one_file_coarse_success(self, mock_update):
+        target = 'ok.py'
+        (self.root_path / target).write_text('content')
+        self.manager.collection = MagicMock()
+        result = self.manager._process_one_file_coarse(target)
+        mock_update.assert_called_once_with(self.manager.collection, {target: 'content'})
+        self.assertEqual(result, target)
+        self.assertEqual(self.manager._coarse_processed, 1)
+
+    def test_process_one_file_refine_failure(self):
+        target = 'fail.py'
+        (self.root_path / target).write_text('ok')
+        self.assertEqual(self.manager._refine_processed, 0)
+        with patch.object(Path, 'read_text', side_effect=Exception('boom')):
+            result = self.manager._process_one_file_refine(target)
+        self.assertIsNone(result)
+        self.assertEqual(self.manager._refine_processed, 1)
+
+    @patch('aye.model.index_manager.vector_db.refine_file_in_index')
+    def test_process_one_file_refine_success(self, mock_refine):
+        target = 'fine.py'
+        (self.root_path / target).write_text('content')
+        self.manager.collection = MagicMock()
+        result = self.manager._process_one_file_refine(target)
+        mock_refine.assert_called_once_with(self.manager.collection, target, 'content')
+        self.assertEqual(result, target)
+        self.assertEqual(self.manager._refine_processed, 1)
+
+    def test_run_work_phase_updates_current_index(self):
+        self.manager._target_index = {'file.py': {'hash': 'h', 'refined': False}}
+        self.manager._current_index_on_disk = {}
+        with patch('aye.model.index_manager.DaemonThreadPoolExecutor', ImmediateExecutor), \
+             patch('aye.model.index_manager.concurrent.futures.as_completed', lambda futures: futures):
+            self.manager._run_work_phase(lambda p: p, ['file.py'], is_refinement=False)
+        self.assertIn('file.py', self.manager._current_index_on_disk)
+        self.assertEqual(self.manager._current_index_on_disk['file.py']['hash'], 'h')
+
+    def test_run_work_phase_marks_refined(self):
+        self.manager._current_index_on_disk = {'file.py': {'hash': 'h', 'refined': False}}
+        with patch('aye.model.index_manager.DaemonThreadPoolExecutor', ImmediateExecutor), \
+             patch('aye.model.index_manager.concurrent.futures.as_completed', lambda futures: futures):
+            self.manager._run_work_phase(lambda p: p, ['file.py'], is_refinement=True)
+        self.assertTrue(self.manager._current_index_on_disk['file.py']['refined'])
+
+    def test_save_progress_success(self):
+        self.manager._current_index_on_disk = {'file.py': {'hash': 'h', 'refined': True}}
+        self.manager._save_progress()
+        self.assertTrue(self.hash_index_path.exists())
+        saved = json.loads(self.hash_index_path.read_text())
+        self.assertEqual(saved, self.manager._current_index_on_disk)
+
+    def test_save_progress_skip_when_empty(self):
+        self.manager._current_index_on_disk = {}
+        self.manager._save_progress()
+        self.assertFalse(self.hash_index_path.exists())
 
     @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
     @patch('aye.model.vector_db.initialize_index')
@@ -276,6 +424,7 @@ class TestIndexManager(unittest.TestCase):
         self.assertFalse(temp_path.exists())
         # The original file should not be created/modified
         self.assertFalse(self.hash_index_path.exists())
+
 
 if __name__ == '__main__':
     unittest.main()
