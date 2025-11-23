@@ -124,6 +124,7 @@ MODELS = [
     {"id": "google/gemini-3-pro-preview", "name": "Google: Gemini 3 Pro Preview"},
     {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5"},
     {"id": "openai/gpt-5.1-codex", "name": "OpenAI: GPT-5.1-Codex"},
+    {"id": "openai/gpt-5.1", "name": "OpenAI: GPT-5.1"},
     #{"id": "anthropic/claude-opus-4.1", "name": "Anthropic: Claude Opus 4.1"}
     
     # Offline models

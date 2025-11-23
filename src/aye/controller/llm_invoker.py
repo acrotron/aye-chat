@@ -12,11 +12,34 @@ from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
 from aye.model.offline_llm_manager import is_offline_model
 
+import os
+
+
 def _is_debug():
     return get_user_config("debug", "off").lower() == "on"
 
-CONTEXT_TARGET_SIZE = 180 * 1024  # 180KB, ~40K tokens in English language
-CONTEXT_HARD_LIMIT = 200 * 1024   # 200KB, hard safety limit for API payload
+
+def _get_int_env(name: str, default: int) -> int:
+    """Read an environment variable as int, with a safe default.
+
+    If the variable is unset or cannot be parsed as an integer, the default
+    value is returned.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+CONTEXT_TARGET_SIZE = _get_int_env(
+    "AYE_CONTEXT_TARGET", 180 * 1024
+)  # 180KB, ~40K tokens in English language
+CONTEXT_HARD_LIMIT = _get_int_env(
+    "AYE_CONTEXT_HARD_LIMIT", 200 * 1024
+)  # 200KB, hard safety limit for API payload
 RELEVANCE_THRESHOLD = -1.0  # Accept all results from vector search, even with negative scores.
 
 
