@@ -24,6 +24,7 @@ class TestAuth(TestCase):
         # Cleanup environment variables
         os.environ.pop("AYE_TOKEN", None)
         os.environ.pop("AYE_SELECTED_MODEL", None)
+        os.environ.pop("AYE_TOKEN_FILE", None)
         # Stop patcher and cleanup temp dir
         self.token_patcher.stop()
         self.tmpdir.cleanup()
@@ -140,3 +141,41 @@ token=only
             mock_prompt.assert_called_once()
             mock_store.assert_called_once_with("MY_TOKEN")
             mock_secho.assert_called()
+
+    # ------------------------- AYE_TOKEN_FILE env var --------------------------
+    def test_aye_token_file_env_var_overrides_default_path(self):
+        """Test that AYE_TOKEN_FILE environment variable overrides the default config file path."""
+        # Create a custom config file location
+        custom_tmpdir = tempfile.TemporaryDirectory()
+        custom_config_path = Path(custom_tmpdir.name) / "custom_config.cfg"
+
+        try:
+            # Set the environment variable
+            os.environ["AYE_TOKEN_FILE"] = str(custom_config_path)
+
+            # Reimport the module to pick up the new TOKEN_FILE value
+            import importlib
+            importlib.reload(auth)
+
+            # Verify TOKEN_FILE now points to the custom path
+            self.assertEqual(auth.TOKEN_FILE, custom_config_path)
+
+            # Test that operations use the custom path
+            with patch("pathlib.Path.chmod"):
+                auth.store_token("custom_location_token")
+
+            # Verify the token was written to the custom location
+            self.assertTrue(custom_config_path.exists())
+            content = custom_config_path.read_text(encoding="utf-8")
+            self.assertIn("token=custom_location_token", content)
+
+            # Verify we can read it back
+            token_value = auth.get_user_config("token")
+            self.assertEqual(token_value, "custom_location_token")
+
+        finally:
+            # Cleanup
+            os.environ.pop("AYE_TOKEN_FILE", None)
+            custom_tmpdir.cleanup()
+            # Reload module again to restore default behavior
+            importlib.reload(auth)
