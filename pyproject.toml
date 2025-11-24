@@ -13,12 +13,12 @@ authors = [{name = "Acrotron, Inc.", email = "info@acrotron.com"}]
 
 # Runtime dependencies
 dependencies = [
-    "typer>=0.20.0",          # CLI framework + rich formatting
-    "httpx>=0.28.1",              # HTTP client
-    "keyring>=25.7.0",            # Secure storage for the token
-    "prompt-toolkit>=3.0.52",      # REPL UI
+    "typer>=0.9.0",          # CLI framework + rich formatting
+    "httpx>=0.27.0",              # HTTP client
+    "keyring>=24.0.0",            # Secure storage for the token
+    "prompt-toolkit>=3.0.0",      # REPL UI
     "pathspec>=0.12.1",           # Utility library for gitignore style pattern matching of file paths.
-    "chromadb>=1.3.5"                    # Vector DB with lightweight ONNX runtime for embeddings
+    "chromadb"                    # Vector DB with lightweight ONNX runtime for embeddings
 ]
 
 [project.urls]
@@ -29,9 +29,9 @@ Issues = "https://github.com/acrotron/aye-chat/issues"
 [project.optional-dependencies]
 # Optional development dependencies (tests, linting, etc.)
 dev = [
-    "pytest>=9.0.1",                # test runner
-    "ruff>=0.14.6",                  # linting/formatter (optional)
-    "coverage>=7.12.0",              # code coverage
+    "pytest>=7.0",                # test runner
+    "ruff>=0.6",                  # linting/formatter (optional)
+    "coverage>=7.0",              # code coverage
 ]
 
 [project.scripts]
