@@ -19,9 +19,13 @@ from .service import (
 )
 
 from .config import load_config
+from .version_checker import check_version_and_print_warning
 
 # Load configuration at startup
 load_config()
+
+# Check for newer version on startup
+check_version_and_print_warning()
 
 app = typer.Typer(help="Aye: AI‑powered coding assistant for the terminal")
 
