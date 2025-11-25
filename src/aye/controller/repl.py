@@ -140,6 +140,17 @@ def chat_repl(conf: Any) -> None:
 
         original_first, lowered_first = tokens[0], tokens[0].lower()
 
+        # Check if user entered a number from 1-12 as a model selection shortcut
+        if len(tokens) == 1:
+            try:
+                model_num = int(tokens[0])
+                if 1 <= model_num <= len(MODELS):
+                    # Convert to model command
+                    tokens = ['model', str(model_num)]
+                    lowered_first = 'model'
+            except ValueError:
+                pass  # Not a number, continue with normal processing
+
         try:
             if lowered_first in {"exit", "quit", ":q"}:
                 break
