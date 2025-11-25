@@ -7,6 +7,17 @@ from unittest.mock import patch, MagicMock, call
 import aye.controller.repl as repl
 from aye.model.config import MODELS
 
+
+def _setup_mock_chat_id_path(mock_path, *, exists=False, contents=""):
+    mock_chat_id_file = MagicMock()
+    mock_chat_id_file.exists.return_value = exists
+    mock_chat_id_file.read_text.return_value = contents
+    mock_chat_id_file.parent = MagicMock()
+    mock_chat_id_file.parent.mkdir = MagicMock()
+    mock_path.return_value = mock_chat_id_file
+    return mock_chat_id_file
+
+
 class TestRepl(TestCase):
     def setUp(self):
         self.conf = SimpleNamespace(root=Path.cwd(), file_mask="*.py")
@@ -92,17 +103,14 @@ class TestRepl(TestCase):
     @patch('aye.controller.command_handlers.rprint')
     @patch('aye.controller.command_handlers.set_user_config')
     def test_handle_verbose_command(self, mock_set_config, mock_rprint):
-        # Toggle on
         repl.handle_verbose_command(['verbose', 'on'])
         mock_set_config.assert_called_with('verbose', 'on')
         mock_rprint.assert_any_call("[green]Verbose mode set to On[/]")
 
-        # Toggle off
         repl.handle_verbose_command(['verbose', 'off'])
         mock_set_config.assert_called_with('verbose', 'off')
         mock_rprint.assert_any_call("[green]Verbose mode set to Off[/]")
 
-        # Invalid
         repl.handle_verbose_command(['verbose', 'invalid'])
         mock_rprint.assert_any_call("[red]Usage: verbose on|off[/]")
 
@@ -112,6 +120,15 @@ class TestRepl(TestCase):
         repl.handle_verbose_command(['verbose'])
         mock_get_config.assert_called_with("verbose", "off")
         mock_rprint.assert_called_with("[yellow]Verbose mode is Off[/]")
+
+    @patch('aye.controller.repl.print_welcome_message')
+    @patch('aye.controller.repl.rprint')
+    def test_print_startup_header_known_model(self, mock_rprint, mock_welcome):
+        conf = SimpleNamespace(selected_model=MODELS[0]['id'], file_mask='*.*')
+        repl.print_startup_header(conf)
+        mock_rprint.assert_any_call(f"[bold cyan]Session context: {conf.file_mask}[/]")
+        mock_rprint.assert_any_call(f"[bold cyan]Current model: {MODELS[0]['name']}[/]")
+        mock_welcome.assert_called_once()
 
     @patch('aye.controller.repl.rprint')
     def test_print_startup_header_unknown_model(self, mock_rprint):
@@ -147,7 +164,6 @@ class TestRepl(TestCase):
             mock_rprint.assert_any_call("\n[cyan]Goodbye![/cyan]")
 
     def test_chat_repl_main_loop_commands(self):
-        # This test is rewritten to correctly mock dependencies and test the command dispatch logic.
         with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
              patch('aye.controller.repl.run_first_time_tutorial_if_needed'), \
              patch('aye.controller.repl.get_user_config', return_value="on"), \
@@ -177,7 +193,6 @@ class TestRepl(TestCase):
             ]
             mock_session_cls.return_value = mock_session
 
-            # Mock chat_id file handling
             mock_chat_id_file = MagicMock()
             mock_chat_id_file.exists.return_value = False
             mock_path.return_value = mock_chat_id_file
@@ -186,10 +201,10 @@ class TestRepl(TestCase):
 
             mock_plugin_manager = MagicMock()
             mock_plugin_manager.handle_command.side_effect = [
-                {"completer": None}, # get_completer on startup
-                None,                # new_chat command
-                {"stdout": "files"}, # execute_shell_command for 'ls -l'
-                None,                # execute_shell_command for 'a real prompt' (fallback to LLM)
+                {"completer": None},
+                None,
+                {"stdout": "files"},
+                None,
             ]
 
             mock_index_manager = MagicMock()
@@ -207,16 +222,15 @@ class TestRepl(TestCase):
 
             repl.chat_repl(conf)
 
-            # Assertions
             self.assertEqual(mock_session.prompt.call_count, 10)
-            self.assertEqual(mock_model_cmd.call_count, 2) # Once on startup (verbose), once for 'model' command
+            self.assertEqual(mock_model_cmd.call_count, 2)
             mock_commands.get_snapshot_history.assert_called_once()
             mock_commands.get_diff_paths.assert_called_once_with('file.py', '001', None)
             mock_diff.show_diff.assert_called_once()
             mock_commands.restore_from_snapshot.assert_called_once_with('001', None)
             mock_commands.prune_snapshots.assert_called_once_with(5)
             mock_chat_id_file.unlink.assert_called_once()
-            self.assertEqual(mock_help.call_count, 2) # Once on startup (verbose), once for 'help' command
+            self.assertEqual(mock_help.call_count, 2)
 
             expected_plugin_calls = [
                 call('get_completer', {'commands': ['with', 'new', 'history', 'diff', 'restore', 'undo', 'keep', 'model', 'verbose', 'debug', 'exit', 'quit', ':q', 'help', 'cd']}),
@@ -228,3 +242,249 @@ class TestRepl(TestCase):
 
             mock_invoke.assert_called_once()
             mock_process.assert_called_once()
+
+
+def test_chat_repl_starts_background_indexing_when_has_work():
+    with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
+         patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.threading.Thread') as mock_thread_cls, \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.print_help_message'), \
+         patch('aye.controller.repl.collect_and_send_feedback'):
+
+        session = MagicMock()
+        session.prompt.side_effect = ['exit']
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        thread_instance = MagicMock()
+        mock_thread_cls.return_value = thread_instance
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = True
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask='*.py',
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model='model'
+        )
+
+        repl.chat_repl(conf)
+
+        mock_thread_cls.assert_called_once_with(target=index_manager.run_sync_in_background, daemon=True)
+        thread_instance.start.assert_called_once()
+
+
+def test_chat_repl_shell_command_outputs_error_info():
+    with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
+         patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.collect_and_send_feedback'), \
+         patch('aye.controller.repl.rprint') as mock_rprint:
+
+        session = MagicMock()
+        session.prompt.side_effect = ['ls', 'exit']
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [
+            {"completer": None},
+            {"stdout": "files", "stderr": "warn", "error": "bad"}
+        ]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask='*.py',
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model='model'
+        )
+
+        repl.chat_repl(conf)
+
+        outputs = [args[0] for args, _ in [(call.args, call.kwargs) for call in mock_rprint.call_args_list]]
+        assert "files" in outputs
+        assert "[yellow]warn[/]" in outputs
+        assert "[red]Error:[/] bad" in outputs
+
+
+def test_chat_repl_db_command_with_collection_sample():
+    with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
+         patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.collect_and_send_feedback'), \
+         patch('aye.controller.repl.rprint') as mock_rprint:
+
+        session = MagicMock()
+        session.prompt.side_effect = ['/db', 'exit']
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        long_doc = "A" * 80 + "\nmore text"
+        collection = MagicMock()
+        collection.name = 'test'
+        collection.count.return_value = 2
+        collection.peek.return_value = {
+            'ids': ['1'],
+            'metadatas': [{'foo': 'bar'}],
+            'documents': [long_doc]
+        }
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+        index_manager.collection = collection
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask='*.py',
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model='model'
+        )
+
+        repl.chat_repl(conf)
+
+        printed = [call.args[0] for call in mock_rprint.call_args_list]
+        assert any("Vector DB Status" in line for line in printed)
+        assert any("Sample of up to 5 records" in line for line in printed)
+        assert any(line.endswith('..."') for line in printed if line.strip().startswith('[yellow]Content'))
+
+
+def test_chat_repl_handles_tokenization_error():
+    with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
+         patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.print_error') as mock_print_error, \
+         patch('aye.controller.repl.collect_and_send_feedback'):
+
+        session = MagicMock()
+        session.prompt.side_effect = ['bad "input', 'exit']
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask='*.py',
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model='model'
+        )
+
+        repl.chat_repl(conf)
+
+        mock_print_error.assert_called_once()
+        assert isinstance(mock_print_error.call_args[0][0], ValueError)
+
+
+def test_chat_repl_handles_exception_and_calls_error_handler():
+    with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
+         patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.handle_llm_error') as mock_handle_error, \
+         patch('aye.controller.repl.collect_and_send_feedback'):
+
+        session = MagicMock()
+        session.prompt.side_effect = ['ls', 'exit']
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        def plugin_side_effect(command, *_args, **_kwargs):
+            if command == 'get_completer':
+                return {"completer": None}
+            raise RuntimeError('boom')
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = plugin_side_effect
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask='*.py',
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model='model'
+        )
+
+        repl.chat_repl(conf)
+
+        mock_handle_error.assert_called_once()
+
+
+def test_chat_repl_invalid_chat_id_file_is_cleaned():
+    with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
+         patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.collect_and_send_feedback'):
+
+        session = MagicMock()
+        session.prompt.side_effect = ['exit']
+        mock_session_cls.return_value = session
+
+        chat_id_file = _setup_mock_chat_id_path(mock_path, exists=True, contents='abc')
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask='*.py',
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model='model'
+        )
+
+        repl.chat_repl(conf)
+
+        chat_id_file.unlink.assert_called_once_with(missing_ok=True)
