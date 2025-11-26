@@ -94,8 +94,8 @@ class TestSnapshot(TestCase):
         self.assertEqual(snapshot._get_next_ordinal(), 5)
 
     def test_get_latest_snapshot_dir_returns_most_recent(self):
-        ts_old = (datetime.utcnow() - timedelta(minutes=2)).strftime("%Y%m%dT%H%M%S")
-        ts_new = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        ts_old = (datetime.now(timezone.utc) - timedelta(minutes=2)).strftime("%Y%m%dT%H%M%S")
+        ts_new = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         (self.snap_root_val / f"001_{ts_old}").mkdir()
         (self.snap_root_val / f"002_{ts_new}").mkdir()
 
@@ -118,7 +118,7 @@ class TestSnapshot(TestCase):
         self.assertEqual(snapshot.list_snapshots(self.test_files[0]), [])
 
     def test_list_snapshots_reports_missing_metadata(self):
-        ts = (datetime.utcnow() - timedelta(minutes=1)).strftime("%Y%m%dT%H%M%S")
+        ts = (datetime.now(timezone.utc) - timedelta(minutes=1)).strftime("%Y%m%dT%H%M%S")
         (self.snap_root_val / f"001_{ts}").mkdir()
 
         entries = snapshot.list_snapshots()
@@ -126,8 +126,8 @@ class TestSnapshot(TestCase):
         self.assertIn("metadata missing", entries[0])
 
     def test_list_all_snapshots_with_metadata_handles_relative_and_external_paths(self):
-        ts_new = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
-        ts_old = (datetime.utcnow() - timedelta(minutes=1)).strftime("%Y%m%dT%H%M%S")
+        ts_new = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        ts_old = (datetime.now(timezone.utc) - timedelta(minutes=1)).strftime("%Y%m%dT%H%M%S")
         meta_dir = self.snap_root_val / f"002_{ts_new}"
         meta_dir.mkdir(parents=True)
         missing_dir = self.snap_root_val / f"001_{ts_old}"
@@ -166,8 +166,8 @@ class TestSnapshot(TestCase):
 
     def test_list_snapshots(self):
         # Create mock snapshot dirs
-        ts1 = (datetime.utcnow() - timedelta(minutes=2)).strftime("%Y%m%dT%H%M%S")
-        ts2 = (datetime.utcnow() - timedelta(minutes=1)).strftime("%Y%m%dT%H%M%S")
+        ts1 = (datetime.now(timezone.utc) - timedelta(minutes=2)).strftime("%Y%m%dT%H%M%S")
+        ts2 = (datetime.now(timezone.utc) - timedelta(minutes=1)).strftime("%Y%m%dT%H%M%S")
         snap_dir1 = self.snap_root_val / f"001_{ts1}"
         snap_dir2 = self.snap_root_val / f"002_{ts2}"
         snap_dir1.mkdir(parents=True)
@@ -238,13 +238,13 @@ class TestSnapshot(TestCase):
             snapshot.restore_snapshot(ordinal="007")
 
     def test_restore_snapshot_metadata_missing(self):
-        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         (self.snap_root_val / f"001_{ts}").mkdir()
         with self.assertRaisesRegex(ValueError, "Metadata missing for snapshot 001"):
             snapshot.restore_snapshot(ordinal="001")
 
     def test_restore_snapshot_metadata_invalid_json(self):
-        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         snap_dir = self.snap_root_val / f"001_{ts}"
         snap_dir.mkdir()
         (snap_dir / "metadata.json").write_text("not json")
@@ -298,7 +298,7 @@ class TestSnapshot(TestCase):
     def test_prune_snapshots(self):
         # Create mock snapshots
         for i in range(5):
-            ts = (datetime.utcnow() - timedelta(minutes=i)).strftime("%Y%m%dT%H%M%S")
+            ts = (datetime.now(timezone.utc) - timedelta(minutes=i)).strftime("%Y%m%dT%H%M%S")
             snap_dir = self.snap_root_val / f"{i+1:03d}_{ts}"
             snap_dir.mkdir(parents=True)
 
@@ -311,7 +311,7 @@ class TestSnapshot(TestCase):
     def test_prune_snapshots_keep_more_than_exists(self):
         # Create 2 snapshots
         for i in range(2):
-            ts = (datetime.utcnow() - timedelta(minutes=i)).strftime("%Y%m%dT%H%M%S")
+            ts = (datetime.now(timezone.utc) - timedelta(minutes=i)).strftime("%Y%m%dT%H%M%S")
             (self.snap_root_val / f"{i+1:03d}_{ts}").mkdir()
         
         # Try to keep 10
@@ -321,7 +321,7 @@ class TestSnapshot(TestCase):
 
     def test_prune_snapshots_keep_zero(self):
         for i in range(3):
-            ts = (datetime.utcnow() - timedelta(minutes=i)).strftime("%Y%m%dT%H%M%S")
+            ts = (datetime.now(timezone.utc) - timedelta(minutes=i)).strftime("%Y%m%dT%H%M%S")
             (self.snap_root_val / f"{i+1:03d}_{ts}").mkdir()
 
         deleted_count = snapshot.prune_snapshots(keep_count=0)
@@ -331,8 +331,8 @@ class TestSnapshot(TestCase):
 
     def test_cleanup_snapshots(self):
         # Create old and new snapshots
-        old_ts = (datetime.utcnow() - timedelta(days=35)).strftime("%Y%m%dT%H%M%S")
-        new_ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=35)).strftime("%Y%m%dT%H%M%S")
+        new_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         (self.snap_root_val / f"001_{old_ts}").mkdir(parents=True)
         (self.snap_root_val / f"002_{new_ts}").mkdir(parents=True)
 
@@ -345,7 +345,7 @@ class TestSnapshot(TestCase):
 
     def test_cleanup_snapshots_invalid_dir_name(self):
         # Create one valid old snapshot and one invalid one
-        old_ts = (datetime.utcnow() - timedelta(days=35)).strftime("%Y%m%dT%H%M%S")
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=35)).strftime("%Y%m%dT%H%M%S")
         (self.snap_root_val / f"001_{old_ts}").mkdir()
         (self.snap_root_val / "invalid_name").mkdir()
 
