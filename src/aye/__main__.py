@@ -6,9 +6,13 @@ from aye.controller import commands, repl
 from aye.presenter import cli_ui
 from aye.presenter.diff_presenter import show_diff
 from aye.model.config import load_config
+from aye.model.version_checker import check_version_and_print_warning
 
 # Load configuration at startup
 load_config()
+
+# Check for newer version on startup
+check_version_and_print_warning()
 
 app = typer.Typer(help="Aye: AI‑powered coding assistant for the terminal")
 
