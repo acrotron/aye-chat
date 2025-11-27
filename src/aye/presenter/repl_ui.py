@@ -31,11 +31,6 @@ def print_prompt():
     return "(ツ» "
 
 
-def print_thinking_spinner(console: Console) -> Spinner:
-    """Create and return a thinking spinner."""
-    return Spinner("dots", text="[yellow]Thinking...[/]")
-
-
 def print_assistant_response(summary: str):
     """Display the assistant's response summary."""
     rprint()
