@@ -52,39 +52,42 @@ class TestSourceCollector(TestCase):
 
     def test_collect_sources_single_mask_recursive(self):
         sources = collect_sources(root_dir=str(self.root), file_mask="*.py")
-        
+
         self.assertIn("file1.py", sources)
-        self.assertIn(str(Path("subdir") / "sub_file.py"), sources)
-        
+        # Keys use POSIX paths (forward slashes) for cross-platform consistency
+        self.assertIn("subdir/sub_file.py", sources)
+
         # Check ignored files
         self.assertNotIn(".hidden_file.py", sources)
-        self.assertNotIn(str(Path(".venv") / "ignored.py"), sources)
-        self.assertNotIn(str(Path("ignored_dir") / "ignored.py"), sources)
-        
+        self.assertNotIn(".venv/ignored.py", sources)
+        self.assertNotIn("ignored_dir/ignored.py", sources)
+
         # Check other extensions not included
         self.assertNotIn("file2.txt", sources)
         self.assertNotIn("image.jpg", sources)
-        
+
         self.assertEqual(len(sources), 2)
 
     def test_collect_sources_multiple_masks(self):
         sources = collect_sources(root_dir=str(self.root), file_mask="*.py, *.txt")
-        
+
         self.assertIn("file1.py", sources)
-        self.assertIn(str(Path("subdir") / "sub_file.py"), sources)
-        
+        # Keys use POSIX paths (forward slashes) for cross-platform consistency
+        self.assertIn("subdir/sub_file.py", sources)
+
         # .txt files are in .gitignore, so they should be excluded
         self.assertNotIn("file2.txt", sources)
         # subdir/another.txt is in .ayeignore
-        self.assertNotIn(str(Path("subdir") / "another.txt"), sources)
-        
+        self.assertNotIn("subdir/another.txt", sources)
+
         self.assertEqual(len(sources), 2)
 
     def test_collect_sources_non_recursive(self):
         sources = collect_sources(root_dir=str(self.root), file_mask="*.py", recursive=False)
-        
+
         self.assertIn("file1.py", sources)
-        self.assertNotIn(str(Path("subdir") / "sub_file.py"), sources)
+        # Keys use POSIX paths (forward slashes) for cross-platform consistency
+        self.assertNotIn("subdir/sub_file.py", sources)
         self.assertEqual(len(sources), 1)
 
     def test_collect_sources_invalid_dir(self):

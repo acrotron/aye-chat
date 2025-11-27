@@ -1,6 +1,6 @@
 import json
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 
@@ -144,7 +144,7 @@ def create_snapshot(file_paths: List[Path], prompt: Optional[str] = None) -> str
         else:
             changed_files.append(src_path)
     
-    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     batch_dir = _ensure_batch_dir(ts)
 
     meta_entries: List[Dict[str, Any]] = []
@@ -314,9 +314,8 @@ def prune_snapshots(keep_count: int = 10) -> int:
 
 def cleanup_snapshots(older_than_days: int = 30) -> int:
     """Delete snapshots older than N days. Returns number of deleted snapshots."""
-    from datetime import timedelta
     snapshots = list_all_snapshots()
-    cutoff_time = datetime.utcnow() - timedelta(days=older_than_days)
+    cutoff_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=older_than_days)
     deleted_count = 0
     for snapshot_dir in snapshots:
         try:

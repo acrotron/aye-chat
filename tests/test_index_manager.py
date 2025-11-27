@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import json
 import os
+import sys
 import time
 
 import aye.model.index_manager as index_manager
@@ -201,6 +202,7 @@ class TestIndexManager(unittest.TestCase):
     @patch('aye.model.vector_db.delete_from_index')
     def test_prepare_sync_with_changes(self, mock_delete, mock_get_files):
         # Setup
+        self.manager._is_initialized = True
         self.manager.collection = MagicMock() # Pretend it's initialized
         file1 = self.root_path / 'file1.py'
         file1.write_text('content1')
@@ -404,6 +406,7 @@ class TestIndexManager(unittest.TestCase):
         self.assertFalse(self.manager.has_work())
         self.assertFalse(self.manager.is_indexing())
 
+    @unittest.skipUnless(hasattr(os, 'nice'), "os.nice is not available on Windows")
     @patch('os.nice', side_effect=OSError)
     def test_set_low_priority_os_error(self, mock_nice):
         try:
