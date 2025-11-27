@@ -8,9 +8,23 @@ from rich import print as rprint
 
 from .plugin_base import Plugin
 from aye.model.config import SYSTEM_PROMPT
+from aye.controller.util import is_truncated_json
 
 LLM_TIMEOUT = 600.0
 LLM_OUTPUT_TOKENS = 49152
+
+
+# Message shown when LLM response is truncated due to output token limits
+TRUNCATED_RESPONSE_MESSAGE = (
+    "It looks like my response was cut off because it exceeded the output limit. "
+    "This usually happens when you ask me to generate or modify many files at once.\n\n"
+    "**To fix this, please try:**\n"
+    "1. Break your request into smaller parts (e.g., one file at a time)\n"
+    "2. Use the `with` command to focus on specific files: `with file1.py, file2.py: your request`\n"
+    "3. Ask me to work on fewer files or smaller changes in each request\n\n"
+    "For example, instead of 'update all files to add logging', try:\n"
+    "  `with src/main.py: add logging to this file`"
+)
 
 
 class LocalModelPlugin(Plugin):
@@ -81,6 +95,14 @@ class LocalModelPlugin(Plugin):
         try:
             llm_response = json.loads(generated_text)
         except json.JSONDecodeError:
+            # Check if this looks like a truncated response
+            #if is_truncated_json(generated_text):
+            #    return {
+            #        "summary": TRUNCATED_RESPONSE_MESSAGE,
+            #        "updated_files": []
+            #    }
+            
+            # Not truncated, just malformed - return as plain text
             llm_response = {
                 "answer_summary": generated_text,
                 "source_files": []
