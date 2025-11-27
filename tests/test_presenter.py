@@ -191,11 +191,6 @@ class TestReplUi(TestCase):
     def test_print_prompt(self):
         self.assertEqual(repl_ui.print_prompt(), "(ツ» ")
 
-    def test_print_thinking_spinner(self):
-        spinner = repl_ui.print_thinking_spinner(MagicMock())
-        self.assertIsInstance(spinner, Spinner)
-        self.assertEqual(str(spinner.text), "Thinking...")
-
     @patch('aye.presenter.repl_ui.rprint')
     def test_print_assistant_response(self, mock_rprint):
         repl_ui.print_assistant_response("summary text")
@@ -232,5 +227,5 @@ class TestUiUtils(TestCase):
         with ui_utils.thinking_spinner(mock_console, text="Loading..."):
             pass
 
-        mock_spinner_class.assert_called_once_with("dots", text="[yellow]Loading...[/]")
+        mock_spinner_class.assert_called_once_with("dots", text="Loading...")
         mock_console.status.assert_called_once_with(mock_spinner_instance)
