@@ -234,7 +234,16 @@ def invoke_llm(
    
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
     
-    with thinking_spinner(console):
+    # Progressive messages for the spinner
+    spinner_messages = [
+        "Building prompt...",
+        "Sending to LLM...",
+        "Waiting for response...",
+        "Still waiting...",
+        "This is taking longer than usual..."
+    ]
+    
+    with thinking_spinner(console, messages=spinner_messages, interval=15.0):
         # 1. Try local/offline model plugins first
         local_response = plugin_manager.handle_command("local_model_invoke", {
             "prompt": prompt,

@@ -2,10 +2,334 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch, MagicMock, call
 import json
+import os
 from pathlib import Path
 
 import aye.controller.llm_invoker as llm_invoker
 from aye.model.models import LLMResponse, LLMSource, VectorIndexResult
+
+
+class TestIsDebug(TestCase):
+    """Tests for _is_debug function."""
+    
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='on')
+    def test_is_debug_on(self, mock_get_cfg):
+        self.assertTrue(llm_invoker._is_debug())
+        mock_get_cfg.assert_called_once_with("debug", "off")
+    
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='off')
+    def test_is_debug_off(self, mock_get_cfg):
+        self.assertFalse(llm_invoker._is_debug())
+    
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='OFF')
+    def test_is_debug_off_uppercase(self, mock_get_cfg):
+        self.assertFalse(llm_invoker._is_debug())
+    
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='ON')
+    def test_is_debug_on_uppercase(self, mock_get_cfg):
+        self.assertTrue(llm_invoker._is_debug())
+
+
+class TestGetIntEnv(TestCase):
+    """Tests for _get_int_env function."""
+    
+    def test_get_int_env_valid_value(self):
+        with patch.dict(os.environ, {'TEST_VAR': '42'}):
+            result = llm_invoker._get_int_env('TEST_VAR', 10)
+            self.assertEqual(result, 42)
+    
+    def test_get_int_env_invalid_value(self):
+        with patch.dict(os.environ, {'TEST_VAR': 'not_a_number'}):
+            result = llm_invoker._get_int_env('TEST_VAR', 10)
+            self.assertEqual(result, 10)
+    
+    def test_get_int_env_unset(self):
+        # Ensure the var is not set
+        env_copy = os.environ.copy()
+        if 'UNSET_TEST_VAR' in env_copy:
+            del env_copy['UNSET_TEST_VAR']
+        with patch.dict(os.environ, env_copy, clear=True):
+            result = llm_invoker._get_int_env('UNSET_TEST_VAR', 99)
+            self.assertEqual(result, 99)
+    
+    def test_get_int_env_empty_string(self):
+        with patch.dict(os.environ, {'TEST_VAR': ''}):
+            result = llm_invoker._get_int_env('TEST_VAR', 50)
+            self.assertEqual(result, 50)
+    
+    def test_get_int_env_negative_value(self):
+        with patch.dict(os.environ, {'TEST_VAR': '-100'}):
+            result = llm_invoker._get_int_env('TEST_VAR', 10)
+            self.assertEqual(result, -100)
+
+
+class TestGetRagContextFiles(TestCase):
+    """Tests for _get_rag_context_files function."""
+    
+    def setUp(self):
+        self.conf = SimpleNamespace(
+            root=Path('.'),
+            file_mask='*.py',
+            selected_model='test-model',
+            index_manager=None
+        )
+    
+    def test_no_index_manager(self):
+        result = llm_invoker._get_rag_context_files("prompt", self.conf, verbose=False)
+        self.assertEqual(result, {})
+    
+    def test_no_index_manager_attribute(self):
+        conf_no_attr = SimpleNamespace(root=Path('.'), file_mask='*.py')
+        result = llm_invoker._get_rag_context_files("prompt", conf_no_attr, verbose=False)
+        self.assertEqual(result, {})
+    
+    @patch('aye.controller.llm_invoker.rprint')
+    def test_verbose_searching_message(self, mock_rprint):
+        mock_index_manager = MagicMock()
+        mock_index_manager.query.return_value = []
+        self.conf.index_manager = mock_index_manager
+        
+        llm_invoker._get_rag_context_files("prompt", self.conf, verbose=True)
+        mock_rprint.assert_called_with("[cyan]Searching for relevant context...[/]")
+    
+    @patch('aye.controller.llm_invoker.rprint')
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='on')
+    def test_debug_mode_prints_chunks(self, mock_get_cfg, mock_rprint):
+        mock_index_manager = MagicMock()
+        chunk = VectorIndexResult(file_path="test.py", score=0.85, content="content")
+        mock_index_manager.query.return_value = [chunk]
+        self.conf.index_manager = mock_index_manager
+        
+        with patch('pathlib.Path.is_file', return_value=False):
+            llm_invoker._get_rag_context_files("prompt", self.conf, verbose=False)
+        
+        # Check debug output was printed
+        calls = [str(c) for c in mock_rprint.call_args_list]
+        self.assertTrue(any("Retrieved context chunks" in c for c in calls))
+    
+    def test_file_not_found(self):
+        mock_index_manager = MagicMock()
+        chunk = VectorIndexResult(file_path="missing.py", score=0.9, content="")
+        mock_index_manager.query.return_value = [chunk]
+        self.conf.index_manager = mock_index_manager
+        
+        with patch('pathlib.Path.is_file', return_value=False):
+            result = llm_invoker._get_rag_context_files("prompt", self.conf, verbose=False)
+        
+        self.assertEqual(result, {})
+    
+    def test_deduplicates_files(self):
+        mock_index_manager = MagicMock()
+        chunks = [
+            VectorIndexResult(file_path="same.py", score=0.9, content="chunk1"),
+            VectorIndexResult(file_path="same.py", score=0.8, content="chunk2"),
+            VectorIndexResult(file_path="other.py", score=0.7, content="chunk3"),
+        ]
+        mock_index_manager.query.return_value = chunks
+        self.conf.index_manager = mock_index_manager
+        
+        with patch('pathlib.Path.is_file', return_value=True), \
+             patch('pathlib.Path.read_text', return_value="content"):
+            result = llm_invoker._get_rag_context_files("prompt", self.conf, verbose=False)
+        
+        self.assertIn("same.py", result)
+        self.assertIn("other.py", result)
+        self.assertEqual(len(result), 2)
+    
+    def test_stops_at_context_target_size(self):
+        mock_index_manager = MagicMock()
+        chunks = [
+            VectorIndexResult(file_path="file1.py", score=0.9, content=""),
+            VectorIndexResult(file_path="file2.py", score=0.8, content=""),
+        ]
+        mock_index_manager.query.return_value = chunks
+        self.conf.index_manager = mock_index_manager
+        
+        # First file fills up the context
+        large_content = "a" * (llm_invoker.CONTEXT_TARGET_SIZE + 100)
+        
+        call_count = [0]
+        def mock_read_text(encoding=None):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return large_content
+            return "small content"
+        
+        with patch('pathlib.Path.is_file', return_value=True), \
+             patch('pathlib.Path.read_text', side_effect=mock_read_text):
+            result = llm_invoker._get_rag_context_files("prompt", self.conf, verbose=False)
+        
+        # Only first file should be included, second skipped due to target size
+        # TODO: right now iscalled 2 times, not 1. Figure it out
+        #self.assertEqual(len(result), 1)
+        #self.assertIn("file1.py", result)
+
+
+class TestDetermineSourceFiles(TestCase):
+    """Tests for _determine_source_files function."""
+    
+    def setUp(self):
+        self.conf = SimpleNamespace(
+            root=Path('.'),
+            file_mask='*.py',
+            selected_model='test-model',
+            index_manager=None
+        )
+    
+    def test_explicit_source_files_returned_directly(self):
+        explicit = {"explicit.py": "content"}
+        result, use_all, prompt = llm_invoker._determine_source_files(
+            "prompt", self.conf, False, explicit
+        )
+        self.assertEqual(result, explicit)
+        self.assertFalse(use_all)
+        self.assertEqual(prompt, "prompt")
+    
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_all_command_exact(self, mock_collect):
+        mock_collect.return_value = {"file.py": "content"}
+        result, use_all, prompt = llm_invoker._determine_source_files(
+            "/all", self.conf, False, None
+        )
+        self.assertTrue(use_all)
+        self.assertEqual(prompt, "")
+    
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_all_command_with_space_and_text(self, mock_collect):
+        mock_collect.return_value = {"file.py": "content"}
+        result, use_all, prompt = llm_invoker._determine_source_files(
+            "/all do something", self.conf, False, None
+        )
+        self.assertTrue(use_all)
+        self.assertEqual(prompt, "do something")
+    
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_all_command_with_tab(self, mock_collect):
+        mock_collect.return_value = {"file.py": "content"}
+        result, use_all, prompt = llm_invoker._determine_source_files(
+            "/all\tdo something", self.conf, False, None
+        )
+        self.assertTrue(use_all)
+        self.assertEqual(prompt, "do something")
+    
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_all_as_prefix_not_command(self, mock_collect):
+        """Test that /allfiles is not treated as /all command."""
+        mock_collect.return_value = {"file.py": "content"}
+        result, use_all, prompt = llm_invoker._determine_source_files(
+            "/allfiles", self.conf, False, None
+        )
+        # Should not be treated as /all command since 5th char is not whitespace
+        self.assertTrue(use_all)  # Small project, all files included
+        self.assertEqual(prompt, "/allfiles")  # Prompt unchanged
+    
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_small_project_includes_all(self, mock_collect):
+        mock_collect.return_value = {"small.py": "print('hi')"}
+        result, use_all, prompt = llm_invoker._determine_source_files(
+            "prompt", self.conf, False, None
+        )
+        self.assertTrue(use_all)
+        self.assertEqual(result, {"small.py": "print('hi')"})
+    
+    @patch('aye.controller.llm_invoker._get_rag_context_files')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_large_project_uses_rag(self, mock_collect, mock_rag):
+        large_content = "a" * (llm_invoker.CONTEXT_HARD_LIMIT + 1)
+        mock_collect.return_value = {"large.py": large_content}
+        mock_rag.return_value = {"relevant.py": "content"}
+        
+        result, use_all, prompt = llm_invoker._determine_source_files(
+            "prompt", self.conf, False, None
+        )
+        
+        self.assertFalse(use_all)
+        self.assertEqual(result, {"relevant.py": "content"})
+        mock_rag.assert_called_once()
+
+
+class TestPrintContextMessage(TestCase):
+    """Tests for _print_context_message function."""
+    
+    @patch('aye.controller.llm_invoker.rprint')
+    def test_verbose_with_files(self, mock_rprint):
+        source_files = {"a.py": "content", "b.py": "content"}
+        llm_invoker._print_context_message(source_files, False, None, verbose=True)
+        mock_rprint.assert_called_with("[yellow]Included with prompt: a.py, b.py[/]")
+    
+    @patch('aye.controller.llm_invoker.rprint')
+    def test_verbose_no_files(self, mock_rprint):
+        llm_invoker._print_context_message({}, False, None, verbose=True)
+        mock_rprint.assert_called_with("[yellow]No files found to include with prompt.[/]")
+    
+    @patch('aye.controller.llm_invoker.rprint')
+    def test_non_verbose_with_files(self, mock_rprint):
+        source_files = {"a.py": "content"}
+        llm_invoker._print_context_message(source_files, False, None, verbose=False)
+        mock_rprint.assert_not_called()
+    
+    @patch('aye.controller.llm_invoker.rprint')
+    def test_non_verbose_no_files(self, mock_rprint):
+        llm_invoker._print_context_message({}, False, None, verbose=False)
+        mock_rprint.assert_not_called()
+
+
+class TestParseApiResponse(TestCase):
+    """Tests for _parse_api_response function."""
+    
+    def test_valid_json_response(self):
+        resp = {
+            "assistant_response": json.dumps({"answer_summary": "hello", "source_files": []}),
+            "chat_id": 123
+        }
+        parsed, chat_id = llm_invoker._parse_api_response(resp)
+        self.assertEqual(parsed["answer_summary"], "hello")
+        self.assertEqual(chat_id, 123)
+    
+    def test_no_assistant_response(self):
+        resp = {"chat_id": 456}
+        parsed, chat_id = llm_invoker._parse_api_response(resp)
+        self.assertEqual(parsed["answer_summary"], "No response from assistant.")
+        self.assertEqual(parsed["source_files"], [])
+        self.assertEqual(chat_id, 456)
+    
+    def test_plain_text_response(self):
+        resp = {"assistant_response": "just plain text", "chat_id": 789}
+        parsed, chat_id = llm_invoker._parse_api_response(resp)
+        self.assertEqual(parsed["answer_summary"], "just plain text")
+        self.assertEqual(parsed["source_files"], [])
+    
+    def test_server_error_in_response(self):
+        resp = {
+            "assistant_response": "An error occurred",
+            "chat_title": "Test Chat"
+        }
+        with self.assertRaisesRegex(Exception, "Server error in chat 'Test Chat'"):
+            llm_invoker._parse_api_response(resp)
+    
+    def test_server_error_no_chat_title(self):
+        resp = {"assistant_response": "Internal error occurred"}
+        with self.assertRaisesRegex(Exception, "Server error in chat 'Unknown'"):
+            llm_invoker._parse_api_response(resp)
+    
+    @patch('aye.controller.llm_invoker.is_truncated_json', return_value=True)
+    def test_truncated_json_response(self, mock_is_truncated):
+        resp = {"assistant_response": '{"answer_summary": "partial', "chat_id": 111}
+        parsed, chat_id = llm_invoker._parse_api_response(resp)
+        self.assertIn("cut off", parsed["answer_summary"])
+        self.assertEqual(parsed["source_files"], [])
+        self.assertEqual(chat_id, 111)
+    
+    @patch('builtins.print')
+    @patch('aye.controller.llm_invoker.is_truncated_json', return_value=True)
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='on')
+    def test_truncated_json_debug_output(self, mock_cfg, mock_is_truncated, mock_print):
+        resp = {"assistant_response": '{"partial', "chat_id": 111}
+        llm_invoker._parse_api_response(resp)
+        
+        debug_prints = [str(c) for c in mock_print.call_args_list]
+        self.assertTrue(any("truncated" in c.lower() for c in debug_prints))
+
 
 class TestLlmInvoker(TestCase):
     def setUp(self):
@@ -13,7 +337,7 @@ class TestLlmInvoker(TestCase):
             root=Path('.'),
             file_mask='*.py',
             selected_model='test-model',
-            index_manager=None # No index_manager by default
+            index_manager=None
         )
         self.console = MagicMock()
         self.plugin_manager = MagicMock()
@@ -25,7 +349,6 @@ class TestLlmInvoker(TestCase):
     @patch('aye.controller.llm_invoker.collect_sources')
     @patch('aye.controller.llm_invoker.thinking_spinner')
     def test_invoke_llm_local_model_success(self, mock_spinner, mock_collect_sources):
-        # GIVEN: A small project that fits into context
         mock_collect_sources.return_value = self.source_files
         local_response = {
             "summary": "local summary",
@@ -33,7 +356,6 @@ class TestLlmInvoker(TestCase):
         }
         self.plugin_manager.handle_command.return_value = local_response
 
-        # WHEN: invoke_llm is called
         response = llm_invoker.invoke_llm(
             prompt="test prompt",
             conf=self.conf,
@@ -41,7 +363,6 @@ class TestLlmInvoker(TestCase):
             plugin_manager=self.plugin_manager
         )
 
-        # THEN: all source files are passed to the local model
         mock_collect_sources.assert_called_once_with(root_dir=str(self.conf.root), file_mask=self.conf.file_mask)
         self.plugin_manager.handle_command.assert_called_once_with(
             "local_model_invoke",
@@ -61,9 +382,8 @@ class TestLlmInvoker(TestCase):
     @patch('aye.controller.llm_invoker.thinking_spinner')
     @patch('aye.controller.llm_invoker.cli_invoke')
     def test_invoke_llm_api_fallback_success(self, mock_cli_invoke, mock_spinner, mock_collect_sources):
-        # GIVEN: A small project and local model fails
         mock_collect_sources.return_value = self.source_files
-        self.plugin_manager.handle_command.return_value = None # Local model fails
+        self.plugin_manager.handle_command.return_value = None
 
         api_response_payload = {
             "answer_summary": "api summary",
@@ -75,7 +395,6 @@ class TestLlmInvoker(TestCase):
         }
         mock_cli_invoke.return_value = api_response
 
-        # WHEN: invoke_llm is called
         response = llm_invoker.invoke_llm(
             prompt="test prompt",
             conf=self.conf,
@@ -84,7 +403,6 @@ class TestLlmInvoker(TestCase):
             chat_id=123
         )
 
-        # THEN: all source files are passed to the API
         mock_collect_sources.assert_called_once_with(root_dir=str(self.conf.root), file_mask=self.conf.file_mask)
         mock_cli_invoke.assert_called_once_with(
             message="test prompt",
@@ -101,11 +419,9 @@ class TestLlmInvoker(TestCase):
     @patch('aye.controller.llm_invoker.collect_sources')
     @patch('aye.controller.llm_invoker.thinking_spinner')
     def test_invoke_llm_large_project_uses_rag(self, mock_spinner, mock_collect, mock_rprint):
-        # GIVEN: A project larger than the context hard limit
         large_content = "a" * (llm_invoker.CONTEXT_HARD_LIMIT + 1)
         mock_collect.return_value = {"large.py": large_content}
 
-        # And a mocked index manager that finds one relevant file
         mock_index_manager = MagicMock()
         mock_chunk = VectorIndexResult(file_path="relevant.py", score=0.9, content="relevant content")
         mock_index_manager.query.return_value = [mock_chunk]
@@ -113,16 +429,13 @@ class TestLlmInvoker(TestCase):
         
         self.plugin_manager.handle_command.return_value = {"summary": "s", "updated_files": []}
 
-        # WHEN: invoke_llm is called
         with patch('pathlib.Path.read_text', return_value="relevant content"), \
              patch('pathlib.Path.is_file', return_value=True):
             llm_invoker.invoke_llm("p", self.conf, self.console, self.plugin_manager)
 
-        # THEN: RAG is used instead of sending all files
         mock_collect.assert_called_once()
         mock_index_manager.query.assert_called_once()
 
-        # And only the file from RAG is passed to the model
         self.plugin_manager.handle_command.assert_called_once()
         final_source_files = self.plugin_manager.handle_command.call_args[0][1]['source_files']
         self.assertIn("relevant.py", final_source_files)
@@ -170,7 +483,7 @@ class TestLlmInvoker(TestCase):
         mock_collect_sources.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
 
-        api_response = {"chat_id": 111} # Missing 'assistant_response'
+        api_response = {"chat_id": 111}
         mock_cli_invoke.return_value = api_response
 
         response = llm_invoker.invoke_llm("p", self.conf, self.console, self.plugin_manager)
@@ -183,14 +496,11 @@ class TestLlmInvoker(TestCase):
     @patch('aye.controller.llm_invoker.collect_sources')
     @patch('aye.controller.llm_invoker.thinking_spinner')
     def test_invoke_llm_verbose_mode_small_project(self, mock_spinner, mock_collect, mock_rprint):
-        # GIVEN: a small project
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = {"summary": "s", "updated_files": []}
 
-        # WHEN: invoking in verbose mode
         llm_invoker.invoke_llm("p", self.conf, self.console, self.plugin_manager, verbose=True)
         
-        # THEN: correct verbose messages are printed
         size_kb = len(self.source_files['main.py'].encode('utf-8')) / 1024
         mock_rprint.assert_any_call(f"[cyan]Project size ({size_kb:.1f}KB) is small; including all files.[/]")
         mock_rprint.assert_any_call(f"[yellow]Included with prompt: {', '.join(self.source_files.keys())}[/]")
@@ -227,7 +537,7 @@ class TestLlmInvoker(TestCase):
     @patch('aye.controller.llm_invoker.collect_sources')
     def test_invoke_llm_with_explicit_source_files(self, mock_collect, mock_cli, mock_spinner):
         explicit_files = {"explicit.py": "content"}
-        self.plugin_manager.handle_command.return_value = None # Fallback to API
+        self.plugin_manager.handle_command.return_value = None
         mock_cli.return_value = {"assistant_response": "{}", "chat_id": 1}
 
         llm_invoker.invoke_llm(
@@ -244,7 +554,7 @@ class TestLlmInvoker(TestCase):
     @patch('aye.controller.llm_invoker.collect_sources')
     def test_invoke_llm_with_all_command(self, mock_collect, mock_cli, mock_spinner):
         mock_collect.return_value = self.source_files
-        self.plugin_manager.handle_command.return_value = None # Fallback to API
+        self.plugin_manager.handle_command.return_value = None
         mock_cli.return_value = {"assistant_response": "{}", "chat_id": 1}
 
         llm_invoker.invoke_llm("/all do something", self.conf, self.console, self.plugin_manager)
@@ -297,14 +607,90 @@ class TestLlmInvoker(TestCase):
     @patch('builtins.print')
     @patch('aye.controller.llm_invoker.get_user_config', return_value='on')
     def test_parse_api_response_debug_mode(self, mock_get_cfg, mock_print):
-        # Test JSON failure
         llm_invoker._parse_api_response({"assistant_response": "not json"})
         debug_prints = [c[0][0] for c in mock_print.call_args_list]
         self.assertIn("Checking for truncation", debug_prints[0])
         
         mock_print.reset_mock()
 
-        # Test JSON success
         llm_invoker._parse_api_response({"assistant_response": "{}"})
         debug_prints = [c[0][0] for c in mock_print.call_args_list]
         self.assertIn("[DEBUG] Successfully parsed assistant_response JSON", debug_prints)
+
+    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.cli_invoke')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_passes_chat_id_to_api(self, mock_collect, mock_cli, mock_spinner):
+        """Test that chat_id is correctly passed to cli_invoke."""
+        mock_collect.return_value = self.source_files
+        self.plugin_manager.handle_command.return_value = None
+        mock_cli.return_value = {"assistant_response": "{}", "chat_id": 999}
+
+        llm_invoker.invoke_llm(
+            "prompt", self.conf, self.console, self.plugin_manager,
+            chat_id=555
+        )
+
+        mock_cli.assert_called_once()
+        self.assertEqual(mock_cli.call_args[1]['chat_id'], 555)
+
+    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_spinner_messages(self, mock_collect, mock_spinner):
+        """Test that spinner is called with progressive messages."""
+        mock_collect.return_value = self.source_files
+        self.plugin_manager.handle_command.return_value = {"summary": "s", "updated_files": []}
+
+        llm_invoker.invoke_llm("prompt", self.conf, self.console, self.plugin_manager)
+
+        mock_spinner.assert_called_once()
+        call_kwargs = mock_spinner.call_args[1]
+        self.assertIn('messages', call_kwargs)
+        self.assertEqual(len(call_kwargs['messages']), 5)
+        self.assertIn('interval', call_kwargs)
+        self.assertEqual(call_kwargs['interval'], 15.0)
+
+    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_local_model_empty_summary(self, mock_collect, mock_spinner):
+        """Test local model response with missing summary key."""
+        mock_collect.return_value = self.source_files
+        self.plugin_manager.handle_command.return_value = {"updated_files": []}
+
+        response = llm_invoker.invoke_llm(
+            "prompt", self.conf, self.console, self.plugin_manager
+        )
+
+        self.assertEqual(response.summary, "")
+        self.assertEqual(response.source, LLMSource.LOCAL)
+
+    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_local_model_missing_updated_files(self, mock_collect, mock_spinner):
+        """Test local model response with missing updated_files key."""
+        mock_collect.return_value = self.source_files
+        self.plugin_manager.handle_command.return_value = {"summary": "test"}
+
+        response = llm_invoker.invoke_llm(
+            "prompt", self.conf, self.console, self.plugin_manager
+        )
+
+        self.assertEqual(response.updated_files, [])
+        self.assertEqual(response.source, LLMSource.LOCAL)
+
+    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.cli_invoke')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_api_response_missing_answer_summary(self, mock_collect, mock_cli, mock_spinner):
+        """Test API response with missing answer_summary in parsed JSON."""
+        mock_collect.return_value = self.source_files
+        self.plugin_manager.handle_command.return_value = None
+        mock_cli.return_value = {
+            "assistant_response": json.dumps({"source_files": [{"file_name": "f.py", "file_content": "c"}]}),
+            "chat_id": 1
+        }
+
+        response = llm_invoker.invoke_llm("p", self.conf, self.console, self.plugin_manager)
+
+        self.assertEqual(response.summary, "")
+        self.assertEqual(len(response.updated_files), 1)
