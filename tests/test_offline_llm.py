@@ -70,7 +70,7 @@ def test_parse_llm_response_invalid_json_returns_fallback():
 
     parsed = plugin._parse_llm_response("not json")
 
-    assert parsed["summary"] == "No response"
+    assert parsed["summary"] == "not json"
     assert parsed["updated_files"] == []
 
 

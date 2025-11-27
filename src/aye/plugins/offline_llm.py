@@ -17,6 +17,20 @@ from aye.model.offline_llm_manager import (
     get_model_config,
     is_offline_model
 )
+from aye.controller.util import is_truncated_json
+
+
+# Message shown when LLM response is truncated due to output token limits
+TRUNCATED_RESPONSE_MESSAGE = (
+    "It looks like my response was cut off because it exceeded the output limit. "
+    "This usually happens when you ask me to generate or modify many files at once.\n\n"
+    "**To fix this, please try:**\n"
+    "1. Break your request into smaller parts (e.g., one file at a time)\n"
+    "2. Use the `with` command to focus on specific files: `with file1.py, file2.py: your request`\n"
+    "3. Ask me to work on fewer files or smaller changes in each request\n\n"
+    "For example, instead of 'update all files to add logging', try:\n"
+    "  `with src/main.py: add logging to this file`"
+)
 
 
 class OfflineLLMPlugin(Plugin):
@@ -151,8 +165,24 @@ class OfflineLLMPlugin(Plugin):
         try:
             llm_response = json.loads(generated_text)
         except json.JSONDecodeError as e:
-            print(e)
-            llm_response = empty_response
+            if self.debug:
+                print(f"JSON decode error: {e}")
+            
+            # Check if this looks like a truncated response
+            if is_truncated_json(generated_text):
+                if self.debug:
+                    print(f"[DEBUG] Response appears to be truncated:")
+                    print(assistant_resp_str)
+                return {
+                    "summary": TRUNCATED_RESPONSE_MESSAGE,
+                    "updated_files": []
+                }
+            
+            # Not truncated, just malformed - return as plain text
+            return {
+                "summary": generated_text if generated_text else "No response",
+                "updated_files": []
+            }
         
         props = llm_response.get("properties")
         if not props:
