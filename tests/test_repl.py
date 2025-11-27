@@ -139,29 +139,33 @@ class TestRepl(TestCase):
             self.assertEqual(conf.selected_model, repl.DEFAULT_MODEL_ID)
 
     @patch('aye.controller.repl.send_feedback')
-    def test_collect_and_send_feedback(self, mock_send_feedback):
-        with patch('prompt_toolkit.PromptSession.prompt', return_value="Great tool!"):
-            repl.collect_and_send_feedback(chat_id=123)
-            mock_send_feedback.assert_called_once_with("Great tool!", chat_id=123)
+    @patch('aye.controller.repl.PromptSession')
+    def test_collect_and_send_feedback(self, mock_session_cls, mock_send_feedback):
+        mock_session_cls.return_value.prompt.return_value = "Great tool!"
+        repl.collect_and_send_feedback(chat_id=123)
+        mock_send_feedback.assert_called_once_with("Great tool!", chat_id=123)
 
     @patch('aye.controller.repl.send_feedback')
-    def test_collect_and_send_feedback_empty(self, mock_send_feedback):
-        with patch('prompt_toolkit.PromptSession.prompt', return_value="  \n  "):
-            repl.collect_and_send_feedback(chat_id=123)
-            mock_send_feedback.assert_not_called()
+    @patch('aye.controller.repl.PromptSession')
+    def test_collect_and_send_feedback_empty(self, mock_session_cls, mock_send_feedback):
+        mock_session_cls.return_value.prompt.return_value = "  \n  "
+        repl.collect_and_send_feedback(chat_id=123)
+        mock_send_feedback.assert_not_called()
 
     @patch('aye.controller.repl.send_feedback')
-    def test_collect_and_send_feedback_ctrl_c(self, mock_send_feedback):
-        with patch('prompt_toolkit.PromptSession.prompt', side_effect=KeyboardInterrupt):
-            repl.collect_and_send_feedback(chat_id=123)
-            mock_send_feedback.assert_not_called()
+    @patch('aye.controller.repl.PromptSession')
+    def test_collect_and_send_feedback_ctrl_c(self, mock_session_cls, mock_send_feedback):
+        mock_session_cls.return_value.prompt.side_effect = KeyboardInterrupt
+        repl.collect_and_send_feedback(chat_id=123)
+        mock_send_feedback.assert_not_called()
 
     @patch('aye.controller.repl.send_feedback', side_effect=Exception("API down"))
     @patch('aye.controller.repl.rprint')
-    def test_collect_and_send_feedback_api_error(self, mock_rprint, mock_send_feedback):
-        with patch('prompt_toolkit.PromptSession.prompt', return_value="feedback"):
-            repl.collect_and_send_feedback(chat_id=123)
-            mock_rprint.assert_any_call("\n[cyan]Goodbye![/cyan]")
+    @patch('aye.controller.repl.PromptSession')
+    def test_collect_and_send_feedback_api_error(self, mock_session_cls, mock_rprint, mock_send_feedback):
+        mock_session_cls.return_value.prompt.return_value = "feedback"
+        repl.collect_and_send_feedback(chat_id=123)
+        mock_rprint.assert_any_call("\n[cyan]Goodbye![/cyan]")
 
     def test_chat_repl_main_loop_commands(self):
         with patch('aye.controller.repl.PromptSession') as mock_session_cls, \

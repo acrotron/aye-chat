@@ -11,6 +11,7 @@ from aye.presenter.ui_utils import thinking_spinner
 from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
 from aye.model.offline_llm_manager import is_offline_model
+from aye.controller.util import is_truncated_json
 
 import os
 
@@ -41,6 +42,18 @@ CONTEXT_HARD_LIMIT = _get_int_env(
     "AYE_CONTEXT_HARD_LIMIT", 200 * 1024
 )  # 200KB, hard safety limit for API payload
 RELEVANCE_THRESHOLD = -1.0  # Accept all results from vector search, even with negative scores.
+
+# Message shown when LLM response is truncated due to output token limits
+TRUNCATED_RESPONSE_MESSAGE = (
+    "It looks like my response was cut off because it exceeded the output limit. "
+    "This usually happens when you ask me to generate or modify many files at once.\n\n"
+    "**To fix this, please try:**\n"
+    "1. Break your request into smaller parts (e.g., one file at a time)\n"
+    "2. Use the `with` command to focus on specific files: `with file1.py, file2.py: your request`\n"
+    "3. Ask me to work on fewer files or smaller changes in each request\n\n"
+    "For example, instead of 'update all files to add logging', try:\n"
+    "  `with src/main.py: add logging to this file`"
+)
 
 
 def _get_rag_context_files(
@@ -182,9 +195,16 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
             print(f"[DEBUG] Successfully parsed assistant_response JSON")
     except json.JSONDecodeError as e:
         if _is_debug():
-            print(f"[DEBUG] Failed to parse assistant_response as JSON: {e}. Treating as plain text.")
+            print(f"[DEBUG] Failed to parse assistant_response as JSON: {e}. Checking for truncation.")
             print(f"[DEBUG] LLM response: {resp}")
-            
+        
+        # Check if this looks like a truncated response
+        if is_truncated_json(assistant_resp_str):
+            if _is_debug():
+                print(f"[DEBUG] Response appears to be truncated:")
+                print(assistant_resp_str)
+            parsed = {"answer_summary": TRUNCATED_RESPONSE_MESSAGE, "source_files": []}
+            return parsed, chat_id
         
         if "error" in assistant_resp_str.lower():
             chat_title = resp.get('chat_title', 'Unknown')

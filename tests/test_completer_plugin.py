@@ -80,14 +80,17 @@ class TestCmdPathCompleter(TestCase):
         completer = CmdPathCompleter()
         self.assertEqual(completer._get_system_commands(), [])
 
-    @patch('os.environ.get', return_value='/bin:/usr/bin:/unreadable')
-    @patch('os.path.isdir', side_effect=lambda p: p != '/unreadable')
-    @patch('os.listdir', side_effect=lambda p: ['ls'] if p == '/bin' else ['grep'] if p == '/usr/bin' else OSError('Permission denied'))
-    @patch('os.path.isfile', return_value=True)
-    @patch('os.access', return_value=True)
-    def test_get_system_commands_unreadable_dir(self, mock_access, mock_isfile, mock_listdir, mock_isdir, mock_env_get):
-        completer = CmdPathCompleter()
-        commands = completer._get_system_commands()
-        self.assertIn('ls', commands)
-        self.assertIn('grep', commands)
-        self.assertEqual(len(commands), 2)
+    def test_get_system_commands_unreadable_dir(self):
+        # Use os.pathsep so test works on both Unix (`:`) and Windows (`;`)
+        test_path = os.pathsep.join(['/bin', '/usr/bin', '/unreadable'])
+
+        with patch('os.environ.get', return_value=test_path), \
+             patch('os.path.isdir', side_effect=lambda p: p != '/unreadable'), \
+             patch('os.listdir', side_effect=lambda p: ['ls'] if p == '/bin' else ['grep'] if p == '/usr/bin' else (_ for _ in ()).throw(OSError('Permission denied'))), \
+             patch('os.path.isfile', return_value=True), \
+             patch('os.access', return_value=True):
+            completer = CmdPathCompleter()
+            commands = completer._get_system_commands()
+            self.assertIn('ls', commands)
+            self.assertIn('grep', commands)
+            self.assertEqual(len(commands), 2)

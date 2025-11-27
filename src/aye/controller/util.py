@@ -49,3 +49,38 @@ def find_project_root(start_path: Optional[Union[str, Path]] = None) -> Path:
             return cwd
         
         search_dir = parent_dir
+
+
+def is_truncated_json(raw_text: str) -> bool:
+    """
+    Detect if a JSON string appears to be truncated.
+    
+    Simple and robust approach: checks if the response has matching outer delimiters.
+    A valid JSON response must start with { or [ and end with the corresponding } or ].
+    
+    Args:
+        raw_text: The raw response string that failed to parse as JSON
+        
+    Returns:
+        True if the response appears to be truncated, False otherwise
+    """
+    if not raw_text:
+        return False
+    
+    text = raw_text.strip()
+    if not text:
+        return False
+    
+    # Check for matching outer delimiters
+    if text.startswith('{') and text.endswith('}'):
+        return False
+    
+    if text.startswith('[') and text.endswith(']'):
+        return False
+    
+    # If it starts with { or [ but doesn't have matching closing delimiter, it's truncated
+    if text.startswith('{') or text.startswith('['):
+        return True
+    
+    # Doesn't look like JSON at all
+    return False
