@@ -86,53 +86,69 @@ class TestCommands(TestCase):
         mock_cleanup.assert_called_once_with(30)
 
     # --- Diff helpers ---
+    @patch('aye.controller.commands.snapshot.get_backend')
     @patch('aye.model.snapshot.list_snapshots')
     @patch('pathlib.Path.exists', return_value=True)
-    def test_get_diff_paths_latest(self, mock_exists, mock_list_snapshots):
+    def test_get_diff_paths_latest(self, mock_exists, mock_list_snapshots, mock_get_backend):
+        # Mock file backend (not git)
+        mock_get_backend.return_value = MagicMock(spec=[])
         mock_list_snapshots.return_value = [('002_ts', '/path/snap2'), ('001_ts', '/path/snap1')]
         file_path = Path('file.py')
         
-        path1, path2 = commands.get_diff_paths('file.py')
+        path1, path2, is_stash = commands.get_diff_paths('file.py')
         
         self.assertEqual(path1, file_path)
-        self.assertEqual(path2, Path('/path/snap2'))
+        self.assertEqual(path2, '/path/snap2')
+        self.assertFalse(is_stash)
         mock_list_snapshots.assert_called_once_with(file_path)
 
+    @patch('aye.controller.commands.snapshot.get_backend')
     @patch('aye.model.snapshot.list_snapshots')
     @patch('pathlib.Path.exists', return_value=True)
-    def test_get_diff_paths_one_snap(self, mock_exists, mock_list_snapshots):
+    def test_get_diff_paths_one_snap(self, mock_exists, mock_list_snapshots, mock_get_backend):
+        # Mock file backend (not git)
+        mock_get_backend.return_value = MagicMock(spec=[])
         mock_list_snapshots.return_value = [('002_ts', '/path/snap2'), ('001_ts', '/path/snap1')]
         file_path = Path('file.py')
         
-        path1, path2 = commands.get_diff_paths('file.py', snap_id1='001')
+        path1, path2, is_stash = commands.get_diff_paths('file.py', snap_id1='001')
         
         self.assertEqual(path1, file_path)
-        self.assertEqual(path2, Path('/path/snap1'))
+        self.assertEqual(path2, '/path/snap1')
+        self.assertFalse(is_stash)
 
+    @patch('aye.controller.commands.snapshot.get_backend')
     @patch('aye.model.snapshot.list_snapshots')
     @patch('pathlib.Path.exists', return_value=True)
-    def test_get_diff_paths_two_snaps(self, mock_exists, mock_list_snapshots):
+    def test_get_diff_paths_two_snaps(self, mock_exists, mock_list_snapshots, mock_get_backend):
+        # Mock file backend (not git)
+        mock_get_backend.return_value = MagicMock(spec=[])
         mock_list_snapshots.return_value = [('002_ts', '/path/snap2'), ('001_ts', '/path/snap1')]
         
-        path1, path2 = commands.get_diff_paths('file.py', snap_id1='002', snap_id2='001')
+        path1, path2, is_stash = commands.get_diff_paths('file.py', snap_id1='002', snap_id2='001')
         
         self.assertEqual(path1, Path('/path/snap2'))
-        self.assertEqual(path2, Path('/path/snap1'))
+        self.assertEqual(path2, '/path/snap1')
+        self.assertFalse(is_stash)
 
     @patch('pathlib.Path.exists', return_value=False)
     def test_get_diff_paths_file_not_exist(self, mock_exists):
         with self.assertRaises(FileNotFoundError):
             commands.get_diff_paths('file.py')
 
+    @patch('aye.controller.commands.snapshot.get_backend')
     @patch('aye.model.snapshot.list_snapshots', return_value=[])
     @patch('pathlib.Path.exists', return_value=True)
-    def test_get_diff_paths_no_snapshots(self, mock_exists, mock_list_snapshots):
+    def test_get_diff_paths_no_snapshots(self, mock_exists, mock_list_snapshots, mock_get_backend):
+        mock_get_backend.return_value = MagicMock(spec=[])
         with self.assertRaises(ValueError):
             commands.get_diff_paths('file.py')
 
+    @patch('aye.controller.commands.snapshot.get_backend')
     @patch('aye.model.snapshot.list_snapshots')
     @patch('pathlib.Path.exists', return_value=True)
-    def test_get_diff_paths_snap_id_not_found(self, mock_exists, mock_list_snapshots):
+    def test_get_diff_paths_snap_id_not_found(self, mock_exists, mock_list_snapshots, mock_get_backend):
+        mock_get_backend.return_value = MagicMock(spec=[])
         mock_list_snapshots.return_value = [('001_ts', '/path/snap1')]
         with self.assertRaises(ValueError):
             commands.get_diff_paths('file.py', snap_id1='999')

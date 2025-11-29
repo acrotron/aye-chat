@@ -11,6 +11,7 @@ from aye.controller.util import find_project_root
 from aye.model.index_manager import IndexManager
 from aye.model.auth import get_user_config
 from aye.model.config import DEFAULT_MODEL_ID
+from aye.model.snapshot.git_backend import GitStashBackend
 
 
 # --- Auth Commands ---
@@ -55,8 +56,13 @@ def cleanup_old_snapshots(days: int) -> int:
     """Delete snapshots older than N days."""
     return snapshot.cleanup_snapshots(days)
 
-def get_diff_paths(file_name: str, snap_id1: Optional[str] = None, snap_id2: Optional[str] = None) -> Tuple[Path, Path]:
-    """Logic to determine which two files to diff."""
+def get_diff_paths(file_name: str, snap_id1: Optional[str] = None, snap_id2: Optional[str] = None) -> Tuple[Path, str, bool]:
+    """Logic to determine which two files to diff.
+    
+    Returns:
+        Tuple of (current_file_path, snapshot_reference, is_stash_ref)
+        where snapshot_reference is either a file path or a stash reference like 'stash@{0}:path/to/file'
+    """
     file_path = Path(file_name)
     if not file_path.exists():
         raise FileNotFoundError(f"File '{file_name}' does not exist.")
@@ -65,27 +71,83 @@ def get_diff_paths(file_name: str, snap_id1: Optional[str] = None, snap_id2: Opt
     if not snapshots:
         raise ValueError(f"No snapshots found for file '{file_name}'.")
 
-    snapshot_paths = {}
-    for snap_ts, snap_path_str in snapshots:
-        ordinal = snap_ts.split('_')[0]
-        snapshot_paths[ordinal] = Path(snap_path_str)
+    # Check if we're using git backend
+    backend = snapshot.get_backend()
+    is_git_backend = isinstance(backend, GitStashBackend)
 
-    if snap_id1 and snap_id2:
-        # Diff between two snapshots
-        if snap_id1 not in snapshot_paths:
-            raise ValueError(f"Snapshot '{snap_id1}' not found.")
-        if snap_id2 not in snapshot_paths:
-            raise ValueError(f"Snapshot '{snap_id2}' not found.")
-        return (snapshot_paths[snap_id1], snapshot_paths[snap_id2])
-    elif snap_id1:
-        # Diff between current file and one snapshot
-        if snap_id1 not in snapshot_paths:
-            raise ValueError(f"Snapshot '{snap_id1}' not found.")
-        return (file_path, snapshot_paths[snap_id1])
+    if is_git_backend:
+        # For git backend, snapshots are tuples of (batch_id, stash_ref)
+        # Build a mapping from ordinal to stash reference for this file
+        snapshot_refs = {}
+        for batch_id, stash_ref in snapshots:
+            ordinal = batch_id.split('_')[0]
+            # Get the file path relative to git root for the stash reference
+            try:
+                rel_path = file_path.resolve().relative_to(backend.git_root)
+                snapshot_refs[ordinal] = f"{stash_ref}:{rel_path.as_posix()}"
+            except ValueError:
+                # File is outside git root
+                snapshot_refs[ordinal] = f"{stash_ref}:{file_path.name}"
+
+        if snap_id1 and snap_id2:
+            # Diff between two snapshots
+            if snap_id1 not in snapshot_refs or snap_id2 not in snapshot_refs:
+                raise ValueError(f"Snapshot not found")
+            # For two stash refs, we need to extract both contents
+            # Return first stash ref and indicate special handling needed
+            return (file_path, f"{snapshot_refs[snap_id2]}|{snapshot_refs[snap_id1]}", True)
+        elif snap_id1:
+            # Diff between current file and one snapshot
+            # Normalize the ordinal to 3 digits for comparison
+            normalized_snap_id1 = snap_id1.zfill(3) if snap_id1.isdigit() else snap_id1
+            
+            # Also check if any ordinal matches when normalized
+            matching_ordinal = None
+            for ordinal in snapshot_refs.keys():
+                if ordinal == normalized_snap_id1 or ordinal.lstrip('0') == snap_id1.lstrip('0'):
+                    matching_ordinal = ordinal
+                    break
+            
+            if not matching_ordinal:
+                raise ValueError(f"Snapshot '{snap_id1}' not found.")
+            
+            return (file_path, snapshot_refs[matching_ordinal], True)
+        else:
+            # Diff between current file and latest snapshot
+            latest_ordinal = snapshots[0][0].split('_')[0]
+            return (file_path, snapshot_refs[latest_ordinal], True)
     else:
-        # Diff between current file and latest snapshot
-        latest_snap_path = Path(snapshots[0][1])
-        return (file_path, latest_snap_path)
+        # For file backend, snapshots are tuples of (batch_id, file_path)
+        snapshot_paths = {}
+        for snap_ts, snap_path_str in snapshots:
+            ordinal = snap_ts.split('_')[0]
+            snapshot_paths[ordinal] = Path(snap_path_str)
+
+        if snap_id1 and snap_id2:
+            # Diff between two snapshots
+            if snap_id1 not in snapshot_paths or snap_id2 not in snapshot_paths:
+                raise ValueError(f"Snapshot not found")
+            return (snapshot_paths[snap_id1], str(snapshot_paths[snap_id2]), False)
+        elif snap_id1:
+            # Diff between current file and one snapshot
+            # Normalize the ordinal to 3 digits for comparison
+            normalized_snap_id1 = snap_id1.zfill(3) if snap_id1.isdigit() else snap_id1
+            
+            # Also check if any ordinal matches when normalized
+            matching_ordinal = None
+            for ordinal in snapshot_paths.keys():
+                if ordinal == normalized_snap_id1 or ordinal.lstrip('0') == snap_id1.lstrip('0'):
+                    matching_ordinal = ordinal
+                    break
+            
+            if not matching_ordinal:
+                raise ValueError(f"Snapshot '{snap_id1}' not found.")
+            
+            return (file_path, str(snapshot_paths[matching_ordinal]), False)
+        else:
+            # Diff between current file and latest snapshot
+            latest_snap_path = Path(snapshots[0][1])
+            return (file_path, str(latest_snap_path), False)
 
 
 # --- Config Commands ---
