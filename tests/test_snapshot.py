@@ -21,11 +21,17 @@ class TestSnapshot(TestCase):
         self.test_dir = Path(self.tmpdir.name) / "src"
         self.test_dir.mkdir()
 
-        # Patch the constants in the snapshot module
-        self.snap_root_patcher = patch('aye.model.snapshot.SNAP_ROOT', self.snap_root_val)
-        self.latest_dir_patcher = patch('aye.model.snapshot.LATEST_SNAP_DIR', self.latest_dir_val)
+        # Patch the constants in the snapshot module (now in file_backend.py)
+        self.snap_root_patcher = patch('aye.model.snapshot.file_backend.SNAP_ROOT', self.snap_root_val)
+        self.latest_dir_patcher = patch('aye.model.snapshot.file_backend.LATEST_SNAP_DIR', self.latest_dir_val)
+        # Force FileBasedBackend by making git detection return None
+        self.git_repo_patcher = patch('aye.model.snapshot._is_git_repository', return_value=None)
         self.snap_root_patcher.start()
         self.latest_dir_patcher.start()
+        self.git_repo_patcher.start()
+
+        # Reset the backend singleton to pick up the patched values
+        snapshot.reset_backend()
 
         self.test_files = [
             self.test_dir / "test1.py",
@@ -39,6 +45,9 @@ class TestSnapshot(TestCase):
     def tearDown(self):
         self.snap_root_patcher.stop()
         self.latest_dir_patcher.stop()
+        self.git_repo_patcher.stop()
+        # Reset the backend singleton after tests
+        snapshot.reset_backend()
         self.tmpdir.cleanup()
 
     def test_truncate_prompt(self):
@@ -274,7 +283,7 @@ class TestSnapshot(TestCase):
     def test_restore_snapshot_permission_error_logs_warning(self, mock_print):
         with patch('aye.model.snapshot._get_next_ordinal', return_value=1):
             snapshot.create_snapshot([self.test_files[0]])
-        with patch('aye.model.snapshot.shutil.copy2', side_effect=PermissionError("denied")):
+        with patch('aye.model.snapshot.file_backend.shutil.copy2', side_effect=PermissionError("denied")):
             snapshot.restore_snapshot(ordinal="001")
         expected_message = f"Warning: failed to restore {self.test_files[0]}: denied"
         mock_print.assert_any_call(expected_message)
