@@ -387,9 +387,10 @@ class TestIndexManager(unittest.TestCase):
     @patch('aye.model.index_manager.vector_db.delete_from_index')
     @patch('aye.model.index_manager.rprint')
     def test_prepare_sync_verbose_output(self, mock_rprint, mock_delete, mock_get_files):
-        """Test verbose output during prepare_sync."""
+        """Test debug output during prepare_sync."""
         self.manager._is_initialized = True
         self.manager.collection = MagicMock()
+        self.manager.debug = True  # Enable debug mode for output
         file1 = self.root_path / 'file1.py'
         file1.write_text('content1')
         
@@ -401,7 +402,7 @@ class TestIndexManager(unittest.TestCase):
 
         self.manager.prepare_sync(verbose=True)
 
-        # Should have printed verbose output
+        # Should have printed debug output
         self.assertTrue(mock_rprint.called)
 
     @patch('aye.model.index_manager.get_project_files_with_limit')
@@ -475,8 +476,9 @@ class TestIndexManager(unittest.TestCase):
     @patch('aye.model.index_manager.threading.Thread')
     @patch('aye.model.index_manager.rprint')
     def test_async_file_discovery_with_verbose(self, mock_rprint, mock_thread, mock_delete, mock_get_files):
-        """Test async discovery with verbose output."""
-        self.manager.verbose = True
+        """Test async discovery with debug output."""
+        self.manager.debug = True  # Enable debug mode for output
+        self.manager._is_initialized = True
         self.manager.collection = MagicMock()
         file1 = self.root_path / 'file1.py'
         file1.write_text('content1')
@@ -492,7 +494,7 @@ class TestIndexManager(unittest.TestCase):
         
         self.manager._async_file_discovery(old_index)
         
-        # Check verbose output was called
+        # Check debug output was called
         self.assertTrue(mock_rprint.called)
         # Verify indexing thread was started
         mock_thread.assert_called_once()
@@ -501,6 +503,7 @@ class TestIndexManager(unittest.TestCase):
     @patch('aye.model.index_manager.vector_db.delete_from_index')
     @patch('aye.model.index_manager.threading.Thread')
     def test_async_file_discovery(self, mock_thread, mock_delete, mock_get_files):
+        self.manager._is_initialized = True
         self.manager.collection = MagicMock()
         file1 = self.root_path / 'file1.py'
         file1.write_text('content1')
@@ -532,6 +535,7 @@ class TestIndexManager(unittest.TestCase):
     @patch('aye.model.index_manager.threading.Thread')
     def test_async_file_discovery_no_work(self, mock_thread, mock_get_files):
         """Test async discovery when there's no work to do (no indexing thread should start)."""
+        self.manager._is_initialized = True
         self.manager.collection = MagicMock()
         file1 = self.root_path / 'file1.py'
         file1.write_text('content1')
@@ -553,6 +557,7 @@ class TestIndexManager(unittest.TestCase):
     @patch('aye.model.index_manager.get_project_files', side_effect=Exception("Discovery error"))
     def test_async_file_discovery_error_handling(self, mock_get_files):
         """Test that async discovery handles errors gracefully."""
+        self.manager._is_initialized = True
         self.manager.collection = MagicMock()
         old_index = {}
         

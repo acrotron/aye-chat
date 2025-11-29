@@ -201,7 +201,8 @@ class TestRepl(TestCase):
             mock_chat_id_file.exists.return_value = False
             mock_path.return_value = mock_chat_id_file
 
-            mock_commands.get_diff_paths.return_value = (Path('p1'), Path('p2'))
+            # Return 3-tuple: (path1, path2, is_stash)
+            mock_commands.get_diff_paths.return_value = (Path('p1'), 'p2', False)
 
             mock_plugin_manager = MagicMock()
             mock_plugin_manager.handle_command.side_effect = [
@@ -230,14 +231,14 @@ class TestRepl(TestCase):
             self.assertEqual(mock_model_cmd.call_count, 2)
             mock_commands.get_snapshot_history.assert_called_once()
             mock_commands.get_diff_paths.assert_called_once_with('file.py', '001', None)
-            mock_diff.show_diff.assert_called_once()
+            mock_diff.show_diff.assert_called_once_with(Path('p1'), 'p2', is_stash_ref=False)
             mock_commands.restore_from_snapshot.assert_called_once_with('001', None)
             mock_commands.prune_snapshots.assert_called_once_with(5)
             mock_chat_id_file.unlink.assert_called_once()
             self.assertEqual(mock_help.call_count, 2)
 
             expected_plugin_calls = [
-                call('get_completer', {'commands': ['with', 'new', 'history', 'diff', 'restore', 'undo', 'keep', 'model', 'verbose', 'debug', 'exit', 'quit', ':q', 'help', 'cd', 'db']}),
+                call('get_completer', {'commands': ['with', 'new', 'history', 'diff', 'restore', 'undo', 'keep', 'model', 'verbose', 'debug', 'completion', 'exit', 'quit', ':q', 'help', 'cd', 'db']}),
                 call('new_chat', {'root': conf.root}),
                 call('execute_shell_command', {'command': 'ls', 'args': ['-l']}),
                 call('execute_shell_command', {'command': 'a', 'args': ['real', 'prompt']})
