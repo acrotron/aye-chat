@@ -79,7 +79,7 @@ def collect_and_send_feedback(chat_id: int):
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "exit", "quit", ":q", "help", "cd"]
+    BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "exit", "quit", ":q", "help", "cd", "db"]
     completer_response = conf.plugin_manager.handle_command("get_completer", {"commands": BUILTIN_COMMANDS})
     completer = completer_response["completer"] if completer_response else None
 
@@ -140,6 +140,12 @@ def chat_repl(conf: Any) -> None:
 
         original_first, lowered_first = tokens[0], tokens[0].lower()
 
+        # Normalize slash-prefixed commands: /restore -> restore, /model -> model, etc.
+        if lowered_first.startswith('/'):
+            lowered_first = lowered_first[1:]  # Remove leading slash
+            tokens[0] = tokens[0][1:]  # Update token as well
+            original_first = tokens[0]  # Update original_first so shell commands work too
+
         # Check if user entered a number from 1-12 as a model selection shortcut
         if len(tokens) == 1:
             try:
@@ -190,7 +196,7 @@ def chat_repl(conf: Any) -> None:
                 print_help_message()
             elif lowered_first == "cd":
                 handle_cd_command(tokens, conf)
-            elif lowered_first == "/db":
+            elif lowered_first == "db":
                 if conf.index_manager and hasattr(conf.index_manager, 'collection'):
                     collection = conf.index_manager.collection
                     count = collection.count()
@@ -221,6 +227,7 @@ def chat_repl(conf: Any) -> None:
                 else:
                     rprint("[red]Index manager not available.[/red]")
             else:
+                # Try shell command execution first
                 shell_response = conf.plugin_manager.handle_command("execute_shell_command", {"command": original_first, "args": tokens[1:]})
                 if shell_response is not None:
                     if "stdout" in shell_response or "stderr" in shell_response:
