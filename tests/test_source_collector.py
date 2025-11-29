@@ -1,9 +1,15 @@
 import tempfile
 from pathlib import Path
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
-from aye.model.source_collector import collect_sources, _is_hidden, _load_patterns_from_file, driver
+from aye.model.source_collector import (
+    collect_sources,
+    get_project_files,
+    get_project_files_with_limit,
+    _load_ignore_patterns
+)
+
 
 class TestSourceCollector(TestCase):
     def setUp(self):
@@ -13,7 +19,7 @@ class TestSourceCollector(TestCase):
         # Create a directory structure for testing
         (self.root / "file1.py").write_text("python content")
         (self.root / "file2.txt").write_text("text content")
-        (self.root / "image.jpg").write_text("binary", encoding="latin-1") # Not a real image
+        (self.root / "image.jpg").write_text("binary", encoding="latin-1")
         
         # Hidden file
         (self.root / ".hidden_file.py").write_text("hidden")
@@ -43,18 +49,10 @@ class TestSourceCollector(TestCase):
     def tearDown(self):
         self.tmpdir.cleanup()
 
-    def test_is_hidden(self):
-        self.assertTrue(_is_hidden(Path("foo/.hidden/file.txt")))
-        self.assertTrue(_is_hidden(Path(".hidden/file.txt")))
-        self.assertFalse(_is_hidden(Path("normal/file.txt")))
-        self.assertTrue(_is_hidden(Path("foo/bar/.git/config")))
-        self.assertFalse(_is_hidden(Path("foo/bar/baz")))
-
-    def test_collect_sources_single_mask_recursive(self):
+    def test_collect_sources_single_mask(self):
         sources = collect_sources(root_dir=str(self.root), file_mask="*.py")
 
         self.assertIn("file1.py", sources)
-        # Keys use POSIX paths (forward slashes) for cross-platform consistency
         self.assertIn("subdir/sub_file.py", sources)
 
         # Check ignored files
@@ -72,7 +70,6 @@ class TestSourceCollector(TestCase):
         sources = collect_sources(root_dir=str(self.root), file_mask="*.py, *.txt")
 
         self.assertIn("file1.py", sources)
-        # Keys use POSIX paths (forward slashes) for cross-platform consistency
         self.assertIn("subdir/sub_file.py", sources)
 
         # .txt files are in .gitignore, so they should be excluded
@@ -82,17 +79,9 @@ class TestSourceCollector(TestCase):
 
         self.assertEqual(len(sources), 2)
 
-    def test_collect_sources_non_recursive(self):
-        sources = collect_sources(root_dir=str(self.root), file_mask="*.py", recursive=False)
-
-        self.assertIn("file1.py", sources)
-        # Keys use POSIX paths (forward slashes) for cross-platform consistency
-        self.assertNotIn("subdir/sub_file.py", sources)
-        self.assertEqual(len(sources), 1)
-
     def test_collect_sources_invalid_dir(self):
-        with self.assertRaises(NotADirectoryError):
-            collect_sources(root_dir="non_existent_dir")
+        sources = collect_sources(root_dir="non_existent_dir", file_mask="*.py")
+        self.assertEqual(sources, {})
 
     def test_collect_sources_from_parent_gitignore(self):
         # Test that .gitignore in parent directories is respected
@@ -107,28 +96,83 @@ class TestSourceCollector(TestCase):
     def test_collect_sources_with_non_utf8_file(self):
         # Create a file with non-utf8 content
         non_utf8_file = self.root / "non_utf8.py"
-        non_utf8_file.write_bytes(b'\x80abc') # Invalid start byte for UTF-8
+        non_utf8_file.write_bytes(b'\x80abc')
 
-        with patch('builtins.print') as mock_print:
+        sources = collect_sources(root_dir=str(self.root), file_mask="*.py")
+        
+        # The non-utf8 file should be skipped
+        self.assertNotIn("non_utf8.py", sources)
+
+    def test_get_project_files(self):
+        files = get_project_files(root_dir=str(self.root), file_mask="*.py")
+        
+        file_names = [f.relative_to(self.root).as_posix() for f in files]
+        
+        self.assertIn("file1.py", file_names)
+        self.assertIn("subdir/sub_file.py", file_names)
+        self.assertNotIn(".hidden_file.py", file_names)
+        self.assertEqual(len(files), 2)
+
+    def test_get_project_files_invalid_dir(self):
+        files = get_project_files(root_dir="non_existent_dir", file_mask="*.py")
+        self.assertEqual(files, [])
+
+    def test_get_project_files_with_limit_not_hit(self):
+        files, limit_hit = get_project_files_with_limit(
+            root_dir=str(self.root),
+            file_mask="*.py",
+            limit=10
+        )
+        
+        self.assertFalse(limit_hit)
+        self.assertEqual(len(files), 2)
+
+    def test_get_project_files_with_limit_hit(self):
+        files, limit_hit = get_project_files_with_limit(
+            root_dir=str(self.root),
+            file_mask="*.py",
+            limit=1
+        )
+        
+        self.assertTrue(limit_hit)
+        self.assertEqual(len(files), 1)
+
+    def test_load_ignore_patterns(self):
+        spec = _load_ignore_patterns(self.root)
+        
+        # Test that patterns from .gitignore are loaded
+        self.assertTrue(spec.match_file("test.txt"))
+        self.assertTrue(spec.match_file("ignored_dir/file.py"))
+        
+        # Test that patterns from .ayeignore are loaded
+        self.assertTrue(spec.match_file("subdir/another.txt"))
+
+    def test_load_ignore_patterns_with_unreadable_file(self):
+        # Create a .gitignore file
+        gitignore = self.root / ".gitignore"
+        gitignore.write_text("*.txt")
+        
+        # Mock the open function to raise an exception
+        with patch('builtins.open', side_effect=IOError("Permission denied")):
+            # Should not raise, just skip the unreadable file
+            spec = _load_ignore_patterns(self.root)
+            # Default patterns should still be loaded
+            self.assertIsNotNone(spec)
+
+    def test_hidden_directories_excluded(self):
+        # Files in hidden directories should be excluded
+        sources = collect_sources(root_dir=str(self.root), file_mask="*.py")
+        
+        self.assertNotIn(".venv/ignored.py", sources)
+        self.assertNotIn(".hidden_file.py", sources)
+
+    def test_collect_sources_handles_read_errors(self):
+        # Create a file that will fail to read
+        test_file = self.root / "test_error.py"
+        test_file.write_text("content")
+        
+        # Mock read_text to raise an exception
+        with patch.object(Path, 'read_text', side_effect=Exception("Read error")):
             sources = collect_sources(root_dir=str(self.root), file_mask="*.py")
-            
-            # The non-utf8 file should be skipped
-            self.assertNotIn("non_utf8.py", sources)
-            # Check that a warning was printed
-            mock_print.assert_any_call(f"   Skipping non‑UTF8 file: {non_utf8_file}")
-
-    def test_load_patterns_from_unreadable_file(self):
-        unreadable_ignore = self.root / ".gitignore"
-        # Don't write it, just patch read_text to fail
-        with patch.object(Path, 'read_text', side_effect=IOError("Permission denied")):
-            patterns = _load_patterns_from_file(unreadable_ignore)
-            self.assertEqual(patterns, [])
-
-    @patch('builtins.print')
-    @patch('aye.model.source_collector.collect_sources')
-    def test_driver(self, mock_collect, mock_print):
-        mock_collect.return_value = {"file1.py": "content"}
-        driver()
-        mock_collect.assert_called_once()
-        self.assertIn("Collected .py files:", mock_print.call_args_list[0][0][0])
-        self.assertIn("--- file1.py ---", mock_print.call_args_list[1][0][0])
+            # Should return empty dict since all reads fail
+            self.assertEqual(sources, {})

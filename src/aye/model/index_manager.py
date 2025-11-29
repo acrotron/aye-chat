@@ -12,7 +12,7 @@ from rich import print as rprint
 from rich.prompt import Confirm
 
 from aye.model.models import VectorIndexResult
-from aye.model.source_collector import get_project_files
+from aye.model.source_collector import get_project_files, get_project_files_with_limit
 from aye.model import vector_db, onnx_manager
 
 # --- Custom Daemon ThreadPoolExecutor ---
@@ -109,6 +109,9 @@ class IndexManager:
         
         self._is_indexing: bool = False
         self._is_refining: bool = False
+        self._is_discovering: bool = False
+        self._discovery_total: int = 0
+        self._discovery_processed: int = 0
         self._progress_lock = threading.Lock()
 
     def _lazy_initialize(self) -> bool:
@@ -237,7 +240,7 @@ class IndexManager:
             vector_db.delete_from_index(self.collection, deleted_files)
         return deleted_files
 
-    def _warn_large_indexing(self, files_to_coarse_index: List[str], files_to_refine: List[str]):
+    def _warn_large_indexing(self, files_to_coarse_index: List[str], files_to_refine: List[str]) -> bool:
         """Warn the user if the number of files to index is very large and ask for confirmation."""
         total_files_to_index = len(files_to_coarse_index) + len(files_to_refine)
         if total_files_to_index > 500:
@@ -251,10 +254,57 @@ class IndexManager:
             rprint("[cyan]Proceeding with indexing...\n")
         return True
 
+    def _async_file_discovery(self, old_index: Dict[str, Any]):
+        """
+        Asynchronously discover all project files and categorize them.
+        This runs in a background thread and updates the work queues as files are found.
+        After completion, it starts the background indexing thread if there's work to do.
+        """
+        try:
+            with self._progress_lock:
+                self._is_discovering = True
+                self._discovery_processed = 0
+                self._discovery_total = 0  # Unknown until complete
+            
+            # Get all files (no limit)
+            current_files = get_project_files(root_dir=str(self.root_path), file_mask=self.file_mask)
+            
+            with self._progress_lock:
+                self._discovery_total = len(current_files)
+            
+            # Categorize files
+            files_to_coarse_index, files_to_refine, new_index = self._categorize_files(current_files, old_index)
+            
+            # Handle deleted files
+            current_file_paths_str = {p.relative_to(self.root_path).as_posix() for p in current_files}
+            deleted_files = self._handle_deleted_files(current_file_paths_str, old_index)
+            
+            # Update work queues and state
+            with self._progress_lock:
+                self._files_to_coarse_index = files_to_coarse_index
+                self._files_to_refine = files_to_refine
+                self._target_index = new_index
+                self._current_index_on_disk = old_index.copy()  # Initialize from old index
+                self._coarse_total = len(files_to_coarse_index)
+                self._coarse_processed = 0
+                self._is_discovering = False
+            
+            # Start background indexing if there's work to do
+            if self.has_work():
+                indexing_thread = threading.Thread(target=self.run_sync_in_background, daemon=True)
+                indexing_thread.start()
+                    
+        except Exception as e:
+            with self._progress_lock:
+                self._is_discovering = False
+            if self.verbose:
+                rprint(f"[red]Error during async file discovery: {e}[/red]")
+
     def prepare_sync(self, verbose: bool = False) -> None:
         """
         Performs a fast scan for file changes and prepares lists of files for
-        coarse indexing and refinement.
+        coarse indexing and refinement. If more than 1000 files are found,
+        asks for user confirmation and switches to async discovery.
         """
         if not self._is_initialized and not self._lazy_initialize():
             if verbose and onnx_manager.get_model_status() == "DOWNLOADING":
@@ -267,16 +317,41 @@ class IndexManager:
             return
 
         old_index = self._load_old_index()
-        current_files = get_project_files(root_dir=str(self.root_path), file_mask=self.file_mask)
         
+        # Try to enumerate up to 1000 files synchronously
+        current_files, limit_hit = get_project_files_with_limit(
+            root_dir=str(self.root_path), 
+            file_mask=self.file_mask,
+            limit=1000
+        )
+        
+        if limit_hit:
+            # We hit the 1000 file limit - warn and ask for confirmation
+            rprint(f"\n[bold yellow]⚠️  Whoa! 1000+ files discovered...[/]")
+            rprint("[yellow]Is this really how large your project is, or did some libraries get included by accident?[/]")
+            rprint("[yellow]You can use .gitignore or .ayeignore to exclude subfolders and files.[/]\n")
+            
+            if not Confirm.ask("[bold]Do you want to continue with indexing?[/bold]", default=False):
+                rprint("[cyan]Indexing cancelled. Please update your ignore files and restart aye chat.[/]")
+                return
+            
+            rprint("[cyan]Starting async file discovery... The chat will be available immediately.\n")
+            
+            # Start async file discovery in a background thread
+            discovery_thread = threading.Thread(
+                target=self._async_file_discovery,
+                args=(old_index,),
+                daemon=True
+            )
+            discovery_thread.start()
+            return
+        
+        # Less than 1000 files - proceed with synchronous categorization
         files_to_coarse_index, files_to_refine, new_index = self._categorize_files(current_files, old_index)
         
         current_file_paths_str = {p.relative_to(self.root_path).as_posix() for p in current_files}
         deleted_files = self._handle_deleted_files(current_file_paths_str, old_index)
         
-        if not self._warn_large_indexing(files_to_coarse_index, files_to_refine):
-            return
-
         if files_to_coarse_index:
             if verbose:
                 rprint(f"  [green]Found:[/] {len(files_to_coarse_index)} new or modified file(s) for initial indexing.")
@@ -380,6 +455,10 @@ class IndexManager:
         if not self.collection:
             return  # RAG system is disabled, so no indexing work to do.
 
+        # Wait for async discovery to complete if it's running
+        while self._is_discovering:
+            time.sleep(0.5)
+
         if not self.has_work():
             return
 
@@ -410,10 +489,14 @@ class IndexManager:
         return bool(self._files_to_coarse_index or self._files_to_refine)
 
     def is_indexing(self) -> bool:
-        return self._is_indexing or self._is_refining
+        return self._is_indexing or self._is_refining or self._is_discovering
 
     def get_progress_display(self) -> str:
         with self._progress_lock:
+            if self._is_discovering:
+                if self._discovery_total > 0:
+                    return f"discovering files {self._discovery_processed}/{self._discovery_total}"
+                return "discovering files..."
             if self._is_indexing:
                 return f"indexing {self._coarse_processed}/{self._coarse_total}"
             if self._is_refining:
