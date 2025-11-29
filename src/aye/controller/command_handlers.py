@@ -131,6 +131,30 @@ def handle_debug_command(tokens: list):
         rprint(f"[yellow]Debug mode is {current.title()}[/]")
 
 
+def handle_completion_command(tokens: list) -> Optional[str]:
+    """Handle the 'completion' command for switching completion styles.
+    
+    Returns:
+        The new completion style if changed ('readline' or 'multi'), None otherwise.
+    """
+    if len(tokens) > 1:
+        val = tokens[1].lower()
+        if val in ("readline", "multi"):
+            set_user_config("completion_style", val)
+            rprint(f"[green]Completion style set to {val.title()}[/]")
+            return val
+        else:
+            rprint("[red]Usage: completion readline|multi[/]")
+            rprint("[yellow]  readline - Traditional readline-like completion (default)[/]")
+            rprint("[yellow]  multi    - Multi-column completion with complete-while-typing[/]")
+            return None
+    else:
+        current = get_user_config("completion_style", "readline")
+        rprint(f"[yellow]Completion style is {current.title()}[/]")
+        rprint("[yellow]Use 'completion readline' or 'completion multi' to change[/]")
+        return None
+
+
 def _expand_file_patterns(patterns: list[str], conf: Any) -> list[str]:
     """Expand wildcard patterns and return a list of existing file paths."""
     expanded_files = []

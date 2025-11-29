@@ -100,6 +100,7 @@ class GitStashBackend(SnapshotBackend):
             # Handle quoted paths (git uses quotes for special chars)
             if filepath_str.startswith('"') and filepath_str.endswith('"'):
                 filepath_str = filepath_str[1:-1]
+            # Git status returns paths relative to git root, so resolve from git_root
             filepath = (self.git_root / filepath_str).resolve()
 
             if filepath not in target_set and status.strip():
@@ -131,6 +132,25 @@ class GitStashBackend(SnapshotBackend):
 
         return [f for f in file_paths if f.resolve() in untracked_set]
 
+    def get_file_content_from_snapshot(self, file_path: str, stash_ref: str) -> Optional[str]:
+        """Extract file content from a git stash.
+        
+        Args:
+            file_path: Relative path to the file (from git root)
+            stash_ref: Stash reference like 'stash@{0}'
+            
+        Returns:
+            File content as string, or None if file not found in stash
+        """
+        try:
+            # Use git show to extract file content from stash
+            result = self._run_git(["show", f"{stash_ref}:{file_path}"], check=False)
+            if result.returncode == 0:
+                return result.stdout
+            return None
+        except Exception:
+            return None
+
     def create_snapshot(self, file_paths: List[Path], prompt: Optional[str] = None) -> str:
         """Create a git stash for the specified files."""
         if not file_paths:
@@ -154,9 +174,23 @@ class GitStashBackend(SnapshotBackend):
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         batch_id = f"{ordinal:03d}_{ts}"
 
-        # Build stash message with metadata
+        # Build stash message with metadata - use relative paths from current directory
         prompt_part = (prompt[:50].replace("|", "-") if prompt else "no prompt")
-        files_list = [str(f.name) for f in resolved_files[:5]]
+        files_list = []
+        cwd = Path.cwd()
+        for f in resolved_files[:5]:
+            try:
+                # Try to make path relative to current directory first
+                rel_path = f.relative_to(cwd)
+                files_list.append(str(rel_path))
+            except ValueError:
+                # If file is outside CWD, try relative to git root
+                try:
+                    rel_path = f.relative_to(self.git_root)
+                    files_list.append(str(rel_path))
+                except ValueError:
+                    # If we can't make it relative to either, use the name as fallback
+                    files_list.append(f.name)
         if len(resolved_files) > 5:
             files_list.append(f"...+{len(resolved_files) - 5}")
         files_str = ",".join(files_list)

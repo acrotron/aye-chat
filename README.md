@@ -1,4 +1,4 @@
-# Aye Chat: AI-powered terminal workspace
+# Aye Chat: AI-powered terminal workspace <img src="https://flagcdn.com/16x12/us.png" width="20" align="top"/> <img src="https://flagcdn.com/16x12/ua.png" width="20" align="top" /> <img src="https://flagcdn.com/16x12/nl.png" width="20" align="top" /> <img src="https://flagcdn.com/16x12/eu.png" width="20" align="top"/>
 
 **Your terminal, but with AI. Edit files, run commands, chat with AI - all in one session.**
 

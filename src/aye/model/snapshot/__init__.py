@@ -70,10 +70,11 @@ def get_backend() -> SnapshotBackend:
 
     if _backend is None:
         git_root = _is_git_repository()
-        if git_root:
-            _backend = GitStashBackend(git_root)
-        else:
-            _backend = FileBasedBackend()
+        #if git_root:
+        #    _backend = GitStashBackend(git_root)
+        #else:
+        #    _backend = FileBasedBackend()
+        _backend = FileBasedBackend()
 
     return _backend
 

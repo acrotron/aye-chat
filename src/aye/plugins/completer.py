@@ -9,7 +9,7 @@ from rich import print as rprint
 class CmdPathCompleter(Completer):
     """
     Completes:
-    • the first token with an optional list of commands
+    • the first token with an optional list of commands (with or without leading slash)
     • the *last* token (any argument) as a filesystem path
     """
 
@@ -43,11 +43,26 @@ class CmdPathCompleter(Completer):
         text = document.text_before_cursor
         words = text.split()
 
+        # ----- Handle slash-prefixed commands -----
+        if text.startswith('/') and (len(words) == 0 or (len(words) == 1 and not text.endswith(" "))):
+            # User is typing a slash command
+            prefix = text[1:]  # Remove the leading slash
+            for cmd in self.commands:
+                if cmd.startswith(prefix):
+                    # Yield completion with slash prefix
+                    yield Completion(
+                        cmd,
+                        start_position=-len(prefix),
+                        display=f"/{cmd}",
+                        display_meta="Aye command"
+                    )
+            return
+
         # ----- 1️⃣  First word → command completions (optional) -----
         if len(words) == 0:
             return
         if len(words) == 1 and not text.endswith(" "):
-            # Still typing the command itself
+            # Still typing the command itself (non-slash case)
             prefix = words[0]
             for cmd in self.commands:
                 if cmd.startswith(prefix):
