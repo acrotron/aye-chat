@@ -749,7 +749,7 @@ class TestIndexManager(unittest.TestCase):
         self.manager._current_index_on_disk = {}
         with patch('aye.model.index_manager.DaemonThreadPoolExecutor', ImmediateExecutor), \
              patch('aye.model.index_manager.concurrent.futures.as_completed', lambda futures: futures):
-            self.manager._run_work_phase(lambda p: p, ['file.py'], is_refinement=False)
+            self.manager._run_work_phase(lambda p: p, ['file.py'], is_refinement=False, current_generation=0)
         self.assertIn('file.py', self.manager._current_index_on_disk)
         self.assertEqual(self.manager._current_index_on_disk['file.py']['hash'], 'h')
 
@@ -757,7 +757,7 @@ class TestIndexManager(unittest.TestCase):
         self.manager._current_index_on_disk = {'file.py': {'hash': 'h', 'refined': False}}
         with patch('aye.model.index_manager.DaemonThreadPoolExecutor', ImmediateExecutor), \
              patch('aye.model.index_manager.concurrent.futures.as_completed', lambda futures: futures):
-            self.manager._run_work_phase(lambda p: p, ['file.py'], is_refinement=True)
+            self.manager._run_work_phase(lambda p: p, ['file.py'], is_refinement=True, current_generation=0)
         self.assertTrue(self.manager._current_index_on_disk['file.py']['refined'])
 
     def test_run_work_phase_empty_list(self):
@@ -765,7 +765,7 @@ class TestIndexManager(unittest.TestCase):
         self.manager._current_index_on_disk = {}
         with patch('aye.model.index_manager.DaemonThreadPoolExecutor', ImmediateExecutor), \
              patch('aye.model.index_manager.concurrent.futures.as_completed', lambda futures: futures):
-            self.manager._run_work_phase(lambda p: p, [], is_refinement=False)
+            self.manager._run_work_phase(lambda p: p, [], is_refinement=False, current_generation=0)
         # Should not crash
         self.assertEqual(self.manager._current_index_on_disk, {})
 
@@ -781,7 +781,7 @@ class TestIndexManager(unittest.TestCase):
         
         with patch('aye.model.index_manager.DaemonThreadPoolExecutor', ImmediateExecutor), \
              patch('aye.model.index_manager.concurrent.futures.as_completed', lambda futures: futures):
-            self.manager._run_work_phase(failing_worker, ['file1.py', 'file2.py'], is_refinement=False)
+            self.manager._run_work_phase(failing_worker, ['file1.py', 'file2.py'], is_refinement=False, current_generation=0)
         
         # Only successful file should be in index
         self.assertIn('file1.py', self.manager._current_index_on_disk)
@@ -797,7 +797,7 @@ class TestIndexManager(unittest.TestCase):
         
         with patch('aye.model.index_manager.DaemonThreadPoolExecutor', ImmediateExecutor), \
              patch('aye.model.index_manager.concurrent.futures.as_completed', lambda futures: futures):
-            self.manager._run_work_phase(failing_worker, ['file1.py', 'file2.py'], is_refinement=False)
+            self.manager._run_work_phase(failing_worker, ['file1.py', 'file2.py'], is_refinement=False, current_generation=0)
         
         # No files should be in index
         self.assertEqual(self.manager._current_index_on_disk, {})
@@ -817,7 +817,7 @@ class TestIndexManager(unittest.TestCase):
         with patch('aye.model.index_manager.DaemonThreadPoolExecutor', ImmediateExecutor), \
              patch('aye.model.index_manager.concurrent.futures.as_completed', lambda futures: futures), \
              patch.object(self.manager, '_save_progress', side_effect=counting_save):
-            self.manager._run_work_phase(lambda p: p, [f'file{i}.py' for i in range(5)], is_refinement=False)
+            self.manager._run_work_phase(lambda p: p, [f'file{i}.py' for i in range(5)], is_refinement=False, current_generation=0)
         
         # Should have saved at least twice (after every 2 files + final save)
         self.assertGreaterEqual(save_count[0], 2)

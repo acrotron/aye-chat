@@ -36,10 +36,10 @@ def _get_int_env(name: str, default: int) -> int:
 
 
 CONTEXT_TARGET_SIZE = _get_int_env(
-    "AYE_CONTEXT_TARGET", 180 * 1024
+    "AYE_CONTEXT_TARGET", 150 * 1024
 )  # 180KB, ~40K tokens in English language
 CONTEXT_HARD_LIMIT = _get_int_env(
-    "AYE_CONTEXT_HARD_LIMIT", 200 * 1024
+    "AYE_CONTEXT_HARD_LIMIT", 170 * 1024
 )  # 200KB, hard safety limit for API payload
 RELEVANCE_THRESHOLD = -1.0  # Accept all results from vector search, even with negative scores.
 
