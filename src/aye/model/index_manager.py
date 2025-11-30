@@ -82,6 +82,7 @@ class IndexManager:
         self._coarse_processed: int = 0
         self._refine_total: int = 0
         self._refine_processed: int = 0
+        self._indexing_generation: int = 0
         
         # Status flags
         self._is_indexing: bool = False
@@ -326,6 +327,7 @@ class IndexManager:
         try:
             with self._progress_lock:
                 self._is_discovering = True
+                self._indexing_generation += 1  # Invalidate previous runs
                 self._discovery_processed = 0
                 self._discovery_total = 0
                 self._current_index_on_disk = old_index.copy()
@@ -434,6 +436,10 @@ class IndexManager:
 
         os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
+        # Capture the current generation to detect if we get superseded
+        with self._progress_lock:
+            current_generation = self._indexing_generation
+
         try:
             # Phase 1: Coarse indexing
             if self._files_to_coarse_index and not self._should_stop():
@@ -441,9 +447,15 @@ class IndexManager:
                 self._run_work_phase(
                     self._process_one_file_coarse, 
                     self._files_to_coarse_index, 
-                    is_refinement=False
+                    is_refinement=False,
+                    current_generation=current_generation
                 )
                 self._is_indexing = False
+
+            # Check generation again before phase 2
+            with self._progress_lock:
+                if self._indexing_generation != current_generation:
+                    return
 
             if self._should_stop():
                 return
@@ -460,20 +472,26 @@ class IndexManager:
                 self._run_work_phase(
                     self._process_one_file_refine, 
                     all_files_to_refine, 
-                    is_refinement=True
+                    is_refinement=True,
+                    current_generation=current_generation
                 )
                 self._is_refining = False
         finally:
             self._save_progress()
             self._is_indexing = self._is_refining = False
-            self._files_to_coarse_index = self._files_to_refine = []
-            self._target_index = {}
+            
+            # Only clear work queues if we haven't been superseded by a new discovery
+            with self._progress_lock:
+                if self._indexing_generation == current_generation:
+                    self._files_to_coarse_index = self._files_to_refine = []
+                    self._target_index = {}
 
     def _run_work_phase(
         self, 
         worker_func: Callable, 
         file_list: List[str], 
-        is_refinement: bool
+        is_refinement: bool,
+        current_generation: int
     ) -> None:
         """Run a work phase (coarse or refinement) with parallel processing."""
         files_to_process = self._filter_files_for_processing(file_list, is_refinement)
@@ -493,7 +511,11 @@ class IndexManager:
             }
 
             for future in concurrent.futures.as_completed(future_to_path):
-                if self._should_stop():
+                # Check for stop signal or generation change
+                with self._progress_lock:
+                    is_obsolete = (self._indexing_generation != current_generation)
+                
+                if self._should_stop() or is_obsolete:
                     for f in future_to_path:
                         f.cancel()
                     break
