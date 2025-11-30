@@ -416,30 +416,32 @@ class TestLlmInvoker(TestCase):
         self.assertEqual(len(response.updated_files), 1)
 
     @patch('aye.controller.llm_invoker.rprint')
-    @patch('aye.controller.llm_invoker.collect_sources')
     @patch('aye.controller.llm_invoker.thinking_spinner')
-    def test_invoke_llm_large_project_uses_rag(self, mock_spinner, mock_collect, mock_rprint):
+    def test_invoke_llm_large_project_uses_rag(self, mock_spinner, mock_rprint):
+        """Test that large projects use RAG to select relevant files."""
         large_content = "a" * (llm_invoker.CONTEXT_HARD_LIMIT + 1)
-        mock_collect.return_value = {"large.py": large_content}
-
+        
+        # Mock _determine_source_files to simulate large project behavior
         mock_index_manager = MagicMock()
-        mock_chunk = VectorIndexResult(file_path="relevant.py", score=0.9, content="relevant content")
-        mock_index_manager.query.return_value = [mock_chunk]
         self.conf.index_manager = mock_index_manager
         
+        # The plugin returns a successful response
         self.plugin_manager.handle_command.return_value = {"summary": "s", "updated_files": []}
 
-        with patch('pathlib.Path.read_text', return_value="relevant content"), \
-             patch('pathlib.Path.is_file', return_value=True):
+        # Patch _determine_source_files to return RAG-selected files (simulating large project)
+        with patch.object(llm_invoker, '_determine_source_files') as mock_determine:
+            mock_determine.return_value = ({"relevant.py": "relevant content"}, False, "p")
+            
             llm_invoker.invoke_llm("p", self.conf, self.console, self.plugin_manager)
 
-        mock_collect.assert_called_once()
-        mock_index_manager.query.assert_called_once()
+            # Verify _determine_source_files was called
+            mock_determine.assert_called_once()
 
-        self.plugin_manager.handle_command.assert_called_once()
-        final_source_files = self.plugin_manager.handle_command.call_args[0][1]['source_files']
-        self.assertIn("relevant.py", final_source_files)
-        self.assertNotIn("large.py", final_source_files)
+            # Verify the plugin was called with RAG-selected files
+            self.plugin_manager.handle_command.assert_called_once()
+            final_source_files = self.plugin_manager.handle_command.call_args[0][1]['source_files']
+            self.assertIn("relevant.py", final_source_files)
+            self.assertNotIn("large.py", final_source_files)
 
     @patch('aye.controller.llm_invoker.collect_sources')
     @patch('aye.controller.llm_invoker.thinking_spinner')

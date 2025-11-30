@@ -1,13 +1,17 @@
-import hashlib
-import json
+"""Index Manager for project file indexing and vector search.
+
+This module provides the IndexManager class which manages:
+- File hash index for tracking changes
+- Vector database for semantic code search
+- Background indexing with coarse and refined passes
+"""
+
 import os
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable, Tuple
+import time
 import threading
 import concurrent.futures
-import weakref
-import time
-import atexit
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Callable
 
 from rich import print as rprint
 from rich.prompt import Confirm
@@ -16,173 +20,160 @@ from aye.model.models import VectorIndexResult
 from aye.model.source_collector import get_project_files, get_project_files_with_limit
 from aye.model import vector_db, onnx_manager
 
-# --- Custom Daemon ThreadPoolExecutor ---
-# This is a workaround for the standard ThreadPoolExecutor not creating daemon threads.
-# Daemon threads are necessary here so that the background indexing process
-# does not block the main application from exiting.
-# This implementation is based on the CPython 3.9+ source.
-from concurrent.futures.thread import _worker
-
-class DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
-    def _adjust_thread_count(self):
-        # This method is a copy of the original from Python 3.9+
-        # with one change: `t.daemon = True`.
-        if self._idle_semaphore.acquire(blocking=False):
-            return
-
-        def weak_ref_cb(_, q=self._work_queue):
-            q.put(None)
-
-        num_threads = len(self._threads)
-        if num_threads < self._max_workers:
-            thread_name = f"{self._thread_name_prefix or self}_{num_threads}"
-            t = threading.Thread(
-                name=thread_name,
-                target=_worker,
-                args=(
-                    weakref.ref(self, weak_ref_cb),
-                    self._work_queue,
-                    self._initializer,
-                    self._initargs,
-                ),
-            )
-            t.daemon = True  # This is the key change.
-            t.start()
-            self._threads.add(t)
-
-# --- End Custom Executor ---
-
-def _set_low_priority():
-    """
-    Set the priority of the current worker process to low to avoid
-    interfering with the main UI thread. This is for POSIX-compliant systems.
-    """
-    if hasattr(os, 'nice'):
-        try:
-            # A positive value increases the "niceness" and thus lowers the priority.
-            os.nice(5)
-        except OSError:
-            # This can happen if the user doesn't have permission to change priority.
-            # It's not critical, so we can ignore it.
-            pass
-
-# Determine a reasonable number of workers for background indexing
-# to avoid saturating the CPU and making the UI unresponsive.
-try:
-    # Use half the available cores, with a max of 4, but always at least 1.
-    CPU_COUNT = os.cpu_count() or 2
-    MAX_WORKERS = min(4, max(1, CPU_COUNT // 2))
-except (ImportError, NotImplementedError):
-    MAX_WORKERS = 2 # A safe fallback if cpu_count() is not available.
-
-
-# Global registry of IndexManager instances for cleanup on exit
-_active_managers: List['IndexManager'] = []
-_cleanup_lock = threading.Lock()
-
-
-def _cleanup_all_managers():
-    """Cleanup function called at exit to properly shut down all managers."""
-    with _cleanup_lock:
-        for manager in _active_managers:
-            try:
-                manager.shutdown()
-            except Exception:
-                pass  # Ignore errors during cleanup
-
-
-# Register the cleanup function
-atexit.register(_cleanup_all_managers)
+from .index_manager_utils import (
+    DaemonThreadPoolExecutor,
+    MAX_WORKERS,
+    set_low_priority,
+    set_discovery_thread_low_priority,
+    register_manager,
+)
+from .index_manager_file_ops import (
+    FileCategorizer,
+    IndexPersistence,
+    get_deleted_files,
+)
 
 
 class IndexManager:
     """
-    Manages the file hash index and the vector database for a project.
-    This class encapsulates all logic for scanning, indexing, and querying project files.
-    It uses a two-phase progressive indexing strategy:
-    1. Coarse Indexing: A fast, file-per-chunk pass for immediate usability.
-    2. Refinement: A background process that replaces coarse chunks with fine-grained ones.
+    Manages the file hash index and vector database for a project.
+    
+    Uses a two-phase progressive indexing strategy:
+    1. Coarse Indexing: A fast, file-per-chunk pass for immediate usability
+    2. Refinement: A background process that replaces coarse chunks with 
+       fine-grained, AST-based chunks
     """
-    def __init__(self, root_path: Path, file_mask: str, verbose: bool = False, debug: bool = False):
+    
+    # Save progress after every N files
+    SAVE_INTERVAL = 20
+    
+    def __init__(
+        self, 
+        root_path: Path, 
+        file_mask: str, 
+        verbose: bool = False, 
+        debug: bool = False
+    ):
         self.root_path = root_path
         self.file_mask = file_mask
         self.verbose = verbose
         self.debug = debug
+        
+        # Paths
         self.index_dir = root_path / ".aye"
         self.hash_index_path = self.index_dir / "file_index.json"
-        self.SAVE_INTERVAL = 20  # Save progress after every N files
         
+        # Vector DB
         self.collection: Optional[Any] = None
         self._is_initialized = False
         self._initialization_lock = threading.Lock()
-
-        # --- Attributes for background indexing ---
+        self._initialization_in_progress = False
+        
+        # Work queues
         self._files_to_coarse_index: List[str] = []
         self._files_to_refine: List[str] = []
         
+        # Index state
         self._target_index: Dict[str, Any] = {}
         self._current_index_on_disk: Dict[str, Any] = {}
         
+        # Progress tracking
         self._coarse_total: int = 0
         self._coarse_processed: int = 0
         self._refine_total: int = 0
         self._refine_processed: int = 0
         
+        # Status flags
         self._is_indexing: bool = False
         self._is_refining: bool = False
         self._is_discovering: bool = False
         self._discovery_total: int = 0
         self._discovery_processed: int = 0
+        
+        # Locks
         self._progress_lock = threading.Lock()
         self._save_lock = threading.Lock()
-        
-        # Shutdown control
-        self._shutdown_requested = False
         self._shutdown_lock = threading.Lock()
+        self._shutdown_requested = False
         
-        # Register this manager for cleanup
-        with _cleanup_lock:
-            _active_managers.append(self)
+        # Helper objects
+        self._persistence = IndexPersistence(self.index_dir, self.hash_index_path)
+        self._categorizer = FileCategorizer(root_path, self._should_stop)
+        
+        # Register for cleanup on exit
+        register_manager(self)
 
-    def shutdown(self):
+    # =========================================================================
+    # Shutdown and Lifecycle
+    # =========================================================================
+    
+    def shutdown(self) -> None:
         """
-        Request shutdown of background indexing and save any pending progress.
-        This should be called before the application exits to ensure clean shutdown.
+        Request shutdown of background indexing and save pending progress.
+        
+        Should be called before application exits for clean shutdown.
         """
         with self._shutdown_lock:
             if self._shutdown_requested:
                 return
             self._shutdown_requested = True
         
-        # Save any pending progress before shutdown
+        # Save pending progress
         try:
             self._save_progress()
         except Exception:
-            pass  # Ignore errors during shutdown save
+            pass
         
-        # Give background threads a moment to notice the shutdown flag
-        # But don't wait too long - we want a quick exit
+        # Wait briefly for background threads to notice shutdown
         deadline = time.time() + 0.5
-        while (self._is_indexing or self._is_refining or self._is_discovering) and time.time() < deadline:
+        while self._is_active() and time.time() < deadline:
             time.sleep(0.05)
-
+    
     def _should_stop(self) -> bool:
         """Check if shutdown has been requested."""
         with self._shutdown_lock:
             return self._shutdown_requested
+    
+    def _is_active(self) -> bool:
+        """Check if any background work is in progress."""
+        return self._is_indexing or self._is_refining or self._is_discovering
 
-    def _lazy_initialize(self) -> bool:
+    # =========================================================================
+    # Initialization
+    # =========================================================================
+    
+    def _lazy_initialize(self, blocking: bool = True) -> bool:
         """
-        Initializes the ChromaDB collection if it hasn't been already and if the
-        ONNX model is ready. Returns True on success or if already initialized.
+        Initialize the ChromaDB collection if not already done.
+        
+        Args:
+            blocking: If True, wait for lock. If False, return immediately 
+                      if lock is held.
+                      
+        Returns:
+            True on success or if already initialized.
         """
         if self._should_stop():
             return False
-            
-        with self._initialization_lock:
+        
+        # Fast path: already initialized
+        if self._is_initialized:
+            return self.collection is not None
+        
+        # Try to acquire lock
+        if blocking:
+            acquired = self._initialization_lock.acquire(timeout=0.1)
+        else:
+            acquired = self._initialization_lock.acquire(blocking=False)
+        
+        if not acquired:
+            return self._is_initialized and self.collection is not None
+        
+        try:
             if self._is_initialized:
                 return self.collection is not None
-
+            
+            self._initialization_in_progress = True
             model_status = onnx_manager.get_model_status()
             
             if model_status == "READY":
@@ -194,230 +185,44 @@ class IndexManager:
                     return True
                 except Exception as e:
                     rprint(f"[red]Failed to initialize local code search: {e}[/red]")
-                    self._is_initialized = True  # Mark as "initialized" to avoid retrying
+                    self._is_initialized = True
                     self.collection = None
                     return False
             
             elif model_status == "FAILED":
-                self._is_initialized = True  # Avoid retrying on failure
+                self._is_initialized = True
                 self.collection = None
                 return False
 
-            # If status is DOWNLOADING or NOT_DOWNLOADED, we are not ready.
             return False
+        finally:
+            self._initialization_in_progress = False
+            self._initialization_lock.release()
 
-    def _calculate_hash(self, content: str) -> str:
-        """Calculate the SHA-256 hash of a string."""
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-    def _check_file_status(self, file_path: Path, old_index: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
-        """
-        Checks a single file against the index to determine its status.
-        
-        Returns:
-            A tuple of (status, new_metadata).
-            Status can be 'unchanged', 'modified', 'needs_refinement', or 'error'.
-        """
-        rel_path_str = file_path.relative_to(self.root_path).as_posix()
-        old_file_meta = old_index.get(rel_path_str)
-        
-        try:
-            stats = file_path.stat()
-            mtime = stats.st_mtime
-            size = stats.st_size
-        except FileNotFoundError:
-            return "error", None
-
-        is_new_format = isinstance(old_file_meta, dict)
-
-        # Fast check: if mtime and size are the same, assume unchanged.
-        if is_new_format and old_file_meta.get("mtime") == mtime and old_file_meta.get("size") == size:
-            if not old_file_meta.get("refined", False):
-                return "needs_refinement", old_file_meta
-            return "unchanged", old_file_meta
-
-        # Slower check: read file and compare hashes.
-        try:
-            content = file_path.read_text(encoding="utf-8")
-            current_hash = self._calculate_hash(content)
-        except (IOError, UnicodeDecodeError):
-            return "error", old_file_meta # Keep old meta if read fails
-
-        old_hash = old_file_meta.get("hash") if is_new_format else old_file_meta
-        if current_hash == old_hash:
-            # Hash matches, but mtime/size didn't. Update meta and check refinement.
-            updated_meta = old_file_meta.copy() if is_new_format else {}
-            updated_meta.update({"hash": current_hash, "mtime": mtime, "size": size})
-            if not updated_meta.get("refined", False):
-                return "needs_refinement", updated_meta
-            return "unchanged", updated_meta
-        
-        # If we reach here, the file is modified.
-        new_meta = {"hash": current_hash, "mtime": mtime, "size": size, "refined": False}
-        return "modified", new_meta
-
-    def _load_old_index(self) -> Dict[str, Any]:
-        """Load the existing hash index from disk, or return an empty dict if not found or invalid."""
-        old_index: Dict[str, Any] = {}
-        if self.hash_index_path.is_file():
-            try:
-                old_index = json.loads(self.hash_index_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, FileNotFoundError):
-                old_index = {}
-        return old_index
-
-    def _categorize_files(self, current_files: List[Path], old_index: Dict[str, Any]) -> Tuple[List[str], List[str], Dict[str, Dict[str, Any]]]:
-        """Categorize current files into those needing coarse indexing, refinement, or unchanged."""
-        files_to_coarse_index: List[str] = []
-        files_to_refine: List[str] = []
-        new_index: Dict[str, Dict[str, Any]] = {}
-
-        for file_path in current_files:
-            if self._should_stop():
-                break
-                
-            rel_path_str = file_path.relative_to(self.root_path).as_posix()
-            status, meta = self._check_file_status(file_path, old_index)
-
-            if status == "modified":
-                files_to_coarse_index.append(rel_path_str)
-                if meta:
-                    new_index[rel_path_str] = meta
-            elif status == "needs_refinement":
-                files_to_refine.append(rel_path_str)
-                if meta:
-                    new_index[rel_path_str] = meta
-            elif status == "unchanged":
-                if meta:
-                    new_index[rel_path_str] = meta
-            # 'error' status is ignored
-
-        return files_to_coarse_index, files_to_refine, new_index
-
-    def _handle_deleted_files(self, current_file_paths_str: set, old_index: Dict[str, Any]):
-        """Handle files that have been deleted by removing them from the vector index."""
-        deleted_files = list(set(old_index.keys()) - current_file_paths_str)
-        if deleted_files:
-            if self.debug:
-                rprint(f"  [red]Deleted:[/] {len(deleted_files)} file(s) from index.")
-            if self.collection:
-                vector_db.delete_from_index(self.collection, deleted_files)
-        return deleted_files
-
-    def _warn_large_indexing(self, files_to_coarse_index: List[str], files_to_refine: List[str]) -> bool:
-        """Warn the user if the number of files to index is very large and ask for confirmation."""
-        total_files_to_index = len(files_to_coarse_index) + len(files_to_refine)
-        if total_files_to_index > 500:
-            rprint(f"\n[bold yellow]⚠️  Whoa, I found {total_files_to_index:,} files to index![/]")
-            rprint("[yellow]Is this really how large your project is, or did some libraries get included by accident?[/]")
-            rprint("[yellow]You can use .gitignore or .ayeignore to exclude subfolders and files.[/]\n")
-            
-            if not Confirm.ask("[bold]Do you want to continue with indexing?[/bold]", default=False):
-                rprint("[cyan]Indexing cancelled. Please update your ignore files and restart aye chat.[/]")
-                return False
-            rprint("[cyan]Proceeding with indexing...\n")
-        return True
-
-    def _async_file_discovery(self, old_index: Dict[str, Any]):
-        """
-        Asynchronously discover all project files and categorize them.
-        This runs in a background thread and updates the work queues as files are found.
-        After completion, it starts the background indexing thread if there's work to do.
-        
-        Resume support: Files already present in old_index with matching hashes will be
-        skipped, allowing indexing to resume from where it left off.
-        """
-        try:
-            with self._progress_lock:
-                self._is_discovering = True
-                self._discovery_processed = 0
-                self._discovery_total = 0  # Unknown until complete
-                # Initialize _current_index_on_disk from old_index immediately
-                # This is crucial for resume support - it tracks what's already indexed
-                # Only files from old_index (previously saved to disk) should be here
-                self._current_index_on_disk = old_index.copy()
-            
-            if self._should_stop():
-                return
-            
-            # Get all files (no limit)
-            current_files = get_project_files(root_dir=str(self.root_path), file_mask=self.file_mask)
-            
-            if self._should_stop():
-                return
-            
-            with self._progress_lock:
-                self._discovery_total = len(current_files)
-            
-            # Categorize files - this will use old_index to determine which files
-            # are unchanged, need refinement, or are new/modified
-            files_to_coarse_index, files_to_refine, new_index = self._categorize_files(current_files, old_index)
-            
-            if self._should_stop():
-                return
-            
-            # Handle deleted files
-            current_file_paths_str = {p.relative_to(self.root_path).as_posix() for p in current_files}
-            
-            # Only handle deleted files if we have an initialized collection
-            if self._is_initialized and self.collection:
-                self._handle_deleted_files(current_file_paths_str, old_index)
-            
-            # Update work queues and state
-            with self._progress_lock:
-                self._files_to_coarse_index = files_to_coarse_index
-                self._files_to_refine = files_to_refine
-                self._target_index = new_index
-                # NOTE: Do NOT merge new_index into _current_index_on_disk here!
-                # _current_index_on_disk should only contain files that have been
-                # successfully indexed and saved to disk. New files will be added
-                # to _current_index_on_disk after they are processed in _run_work_phase.
-                self._coarse_total = len(files_to_coarse_index)
-                self._coarse_processed = 0
-                self._is_discovering = False
-            
-            if self.debug:
-                with self._progress_lock:
-                    coarse_count = len(self._files_to_coarse_index)
-                    refine_count = len(self._files_to_refine)
-                if coarse_count > 0:
-                    rprint(f"  [green]Found:[/] {coarse_count} new or modified file(s) for initial indexing.")
-                if refine_count > 0:
-                    rprint(f"  [cyan]Found:[/] {refine_count} file(s) to refine for better search quality.")
-                if coarse_count == 0 and refine_count == 0:
-                    rprint("[green]Project index is up-to-date.[/]")
-            
-            # Start background indexing if there's work to do
-            if self.has_work() and not self._should_stop():
-                indexing_thread = threading.Thread(target=self.run_sync_in_background, daemon=True)
-                indexing_thread.start()
-                    
-        except Exception as e:
-            with self._progress_lock:
-                self._is_discovering = False
-            if self.verbose:
-                rprint(f"[red]Error during async file discovery: {e}[/red]")
-
+    # =========================================================================
+    # Synchronous Preparation
+    # =========================================================================
+    
     def prepare_sync(self, verbose: bool = False) -> None:
         """
-        Performs a fast scan for file changes and prepares lists of files for
-        coarse indexing and refinement. If more than 1000 files are found,
-        asks for user confirmation and switches to async discovery.
+        Perform a fast scan for file changes and prepare indexing queues.
+        
+        If more than 1000 files are found, asks for user confirmation and 
+        switches to async discovery.
         """
         if self._should_stop():
             return
-            
-        if not self._is_initialized and not self._lazy_initialize():
+        
+        # Try non-blocking initialization
+        if not self._is_initialized:
+            self._lazy_initialize(blocking=False)
+        
+        if not self._is_initialized:
             if verbose and onnx_manager.get_model_status() == "DOWNLOADING":
-                rprint("[yellow]Code lookup is initializing (downloading models)... Project scan will begin shortly.[/]")
-            return
+                rprint("[yellow]Code lookup is initializing (downloading models)... "
+                       "Project scan will begin shortly.[/]")
 
-        if not self.collection:
-            if verbose:
-                rprint("[yellow]Code lookup is disabled. Skipping project scan.[/]")
-            return
-
-        old_index = self._load_old_index()
+        old_index = self._persistence.load_index()
         
         # Try to enumerate up to 1000 files synchronously
         current_files, limit_hit = get_project_files_with_limit(
@@ -427,58 +232,343 @@ class IndexManager:
         )
         
         if limit_hit:
-            # We hit the 1000 file limit - warn and ask for confirmation
-            rprint(f"\n[bold yellow]⚠️  Whoa! 1000+ files discovered...[/]")
-            rprint("[yellow]Is this really how large your project is, or did some libraries get included by accident?[/]")
-            rprint("[yellow]You can use .gitignore or .ayeignore to exclude subfolders and files.[/]\n")
-            
-            if not Confirm.ask("[bold]Do you want to continue with indexing?[/bold]", default=False):
-                rprint("[cyan]Indexing cancelled. Please update your ignore files and restart aye chat.[/]")
-                return
-            
-            rprint("[cyan]Starting async file discovery... The chat will be available immediately.\n")
-            
-            # Initialize _current_index_on_disk from old_index before starting async discovery
-            # This ensures resume support works correctly - only previously indexed files are here
-            with self._progress_lock:
-                self._current_index_on_disk = old_index.copy()
-            
-            # Start async file discovery in a background thread
-            discovery_thread = threading.Thread(
-                target=self._async_file_discovery,
-                args=(old_index,),
-                daemon=True
-            )
-            discovery_thread.start()
+            self._handle_large_project(old_index)
             return
         
-        # Less than 1000 files - proceed with synchronous categorization
-        files_to_coarse_index, files_to_refine, new_index = self._categorize_files(current_files, old_index)
+        # Small project: process synchronously
+        self._process_small_project(current_files, old_index)
+    
+    def _handle_large_project(self, old_index: Dict[str, Any]) -> None:
+        """Handle projects with more than 1000 files."""
+        rprint("\n[bold yellow]⚠️  Whoa! 1000+ files discovered...[/]")
+        rprint("[yellow]Is this really how large your project is, or did some "
+               "libraries get included by accident?[/]")
+        rprint("[yellow]You can use .gitignore or .ayeignore to exclude "
+               "subfolders and files.[/]\n")
         
-        current_file_paths_str = {p.relative_to(self.root_path).as_posix() for p in current_files}
-        deleted_files = self._handle_deleted_files(current_file_paths_str, old_index)
+        if not Confirm.ask("[bold]Do you want to continue with indexing?[/bold]", 
+                          default=False):
+            rprint("[cyan]Indexing cancelled. Please update your ignore files "
+                   "and restart aye chat.[/]")
+            return
         
-        if files_to_coarse_index:
+        rprint("[cyan]Starting async file discovery... The chat will be "
+               "available immediately.\n")
+        
+        with self._progress_lock:
+            self._current_index_on_disk = old_index.copy()
+        
+        # Start async discovery
+        discovery_thread = threading.Thread(
+            target=self._async_file_discovery,
+            args=(old_index,),
+            daemon=True
+        )
+        discovery_thread.start()
+    
+    def _process_small_project(
+        self, 
+        current_files: List[Path], 
+        old_index: Dict[str, Any]
+    ) -> None:
+        """Process a small project (< 1000 files) synchronously."""
+        files_to_coarse, files_to_refine, new_index = self._categorizer.categorize_files(
+            current_files, old_index
+        )
+        
+        current_paths_str = {
+            p.relative_to(self.root_path).as_posix() for p in current_files
+        }
+        
+        # Handle deleted files
+        if self.collection:
+            deleted = get_deleted_files(current_paths_str, old_index)
+            if deleted:
+                if self.debug:
+                    rprint(f"  [red]Deleted:[/] {len(deleted)} file(s) from index.")
+                vector_db.delete_from_index(self.collection, deleted)
+        
+        # Update state
+        if files_to_coarse:
             if self.debug:
-                rprint(f"  [green]Found:[/] {len(files_to_coarse_index)} new or modified file(s) for initial indexing.")
-            self._files_to_coarse_index = files_to_coarse_index
-            self._coarse_total = len(files_to_coarse_index)
+                rprint(f"  [green]Found:[/] {len(files_to_coarse)} new or modified "
+                       "file(s) for initial indexing.")
+            self._files_to_coarse_index = files_to_coarse
+            self._coarse_total = len(files_to_coarse)
             self._coarse_processed = 0
         
         if files_to_refine:
             if self.debug:
-                rprint(f"  [cyan]Found:[/] {len(files_to_refine)} file(s) to refine for better search quality.")
+                rprint(f"  [cyan]Found:[/] {len(files_to_refine)} file(s) to refine "
+                       "for better search quality.")
             self._files_to_refine = files_to_refine
         
-        if not deleted_files and not files_to_coarse_index and not files_to_refine:
+        if not files_to_coarse and not files_to_refine:
             if self.debug:
                 rprint("[green]Project index is up-to-date.[/]")
 
         self._target_index = new_index
-        # Only copy old_index (already indexed files) to _current_index_on_disk
         self._current_index_on_disk = old_index.copy()
 
+    # =========================================================================
+    # Async File Discovery
+    # =========================================================================
+    
+    def _async_file_discovery(self, old_index: Dict[str, Any]) -> None:
+        """
+        Asynchronously discover all project files and categorize them.
+        
+        Runs in a background thread. After completion, starts background 
+        indexing if there's work to do.
+        """
+        set_discovery_thread_low_priority()
+        
+        try:
+            with self._progress_lock:
+                self._is_discovering = True
+                self._discovery_processed = 0
+                self._discovery_total = 0
+                self._current_index_on_disk = old_index.copy()
+            
+            if self._should_stop():
+                return
+            
+            current_files = get_project_files(
+                root_dir=str(self.root_path), 
+                file_mask=self.file_mask
+            )
+            
+            if self._should_stop():
+                return
+            
+            with self._progress_lock:
+                self._discovery_total = len(current_files)
+            
+            files_to_coarse, files_to_refine, new_index = self._categorizer.categorize_files(
+                current_files, old_index
+            )
+            
+            if self._should_stop():
+                return
+            
+            # Handle deleted files
+            current_paths_str = {
+                p.relative_to(self.root_path).as_posix() for p in current_files
+            }
+            
+            if self._is_initialized and self.collection:
+                deleted = get_deleted_files(current_paths_str, old_index)
+                if deleted:
+                    vector_db.delete_from_index(self.collection, deleted)
+            
+            # Update work queues
+            with self._progress_lock:
+                self._files_to_coarse_index = files_to_coarse
+                self._files_to_refine = files_to_refine
+                self._target_index = new_index
+                self._coarse_total = len(files_to_coarse)
+                self._coarse_processed = 0
+                self._is_discovering = False
+            
+            self._log_discovery_results(files_to_coarse, files_to_refine)
+            
+            # Start background indexing
+            if self.has_work() and not self._should_stop():
+                indexing_thread = threading.Thread(
+                    target=self.run_sync_in_background, 
+                    daemon=True
+                )
+                indexing_thread.start()
+                    
+        except Exception as e:
+            with self._progress_lock:
+                self._is_discovering = False
+            if self.verbose:
+                rprint(f"[red]Error during async file discovery: {e}[/red]")
+    
+    def _log_discovery_results(
+        self, 
+        files_to_coarse: List[str], 
+        files_to_refine: List[str]
+    ) -> None:
+        """Log the results of file discovery."""
+        if not self.debug:
+            return
+            
+        if files_to_coarse:
+            rprint(f"  [green]Found:[/] {len(files_to_coarse)} new or modified "
+                   "file(s) for initial indexing.")
+        if files_to_refine:
+            rprint(f"  [cyan]Found:[/] {len(files_to_refine)} file(s) to refine "
+                   "for better search quality.")
+        if not files_to_coarse and not files_to_refine:
+            rprint("[green]Project index is up-to-date.[/]")
+
+    # =========================================================================
+    # Background Indexing
+    # =========================================================================
+    
+    def run_sync_in_background(self) -> None:
+        """
+        Wait for code search to be ready, then run indexing and refinement.
+        
+        This method blocks the background thread but not the main thread.
+        """
+        # Wait for initialization
+        while not self._is_initialized and not self._should_stop():
+            if self._lazy_initialize(blocking=True):
+                break
+            if onnx_manager.get_model_status() == "FAILED":
+                return
+            time.sleep(1)
+
+        if self._should_stop() or not self.collection:
+            return
+
+        # Wait for discovery to complete
+        while self._is_discovering and not self._should_stop():
+            time.sleep(0.5)
+
+        if self._should_stop() or not self.has_work():
+            return
+
+        os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
+        try:
+            # Phase 1: Coarse indexing
+            if self._files_to_coarse_index and not self._should_stop():
+                self._is_indexing = True
+                self._run_work_phase(
+                    self._process_one_file_coarse, 
+                    self._files_to_coarse_index, 
+                    is_refinement=False
+                )
+                self._is_indexing = False
+
+            if self._should_stop():
+                return
+
+            # Phase 2: Refinement
+            all_files_to_refine = sorted(list(set(
+                self._files_to_refine + self._files_to_coarse_index
+            )))
+
+            if all_files_to_refine and not self._should_stop():
+                self._is_refining = True
+                self._refine_total = len(all_files_to_refine)
+                self._refine_processed = 0
+                self._run_work_phase(
+                    self._process_one_file_refine, 
+                    all_files_to_refine, 
+                    is_refinement=True
+                )
+                self._is_refining = False
+        finally:
+            self._save_progress()
+            self._is_indexing = self._is_refining = False
+            self._files_to_coarse_index = self._files_to_refine = []
+            self._target_index = {}
+
+    def _run_work_phase(
+        self, 
+        worker_func: Callable, 
+        file_list: List[str], 
+        is_refinement: bool
+    ) -> None:
+        """Run a work phase (coarse or refinement) with parallel processing."""
+        files_to_process = self._filter_files_for_processing(file_list, is_refinement)
+        
+        if not files_to_process:
+            return
+        
+        processed_since_last_save = 0
+        
+        with DaemonThreadPoolExecutor(
+            max_workers=MAX_WORKERS, 
+            initializer=set_low_priority
+        ) as executor:
+            future_to_path = {
+                executor.submit(worker_func, path): path 
+                for path in files_to_process
+            }
+
+            for future in concurrent.futures.as_completed(future_to_path):
+                if self._should_stop():
+                    for f in future_to_path:
+                        f.cancel()
+                    break
+                    
+                path = future_to_path[future]
+                try:
+                    if future.result():
+                        self._update_index_after_processing(path, is_refinement)
+                        processed_since_last_save += 1
+                except Exception:
+                    pass
+
+                if processed_since_last_save >= self.SAVE_INTERVAL:
+                    self._save_progress()
+                    processed_since_last_save = 0
+
+        if processed_since_last_save > 0:
+            self._save_progress()
+    
+    def _filter_files_for_processing(
+        self, 
+        file_list: List[str], 
+        is_refinement: bool
+    ) -> List[str]:
+        """Filter out files that should be skipped for resume support."""
+        files_to_process = []
+        
+        with self._progress_lock:
+            for path in file_list:
+                if self._should_stop():
+                    break
+                    
+                if not is_refinement:
+                    # Skip files already indexed
+                    if path in self._current_index_on_disk:
+                        self._coarse_processed += 1
+                        continue
+                else:
+                    # Skip files already refined
+                    current_meta = self._current_index_on_disk.get(path)
+                    if current_meta and current_meta.get('refined', False):
+                        self._refine_processed += 1
+                        continue
+                        
+                files_to_process.append(path)
+        
+        return files_to_process
+    
+    def _update_index_after_processing(
+        self, 
+        path: str, 
+        is_refinement: bool
+    ) -> None:
+        """Update the index after successfully processing a file."""
+        with self._progress_lock:
+            if is_refinement:
+                if path in self._current_index_on_disk:
+                    self._current_index_on_disk[path]['refined'] = True
+                else:
+                    final_meta = self._target_index.get(path)
+                    if final_meta:
+                        final_meta = final_meta.copy()
+                        final_meta['refined'] = True
+                        self._current_index_on_disk[path] = final_meta
+            else:
+                final_meta = self._target_index.get(path)
+                if final_meta:
+                    self._current_index_on_disk[path] = final_meta
+
+    # =========================================================================
+    # File Processing Workers
+    # =========================================================================
+    
     def _process_one_file_coarse(self, rel_path_str: str) -> Optional[str]:
+        """Process a single file for coarse indexing."""
         if self._should_stop():
             return None
         try:
@@ -493,6 +583,7 @@ class IndexManager:
                 self._coarse_processed += 1
 
     def _process_one_file_refine(self, rel_path_str: str) -> Optional[str]:
+        """Process a single file for refinement."""
         if self._should_stop():
             return None
         try:
@@ -506,164 +597,31 @@ class IndexManager:
             with self._progress_lock:
                 self._refine_processed += 1
 
-    def _save_progress(self):
+    # =========================================================================
+    # Progress and Persistence
+    # =========================================================================
+    
+    def _save_progress(self) -> None:
+        """Save current index state to disk."""
         with self._save_lock:
             with self._progress_lock:
                 index_to_save = self._current_index_on_disk.copy()
-            
-            if not index_to_save:
-                return
-                
-            self.index_dir.mkdir(parents=True, exist_ok=True)
-            temp_path = self.hash_index_path.with_suffix('.json.tmp')
-            try:
-                temp_path.write_text(json.dumps(index_to_save, indent=2), encoding="utf-8")
-                os.replace(temp_path, self.hash_index_path)
-            except Exception:
-                if temp_path.exists():
-                    temp_path.unlink(missing_ok=True)
-
-    def _run_work_phase(self, worker_func: Callable, file_list: List[str], is_refinement: bool):
-        processed_since_last_save = 0
-        
-        # Filter out files that should be skipped for resume support
-        files_to_process = []
-        with self._progress_lock:
-            for path in file_list:
-                if self._should_stop():
-                    break
-                # For coarse indexing: skip files already in _current_index_on_disk
-                # (they were indexed in a previous session and saved to disk)
-                if not is_refinement:
-                    # Check if file is already indexed (exists in current index on disk)
-                    # _current_index_on_disk only contains files that were previously
-                    # indexed and saved, NOT files from _target_index
-                    if path in self._current_index_on_disk:
-                        # File was already coarse-indexed in a previous session
-                        self._coarse_processed += 1
-                        continue
-                # For refinement: skip files already refined
-                else:
-                    current_meta = self._current_index_on_disk.get(path)
-                    if current_meta and current_meta.get('refined', False):
-                        # File already refined, skip
-                        self._refine_processed += 1
-                        continue
-                files_to_process.append(path)
-        
-        if not files_to_process:
-            return
-        
-        with DaemonThreadPoolExecutor(max_workers=MAX_WORKERS, initializer=_set_low_priority) as executor:
-            future_to_path = {executor.submit(worker_func, path): path for path in files_to_process}
-
-            for future in concurrent.futures.as_completed(future_to_path):
-                if self._should_stop():
-                    # Cancel remaining futures
-                    for f in future_to_path:
-                        f.cancel()
-                    break
-                    
-                path = future_to_path[future]
-                try:
-                    if future.result():
-                        with self._progress_lock:
-                            if is_refinement:
-                                if path in self._current_index_on_disk:
-                                    self._current_index_on_disk[path]['refined'] = True
-                                else:
-                                    # File might have been coarse-indexed in this session
-                                    # and not yet in _current_index_on_disk
-                                    final_meta = self._target_index.get(path)
-                                    if final_meta:
-                                        final_meta = final_meta.copy()
-                                        final_meta['refined'] = True
-                                        self._current_index_on_disk[path] = final_meta
-                            else:
-                                # Coarse indexing complete - add to _current_index_on_disk
-                                final_meta = self._target_index.get(path)
-                                if final_meta:
-                                    self._current_index_on_disk[path] = final_meta
-                            processed_since_last_save += 1
-                except Exception:
-                    pass
-
-                if processed_since_last_save >= self.SAVE_INTERVAL:
-                    self._save_progress()
-                    processed_since_last_save = 0
-
-        if processed_since_last_save > 0:
-            self._save_progress()
-
-    def run_sync_in_background(self):
-        """
-        Waits for the local code search to be ready, then runs the indexing and
-        refinement process in the background.
-        """
-        # Wait for the local code search to be ready. This will block the background thread,
-        # but not the main application thread.
-        while not self._is_initialized and not self._should_stop():
-            if self._lazy_initialize():
-                break
-            # If model download has failed, exit this thread.
-            if onnx_manager.get_model_status() == "FAILED":
-                return
-            time.sleep(1)
-
-        if self._should_stop():
-            return
-
-        if not self.collection:
-            return  # RAG system is disabled, so no indexing work to do.
-
-        # Wait for async discovery to complete if it's running
-        while self._is_discovering and not self._should_stop():
-            time.sleep(0.5)
-
-        if self._should_stop():
-            return
-
-        if not self.has_work():
-            return
-
-        # Set TOKENIZERS_PARALLELISM to false for this background process
-        # to avoid warnings and potential deadlocks with our own thread pool.
-        os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-
-        try:
-            if self._files_to_coarse_index and not self._should_stop():
-                self._is_indexing = True
-                self._run_work_phase(self._process_one_file_coarse, self._files_to_coarse_index, is_refinement=False)
-                self._is_indexing = False
-
-            if self._should_stop():
-                return
-
-            all_files_to_refine = sorted(list(set(self._files_to_refine + self._files_to_coarse_index)))
-
-            if all_files_to_refine and not self._should_stop():
-                self._is_refining = True
-                self._refine_total = len(all_files_to_refine)
-                self._refine_processed = 0
-                self._run_work_phase(self._process_one_file_refine, all_files_to_refine, is_refinement=True)
-                self._is_refining = False
-        finally:
-            # Save final progress before clearing state
-            self._save_progress()
-            
-            self._is_indexing = self._is_refining = False
-            self._files_to_coarse_index = self._files_to_refine = []
-            self._target_index = {}
-            # Don't clear _current_index_on_disk here - it's saved to disk already
+            self._persistence.save_index(index_to_save)
 
     def has_work(self) -> bool:
+        """Check if there's indexing work to do."""
         return bool(self._files_to_coarse_index or self._files_to_refine)
 
     def is_indexing(self) -> bool:
+        """Check if indexing is in progress (non-blocking)."""
         return self._is_indexing or self._is_refining or self._is_discovering
 
     def get_progress_display(self) -> str:
-        with self._progress_lock:
+        """Get progress display string."""
+        acquired = self._progress_lock.acquire(timeout=0.01)
+        if not acquired:
+            return "indexing..."
+        try:
             if self._is_discovering:
                 if self._discovery_total > 0:
                     return f"discovering files {self._discovery_processed}/{self._discovery_total}"
@@ -673,18 +631,43 @@ class IndexManager:
             if self._is_refining:
                 return f"refining {self._refine_processed}/{self._refine_total}"
             return ""
+        finally:
+            self._progress_lock.release()
 
-    def query(self, query_text: str, n_results: int = 10, min_relevance: float = 0.0) -> List[VectorIndexResult]:
+    # =========================================================================
+    # Query Interface
+    # =========================================================================
+    
+    def query(
+        self, 
+        query_text: str, 
+        n_results: int = 10, 
+        min_relevance: float = 0.0
+    ) -> List[VectorIndexResult]:
+        """
+        Query the vector index (non-blocking).
+        
+        If the index is not yet initialized or initialization is in progress,
+        returns empty results immediately to avoid blocking the main thread.
+        """
         if self._should_stop():
             return []
-            
-        if not self._is_initialized and not self._lazy_initialize():
-            if onnx_manager.get_model_status() == "DOWNLOADING":
-                rprint("[yellow]Code lookup is still initializing (downloading models)... Search is temporarily disabled.[/]")
+        
+        # Fast path: if initialization is in progress, return empty immediately
+        # This avoids lock contention when background indexing is running
+        if self._initialization_in_progress:
+            if self.debug:
+                rprint("[yellow]Index initialization in progress, returning empty context.[/]")
             return []
-
+        
+        if not self._is_initialized:
+            if not self._lazy_initialize(blocking=False):
+                if self.debug:
+                    rprint("[yellow]Index not ready yet, returning empty context.[/]")
+                return []
+        
         if not self.collection:
-            return []  # RAG system is disabled.
+            return []
             
         return vector_db.query_index(
             collection=self.collection,
