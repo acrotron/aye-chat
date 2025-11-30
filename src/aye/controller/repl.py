@@ -274,12 +274,10 @@ def chat_repl(conf: Any) -> None:
                             if "error" in shell_response:
                                 rprint(f"[red]Error:[/] {shell_response['error']}")
                     else:
-                        # This is the LLM path. Sync the index here before invoking.
-                        if not index_manager.is_indexing():
-                            index_manager.prepare_sync(verbose=conf.verbose)
-                            if index_manager.has_work():
-                                thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
-                                thread.start()
+                        # This is the LLM path.
+                        # DO NOT call prepare_sync() here - it blocks the main thread!
+                        # The index is already being maintained in the background.
+                        # RAG queries will use whatever index state is currently available.
 
                         llm_response = invoke_llm(prompt=prompt, conf=conf, console=console, plugin_manager=conf.plugin_manager, chat_id=chat_id, verbose=conf.verbose)
                         if llm_response:

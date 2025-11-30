@@ -677,10 +677,20 @@ class IndexManager:
         return bool(self._files_to_coarse_index or self._files_to_refine)
 
     def is_indexing(self) -> bool:
+        """Check if indexing is in progress. Non-blocking check."""
+        # Use a non-blocking check to avoid delays in the main thread
+        # We read the flags directly - they're simple booleans and the worst
+        # case is a slightly stale value which is acceptable
         return self._is_indexing or self._is_refining or self._is_discovering
 
     def get_progress_display(self) -> str:
-        with self._progress_lock:
+        """Get progress display string. Uses lock but should be fast."""
+        # Try to acquire lock with timeout to avoid blocking main thread
+        acquired = self._progress_lock.acquire(timeout=0.01)
+        if not acquired:
+            # Lock is held by background thread, return a generic message
+            return "indexing..."
+        try:
             if self._is_discovering:
                 if self._discovery_total > 0:
                     return f"discovering files {self._discovery_processed}/{self._discovery_total}"
@@ -690,6 +700,8 @@ class IndexManager:
             if self._is_refining:
                 return f"refining {self._refine_processed}/{self._refine_total}"
             return ""
+        finally:
+            self._progress_lock.release()
 
     def query(self, query_text: str, n_results: int = 10, min_relevance: float = 0.0) -> List[VectorIndexResult]:
         if self._should_stop():
