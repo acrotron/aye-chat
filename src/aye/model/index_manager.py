@@ -134,6 +134,7 @@ class IndexManager:
         self._discovery_total: int = 0
         self._discovery_processed: int = 0
         self._progress_lock = threading.Lock()
+        self._save_lock = threading.Lock()
         
         # Shutdown control
         self._shutdown_requested = False
@@ -506,20 +507,21 @@ class IndexManager:
                 self._refine_processed += 1
 
     def _save_progress(self):
-        with self._progress_lock:
-            index_to_save = self._current_index_on_disk.copy()
-        
-        if not index_to_save:
-            return
+        with self._save_lock:
+            with self._progress_lock:
+                index_to_save = self._current_index_on_disk.copy()
             
-        self.index_dir.mkdir(parents=True, exist_ok=True)
-        temp_path = self.hash_index_path.with_suffix('.json.tmp')
-        try:
-            temp_path.write_text(json.dumps(index_to_save, indent=2), encoding="utf-8")
-            os.replace(temp_path, self.hash_index_path)
-        except Exception:
-            if temp_path.exists():
-                temp_path.unlink(missing_ok=True)
+            if not index_to_save:
+                return
+                
+            self.index_dir.mkdir(parents=True, exist_ok=True)
+            temp_path = self.hash_index_path.with_suffix('.json.tmp')
+            try:
+                temp_path.write_text(json.dumps(index_to_save, indent=2), encoding="utf-8")
+                os.replace(temp_path, self.hash_index_path)
+            except Exception:
+                if temp_path.exists():
+                    temp_path.unlink(missing_ok=True)
 
     def _run_work_phase(self, worker_func: Callable, file_list: List[str], is_refinement: bool):
         processed_since_last_save = 0

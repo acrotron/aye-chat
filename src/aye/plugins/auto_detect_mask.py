@@ -4,6 +4,7 @@ from collections import Counter
 from typing import List, Tuple, Dict, Any, Optional
 import concurrent.futures
 from rich import print as rprint
+import platform
 
 import pathspec  # pip install pathspec
 
@@ -40,6 +41,26 @@ class AutoDetectMaskPlugin(Plugin):
         the same ignore rules as file collection.
         """
         patterns = list(DEFAULT_IGNORE_SET)
+
+        # If running on Windows and the root is the home directory, add common
+        # problematic directory names to the ignore list to prevent hangs when
+        # scanning network-mapped folders (e.g., OneDrive).
+        try:
+            if platform.system() == "Windows" and root.resolve() == pathlib.Path.home().resolve():
+                windows_home_ignores = [
+                    "OneDrive",
+                    "Documents",
+                    "Pictures",
+                    "Videos",
+                    "Music",
+                    "Downloads",
+                    "AppData",
+                ]
+                patterns.extend(windows_home_ignores)
+        except Exception:
+            # Path.home() can fail; proceed without special ignores.
+            pass
+
         current_path = root.resolve()
 
         while True:

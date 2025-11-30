@@ -8,6 +8,7 @@ from unittest import TestCase
 from unittest.mock import patch, MagicMock, call
 import pytest
 import tempfile
+import re
 
 import aye.model.snapshot as snapshot
 
@@ -263,8 +264,15 @@ class TestSnapshot(TestCase):
     def test_restore_snapshot_file_not_in_snapshot(self):
         with patch('aye.model.snapshot._get_next_ordinal', return_value=1):
             snapshot.create_snapshot([self.test_files[0]])
-        with self.assertRaisesRegex(ValueError, r"File '.*test2\.py' not found in snapshot 001"):
-            snapshot.restore_snapshot(ordinal="001", file_name=str(self.test_files[1]))
+
+        # The error message contains the full path. We create a regex that is
+        # platform-agnostic by matching any path that ends with the expected filename.
+        # re.escape is used to handle special characters (like '.') in the filename.
+        file_to_check = self.test_files[1]
+        expected_regex = f"File '.*{re.escape(file_to_check.name)}' not found in snapshot 001"
+
+        with self.assertRaisesRegex(ValueError, expected_regex):
+            snapshot.restore_snapshot(ordinal="001", file_name=str(file_to_check))
 
     def test_restore_snapshot_invalid_ordinal_format(self):
         with self.assertRaisesRegex(ValueError, "Snapshot with Id abc not found"):
@@ -285,7 +293,9 @@ class TestSnapshot(TestCase):
             snapshot.create_snapshot([self.test_files[0]])
         with patch('aye.model.snapshot.file_backend.shutil.copy2', side_effect=PermissionError("denied")):
             snapshot.restore_snapshot(ordinal="001")
-        expected_message = f"Warning: failed to restore {self.test_files[0]}: denied"
+        # On Windows, tempfile can return a short (8.3) path, but the snapshot
+        # logic resolves it to a long path. We must compare against the resolved path.
+        expected_message = f"Warning: failed to restore {self.test_files[0].resolve()}: denied"
         mock_print.assert_any_call(expected_message)
 
     def test_restore_snapshot_latest_for_file(self):

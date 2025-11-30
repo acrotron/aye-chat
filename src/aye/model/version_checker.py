@@ -132,7 +132,7 @@ def check_version_and_print_warning() -> None:
     is_newer, latest, current, python_requires = is_newer_version_available()
 
     if is_newer and latest:
-        print(f"\n⚠️  Warning: A newer version of Aye Chat is available!")
+        print(f"\nℹ️ Notice: A newer version of Aye Chat is available!")
         print(f"   Current version: {current}")
         print(f"   Latest version:  {latest}")
 

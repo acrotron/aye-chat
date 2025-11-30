@@ -195,7 +195,7 @@ class TestVersionChecker(TestCase):
                 output = captured_output.getvalue()
 
                 # Verify warning message components
-                self.assertIn("Warning", output)
+                self.assertIn("Notice", output)
                 self.assertIn("newer version", output)
                 self.assertIn("0.26.0", output)
                 self.assertIn("0.27.0", output)
@@ -218,7 +218,7 @@ class TestVersionChecker(TestCase):
                 output = captured_output.getvalue()
 
                 # Verify warning message components
-                self.assertIn("Warning", output)
+                self.assertIn("Notice", output)
                 self.assertIn("0.26.0", output)
                 self.assertIn("0.27.0", output)
                 # Should not contain Python version info
