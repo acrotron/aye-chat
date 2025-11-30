@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import List, Tuple
 import pathspec
+import platform
 
 from aye.model.config import DEFAULT_IGNORE_SET
 
@@ -11,6 +12,26 @@ def _load_ignore_patterns(root_dir: Path) -> pathspec.PathSpec:
     directory and all parent directories up to the filesystem root.
     """
     patterns = list(DEFAULT_IGNORE_SET)
+
+    # If running on Windows and the root is the home directory, add common
+    # problematic directory names to the ignore list to prevent hangs when
+    # scanning network-mapped folders (e.g., OneDrive).
+    try:
+        if platform.system() == "Windows" and root_dir.resolve() == Path.home().resolve():
+            windows_home_ignores = [
+                "OneDrive",
+                "Documents",
+                "Pictures",
+                "Videos",
+                "Music",
+                "Downloads",
+                "AppData",
+            ]
+            patterns.extend(windows_home_ignores)
+    except Exception:
+        # Path.home() can fail; proceed without special ignores.
+        pass
+
     current_path = root_dir.resolve()
 
     while True:

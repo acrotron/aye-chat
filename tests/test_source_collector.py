@@ -14,7 +14,10 @@ from aye.model.source_collector import (
 class TestSourceCollector(TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmpdir.name)
+        # On Windows, tempfile.TemporaryDirectory() can return a short 8.3 path.
+        # Path.glob() later returns full paths. To make relative_to work,
+        # we need to resolve the root path to its canonical form.
+        self.root = Path(self.tmpdir.name).resolve()
         
         # Create a directory structure for testing
         (self.root / "file1.py").write_text("python content")

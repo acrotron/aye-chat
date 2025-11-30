@@ -98,7 +98,7 @@ class TestCommands(TestCase):
         path1, path2, is_stash = commands.get_diff_paths('file.py')
         
         self.assertEqual(path1, file_path)
-        self.assertEqual(path2, '/path/snap2')
+        self.assertEqual(Path(path2), Path('/path/snap2'))
         self.assertFalse(is_stash)
         mock_list_snapshots.assert_called_once_with(file_path)
 
@@ -114,7 +114,7 @@ class TestCommands(TestCase):
         path1, path2, is_stash = commands.get_diff_paths('file.py', snap_id1='001')
         
         self.assertEqual(path1, file_path)
-        self.assertEqual(path2, '/path/snap1')
+        self.assertEqual(Path(path2), Path('/path/snap1'))
         self.assertFalse(is_stash)
 
     @patch('aye.controller.commands.snapshot.get_backend')
@@ -127,8 +127,8 @@ class TestCommands(TestCase):
         
         path1, path2, is_stash = commands.get_diff_paths('file.py', snap_id1='002', snap_id2='001')
         
-        self.assertEqual(path1, Path('/path/snap2'))
-        self.assertEqual(path2, '/path/snap1')
+        self.assertEqual(Path(path1), Path('/path/snap2'))
+        self.assertEqual(Path(path2), Path('/path/snap1'))
         self.assertFalse(is_stash)
 
     @patch('pathlib.Path.exists', return_value=False)
