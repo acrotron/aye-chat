@@ -9,6 +9,13 @@ import time
 import threading
 
 import aye.model.index_manager as index_manager
+from aye.model.index_manager_utils import calculate_hash, set_low_priority
+from aye.model.index_manager_file_ops import (
+    FileStatusChecker, 
+    FileCategorizer, 
+    IndexPersistence,
+    get_deleted_files,
+)
 
 
 class ImmediateExecutor:
@@ -118,125 +125,148 @@ class TestIndexManager(unittest.TestCase):
         self.assertFalse(self.manager._is_initialized)
 
     def test_calculate_hash(self):
+        """Test the calculate_hash utility function."""
         content = 'test content'
         expected_hash = '6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72'
-        self.assertEqual(self.manager._calculate_hash(content), expected_hash)
+        self.assertEqual(calculate_hash(content), expected_hash)
 
     def test_check_file_status_unchanged(self):
+        """Test FileStatusChecker for unchanged file."""
+        checker = FileStatusChecker(self.root_path)
         file_path = self.root_path / 'file.py'
         file_path.write_text('content')
         stats = file_path.stat()
-        old_index = {'file.py': {'hash': self.manager._calculate_hash('content'), 'mtime': stats.st_mtime, 'size': stats.st_size, 'refined': True}}
-        status, meta = self.manager._check_file_status(file_path, old_index)
+        old_index = {'file.py': {'hash': calculate_hash('content'), 'mtime': stats.st_mtime, 'size': stats.st_size, 'refined': True}}
+        status, meta = checker.check_file_status(file_path, old_index)
         self.assertEqual(status, 'unchanged')
         self.assertEqual(meta, old_index['file.py'])
 
     def test_check_file_status_needs_refinement(self):
+        """Test FileStatusChecker for file needing refinement."""
+        checker = FileStatusChecker(self.root_path)
         file_path = self.root_path / 'file.py'
         file_path.write_text('content')
         stats = file_path.stat()
         # Same content, but marked as not refined
-        old_index = {'file.py': {'hash': self.manager._calculate_hash('content'), 'mtime': stats.st_mtime, 'size': stats.st_size, 'refined': False}}
-        status, meta = self.manager._check_file_status(file_path, old_index)
+        old_index = {'file.py': {'hash': calculate_hash('content'), 'mtime': stats.st_mtime, 'size': stats.st_size, 'refined': False}}
+        status, meta = checker.check_file_status(file_path, old_index)
         self.assertEqual(status, 'needs_refinement')
         self.assertEqual(meta, old_index['file.py'])
 
     def test_check_file_status_modified(self):
+        """Test FileStatusChecker for modified file."""
+        checker = FileStatusChecker(self.root_path)
         file_path = self.root_path / 'file.py'
         file_path.write_text('new content')
-        old_index = {'file.py': {'hash': self.manager._calculate_hash('old content'), 'mtime': 0, 'size': 0}}
-        status, meta = self.manager._check_file_status(file_path, old_index)
+        old_index = {'file.py': {'hash': calculate_hash('old content'), 'mtime': 0, 'size': 0}}
+        status, meta = checker.check_file_status(file_path, old_index)
         self.assertEqual(status, 'modified')
         self.assertIsNotNone(meta)
         self.assertEqual(meta['refined'], False)
 
     def test_check_file_status_new_file(self):
         """Test status check for a file not in the old index."""
+        checker = FileStatusChecker(self.root_path)
         file_path = self.root_path / 'new.py'
         file_path.write_text('new content')
         old_index = {}
-        status, meta = self.manager._check_file_status(file_path, old_index)
+        status, meta = checker.check_file_status(file_path, old_index)
         self.assertEqual(status, 'modified')
         self.assertIsNotNone(meta)
-        self.assertEqual(meta['hash'], self.manager._calculate_hash('new content'))
+        self.assertEqual(meta['hash'], calculate_hash('new content'))
 
     def test_check_file_status_size_changed(self):
         """Test when mtime is same but size is different (forces hash check)."""
+        checker = FileStatusChecker(self.root_path)
         file_path = self.root_path / 'file.py'
         file_path.write_text('content')
         stats = file_path.stat()
         # Old index has same mtime but different size
-        old_index = {'file.py': {'hash': self.manager._calculate_hash('content'), 'mtime': stats.st_mtime, 'size': stats.st_size + 1, 'refined': True}}
-        status, meta = self.manager._check_file_status(file_path, old_index)
+        old_index = {'file.py': {'hash': calculate_hash('content'), 'mtime': stats.st_mtime, 'size': stats.st_size + 1, 'refined': True}}
+        status, meta = checker.check_file_status(file_path, old_index)
         # Hash matches, so it's unchanged but with updated metadata
         self.assertEqual(status, 'unchanged')
         self.assertEqual(meta['size'], stats.st_size)
 
     def test_check_file_status_mtime_changed_hash_different(self):
         """Test when mtime changed and hash is different (forces re-indexing)."""
+        checker = FileStatusChecker(self.root_path)
         file_path = self.root_path / 'file.py'
         file_path.write_text('new content')
         stats = file_path.stat()
         # Old index has different mtime and different hash
-        old_index = {'file.py': {'hash': self.manager._calculate_hash('old content'), 'mtime': stats.st_mtime - 100, 'size': stats.st_size, 'refined': True}}
-        status, meta = self.manager._check_file_status(file_path, old_index)
+        old_index = {'file.py': {'hash': calculate_hash('old content'), 'mtime': stats.st_mtime - 100, 'size': stats.st_size, 'refined': True}}
+        status, meta = checker.check_file_status(file_path, old_index)
         self.assertEqual(status, 'modified')
-        self.assertEqual(meta['hash'], self.manager._calculate_hash('new content'))
+        self.assertEqual(meta['hash'], calculate_hash('new content'))
         self.assertFalse(meta['refined'])
 
     def test_check_file_status_old_format(self):
+        """Test FileStatusChecker with old format index (string hash)."""
+        checker = FileStatusChecker(self.root_path)
         file_path = self.root_path / 'file.py'
         file_path.write_text('new content')
         # Old format just stored the hash string
-        old_index = {'file.py': self.manager._calculate_hash('old content')}
-        status, meta = self.manager._check_file_status(file_path, old_index)
+        old_index = {'file.py': calculate_hash('old content')}
+        status, meta = checker.check_file_status(file_path, old_index)
         self.assertEqual(status, 'modified')
         self.assertIsNotNone(meta)
-        self.assertEqual(meta['hash'], self.manager._calculate_hash('new content'))
+        self.assertEqual(meta['hash'], calculate_hash('new content'))
 
     def test_check_file_status_old_format_string_hash(self):
         """Test old format with string hash when content matches."""
+        checker = FileStatusChecker(self.root_path)
         file_path = self.root_path / 'file.py'
         file_path.write_text('content')
         # Old format with matching hash
-        old_index = {'file.py': self.manager._calculate_hash('content')}
-        status, meta = self.manager._check_file_status(file_path, old_index)
+        old_index = {'file.py': calculate_hash('content')}
+        status, meta = checker.check_file_status(file_path, old_index)
         # Should be needs_refinement since old format didn't have refined flag
         self.assertEqual(status, 'needs_refinement')
 
     def test_check_file_status_error(self):
+        """Test FileStatusChecker for missing file."""
+        checker = FileStatusChecker(self.root_path)
         file_path = self.root_path / 'missing.py'
         old_index = {'missing.py': {'hash': 'hash'}}
-        status, meta = self.manager._check_file_status(file_path, old_index)
+        status, meta = checker.check_file_status(file_path, old_index)
         self.assertEqual(status, 'error')
         self.assertIsNone(meta)
 
     def test_check_file_status_read_error(self):
+        """Test FileStatusChecker for file read error."""
+        checker = FileStatusChecker(self.root_path)
         file_path = self.root_path / 'bad.py'
         file_path.write_text('ok')
         old_index = {'bad.py': {'hash': 'hash', 'mtime': 0, 'size': 0}}
         with patch.object(Path, 'read_text', side_effect=UnicodeDecodeError('utf-8', b'', 0, 1, '')):
-            status, meta = self.manager._check_file_status(file_path, old_index)
+            status, meta = checker.check_file_status(file_path, old_index)
         self.assertEqual(status, 'error')
         self.assertEqual(meta, old_index['bad.py'])
 
     def test_load_old_index_missing_file(self):
-        self.assertEqual(self.manager._load_old_index(), {})
+        """Test IndexPersistence.load_index with missing file."""
+        persistence = IndexPersistence(self.index_dir, self.hash_index_path)
+        self.assertEqual(persistence.load_index(), {})
 
     def test_load_old_index_invalid_json(self):
+        """Test IndexPersistence.load_index with invalid JSON."""
+        persistence = IndexPersistence(self.index_dir, self.hash_index_path)
         self.hash_index_path.parent.mkdir(parents=True, exist_ok=True)
         self.hash_index_path.write_text('not json')
-        self.assertEqual(self.manager._load_old_index(), {})
+        self.assertEqual(persistence.load_index(), {})
 
     def test_load_old_index_with_valid_data(self):
         """Test loading a valid index file."""
+        persistence = IndexPersistence(self.index_dir, self.hash_index_path)
         self.hash_index_path.parent.mkdir(parents=True, exist_ok=True)
         test_index = {'file.py': {'hash': 'abc123', 'mtime': 123.45, 'size': 100, 'refined': True}}
         self.hash_index_path.write_text(json.dumps(test_index))
-        loaded = self.manager._load_old_index()
+        loaded = persistence.load_index()
         self.assertEqual(loaded, test_index)
 
     def test_categorize_files(self):
+        """Test FileCategorizer.categorize_files."""
         file_a = self.root_path / 'a.py'
         file_b = self.root_path / 'b.py'
         file_a.write_text('a')
@@ -249,8 +279,9 @@ class TestIndexManager(unittest.TestCase):
         def fake_check(path, old):
             return statuses[path.name]
 
-        with patch.object(self.manager, '_check_file_status', side_effect=fake_check):
-            coarse, refine, new_index = self.manager._categorize_files([file_a, file_b], {})
+        categorizer = FileCategorizer(self.root_path, lambda: False)
+        with patch.object(categorizer.status_checker, 'check_file_status', side_effect=fake_check):
+            coarse, refine, new_index = categorizer.categorize_files([file_a, file_b], {})
 
         self.assertEqual(coarse, ['a.py'])
         self.assertEqual(refine, ['b.py'])
@@ -278,8 +309,9 @@ class TestIndexManager(unittest.TestCase):
         def fake_check(path, old):
             return statuses[path.name]
 
-        with patch.object(self.manager, '_check_file_status', side_effect=fake_check):
-            coarse, refine, new_index = self.manager._categorize_files([file_a, file_b, file_c, file_d], {})
+        categorizer = FileCategorizer(self.root_path, lambda: False)
+        with patch.object(categorizer.status_checker, 'check_file_status', side_effect=fake_check):
+            coarse, refine, new_index = categorizer.categorize_files([file_a, file_b, file_c, file_d], {})
 
         self.assertEqual(coarse, ['a.py'])
         self.assertEqual(refine, ['b.py'])
@@ -289,32 +321,27 @@ class TestIndexManager(unittest.TestCase):
         self.assertNotIn('d.py', new_index)  # Error files are not included
 
     def test_handle_deleted_files_no_deletion(self):
-        self.manager.collection = MagicMock()
+        """Test get_deleted_files with no deletions."""
         old_index = {'a.py': {}, 'b.py': {}}
-        deleted = self.manager._handle_deleted_files({'a.py', 'b.py'}, old_index)
+        deleted = get_deleted_files({'a.py', 'b.py'}, old_index)
         self.assertEqual(deleted, [])
 
     def test_handle_deleted_files_empty_old_index(self):
         """Test deleted file handling with empty old index."""
-        self.manager.collection = MagicMock()
         old_index = {}
-        deleted = self.manager._handle_deleted_files({'a.py'}, old_index)
+        deleted = get_deleted_files({'a.py'}, old_index)
         self.assertEqual(deleted, [])
 
-    @patch('aye.model.index_manager.vector_db.delete_from_index')
-    def test_handle_deleted_files_with_deletion(self, mock_delete):
-        self.manager.collection = MagicMock()
+    def test_handle_deleted_files_with_deletion(self):
+        """Test get_deleted_files with deletions."""
         old_index = {'keep.py': {}, 'remove.py': {}}
-        deleted = self.manager._handle_deleted_files({'keep.py'}, old_index)
+        deleted = get_deleted_files({'keep.py'}, old_index)
         self.assertEqual(set(deleted), {'remove.py'})
-        mock_delete.assert_called_once_with(self.manager.collection, ['remove.py'])
 
-    @patch('aye.model.index_manager.vector_db.delete_from_index')
-    def test_handle_deleted_files_collection_none(self, mock_delete):
-        """Test that delete is still called even if collection is set."""
-        self.manager.collection = MagicMock()
+    def test_handle_deleted_files_collection_none(self):
+        """Test get_deleted_files with multiple deletions."""
         old_index = {'keep.py': {}, 'remove.py': {}, 'another.py': {}}
-        deleted = self.manager._handle_deleted_files({'keep.py'}, old_index)
+        deleted = get_deleted_files({'keep.py'}, old_index)
         self.assertEqual(len(deleted), 2)
         self.assertIn('remove.py', deleted)
         self.assertIn('another.py', deleted)
@@ -420,7 +447,7 @@ class TestIndexManager(unittest.TestCase):
 
         # Old index with file1 unrefined, file2 missing, file3 deleted
         old_index = {
-            'file1.py': {'hash': self.manager._calculate_hash('content1'), 'mtime': file1.stat().st_mtime, 'size': file1.stat().st_size, 'refined': False},
+            'file1.py': {'hash': calculate_hash('content1'), 'mtime': file1.stat().st_mtime, 'size': file1.stat().st_size, 'refined': False},
             'file3.py': {'hash': 'somehash', 'mtime': 0, 'size': 0, 'refined': True}
         }
         self.hash_index_path.parent.mkdir()
@@ -444,7 +471,7 @@ class TestIndexManager(unittest.TestCase):
 
         # File is already up-to-date
         old_index = {
-            'file1.py': {'hash': self.manager._calculate_hash('content1'), 'mtime': file1.stat().st_mtime, 'size': file1.stat().st_size, 'refined': True}
+            'file1.py': {'hash': calculate_hash('content1'), 'mtime': file1.stat().st_mtime, 'size': file1.stat().st_size, 'refined': True}
         }
         self.hash_index_path.parent.mkdir()
         self.hash_index_path.write_text(json.dumps(old_index))
@@ -463,13 +490,16 @@ class TestIndexManager(unittest.TestCase):
 
     @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
     @patch('aye.model.vector_db.initialize_index')
+    @patch('aye.model.index_manager.get_project_files_with_limit')
     @patch('aye.model.index_manager.rprint')
-    def test_prepare_sync_collection_none(self, mock_rprint, mock_init, mock_get_status):
+    def test_prepare_sync_collection_none(self, mock_rprint, mock_get_files, mock_init, mock_get_status):
         """Test prepare_sync when collection is None after initialization."""
         mock_init.return_value = None
+        mock_get_files.return_value = ([], False)
         self.manager._lazy_initialize()
         self.manager.prepare_sync(verbose=True)
-        mock_rprint.assert_called_with("[yellow]Code lookup is disabled. Skipping project scan.[/]")
+        # With collection None, no work should be queued
+        self.assertFalse(self.manager.has_work())
 
     @patch('aye.model.index_manager.get_project_files')
     @patch('aye.model.index_manager.vector_db.delete_from_index')
@@ -488,7 +518,7 @@ class TestIndexManager(unittest.TestCase):
         mock_get_files.return_value = [file1, file2]
         
         old_index = {
-            'file1.py': {'hash': self.manager._calculate_hash('content1'), 'mtime': file1.stat().st_mtime, 'size': file1.stat().st_size, 'refined': False},
+            'file1.py': {'hash': calculate_hash('content1'), 'mtime': file1.stat().st_mtime, 'size': file1.stat().st_size, 'refined': False},
             'file3.py': {'hash': 'somehash', 'mtime': 0, 'size': 0, 'refined': True}
         }
         
@@ -513,7 +543,7 @@ class TestIndexManager(unittest.TestCase):
         mock_get_files.return_value = [file1, file2]
         
         old_index = {
-            'file1.py': {'hash': self.manager._calculate_hash('content1'), 'mtime': file1.stat().st_mtime, 'size': file1.stat().st_size, 'refined': False},
+            'file1.py': {'hash': calculate_hash('content1'), 'mtime': file1.stat().st_mtime, 'size': file1.stat().st_size, 'refined': False},
             'file3.py': {'hash': 'somehash', 'mtime': 0, 'size': 0, 'refined': True}
         }
         
@@ -544,7 +574,7 @@ class TestIndexManager(unittest.TestCase):
         
         # File is already up-to-date in index
         old_index = {
-            'file1.py': {'hash': self.manager._calculate_hash('content1'), 'mtime': file1.stat().st_mtime, 'size': file1.stat().st_size, 'refined': True}
+            'file1.py': {'hash': calculate_hash('content1'), 'mtime': file1.stat().st_mtime, 'size': file1.stat().st_size, 'refined': True}
         }
         
         self.manager._async_file_discovery(old_index)
@@ -859,11 +889,10 @@ class TestIndexManager(unittest.TestCase):
         )
 
     @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='DOWNLOADING')
-    @patch('aye.model.index_manager.rprint')
-    def test_query_not_ready(self, mock_rprint, mock_status):
+    def test_query_not_ready(self, mock_status):
+        """Test query when model is still downloading."""
         results = self.manager.query('query')
         self.assertEqual(results, [])
-        mock_rprint.assert_called_with("[yellow]Code lookup is still initializing (downloading models)... Search is temporarily disabled.[/]")
 
     @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='FAILED')
     def test_query_disabled(self, mock_status):
@@ -1062,29 +1091,33 @@ class TestIndexManager(unittest.TestCase):
     @unittest.skipUnless(hasattr(os, 'nice'), "os.nice is not available on Windows")
     @patch('os.nice', side_effect=OSError)
     def test_set_low_priority_os_error(self, mock_nice):
+        """Test set_low_priority handles OSError gracefully."""
         try:
-            index_manager._set_low_priority()
+            set_low_priority()
         except OSError:
-            self.fail("_set_low_priority() raised an unexpected OSError")
+            self.fail("set_low_priority() raised an unexpected OSError")
         mock_nice.assert_called_once_with(5)
 
     @unittest.skipIf(hasattr(os, 'nice'), "Test only for Windows (no os.nice)")
     def test_set_low_priority_windows(self):
-        """Test that _set_low_priority handles Windows gracefully."""
+        """Test that set_low_priority handles Windows gracefully."""
         try:
-            index_manager._set_low_priority()
+            set_low_priority()
         except Exception as e:
-            self.fail(f"_set_low_priority() should not raise on Windows: {e}")
+            self.fail(f"set_low_priority() should not raise on Windows: {e}")
 
-    @patch('os.replace', side_effect=OSError("Permission denied"))
+    @patch('aye.model.index_manager_file_ops.os.replace', side_effect=OSError("Permission denied"))
     def test_save_progress_error(self, mock_replace):
-        self.manager.index_dir.mkdir()
+        """Test IndexPersistence handles save errors gracefully."""
+        self.index_dir.mkdir()
         temp_path = self.hash_index_path.with_suffix('.json.tmp')
-        self.manager._current_index_on_disk = {'file.py': 'data'}
+        persistence = IndexPersistence(self.index_dir, self.hash_index_path)
         
-        self.manager._save_progress()
+        result = persistence.save_index({'file.py': 'data'})
 
-        # Temp file should be created then cleaned up after error
+        # Should return False on failure
+        self.assertFalse(result)
+        # Temp file should be cleaned up after error
         self.assertFalse(temp_path.exists())
         # The original file should not be created/modified
         self.assertFalse(self.hash_index_path.exists())

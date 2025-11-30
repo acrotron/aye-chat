@@ -92,7 +92,10 @@ def _get_rag_context_files(
             seen_files.add(chunk.file_path)
 
     # --- Context Packing Logic ---
+    # Track files with their sizes for potential trimming
+    files_with_sizes: List[Tuple[str, str, int]] = []  # (path, content, size)
     current_size = 0
+    
     for file_path_str in unique_files_ranked:
         if current_size > CONTEXT_TARGET_SIZE:
             break
@@ -105,20 +108,71 @@ def _get_rag_context_files(
             content = full_path.read_text(encoding="utf-8")
             file_size = len(content.encode('utf-8'))
             
+            # Skip individual files that are too large
             if current_size + file_size > CONTEXT_HARD_LIMIT:
                 if verbose:
                     rprint(f"[yellow]Skipping large file {file_path_str} ({file_size / 1024:.1f}KB) to stay within payload limits.[/]")
                 continue
             
-            source_files[file_path_str] = content
+            files_with_sizes.append((file_path_str, content, file_size))
             current_size += file_size
             
         except Exception as e:
             if verbose:
                 rprint(f"[red]Could not read file {file_path_str}: {e}[/red]")
             continue
+    
+    # Final safety check: ensure total size is under CONTEXT_HARD_LIMIT
+    # This handles edge cases where we accumulated files close to TARGET but over HARD_LIMIT
+    while current_size > CONTEXT_HARD_LIMIT and files_with_sizes:
+        # Remove the last (least relevant) file
+        removed_path, _, removed_size = files_with_sizes.pop()
+        current_size -= removed_size
+        if verbose:
+            rprint(f"[yellow]Trimmed {removed_path} ({removed_size / 1024:.1f}KB) to stay within hard limit.[/]")
+    
+    # Build the final source_files dict
+    for file_path_str, content, _ in files_with_sizes:
+        source_files[file_path_str] = content
             
     return source_files
+
+
+def _is_large_project(conf: Any) -> bool:
+    """
+    Check if this is a large project that should use RAG instead of full file collection.
+    
+    Uses the index manager's state to determine this without doing a full file walk.
+    A project is considered "large" if:
+    - Index manager exists and is initialized
+    - Index manager has indexed files (collection exists with documents)
+    - OR async discovery was triggered (indicating 1000+ files)
+    """
+    if not hasattr(conf, 'index_manager') or not conf.index_manager:
+        return False
+    
+    index_manager = conf.index_manager
+    
+    # If discovery is in progress or was triggered, it's a large project
+    if index_manager._is_discovering:
+        return True
+    
+    # If we have a collection with documents, check if it's substantial
+    if index_manager.collection:
+        try:
+            count = index_manager.collection.count()
+            # If we have more than ~50 indexed chunks, treat as large project
+            # (small projects typically have fewer chunks)
+            if count > 50:
+                return True
+        except Exception:
+            pass
+    
+    # Check if we have work queued (indicates large project discovery happened)
+    if index_manager._coarse_total > 100 or index_manager._refine_total > 100:
+        return True
+    
+    return False
 
 
 def _determine_source_files(
@@ -137,6 +191,15 @@ def _determine_source_files(
         all_files = collect_sources(root_dir=str(conf.root), file_mask=conf.file_mask)
         return all_files, True, stripped_prompt[4:].strip()
 
+    # For large projects, skip the expensive collect_sources() call and go straight to RAG
+    # This avoids blocking the main thread with a full file walk
+    if _is_large_project(conf):
+        if verbose:
+            rprint("[cyan]Large project detected, using code lookup for context...[/]")
+        rag_files = _get_rag_context_files(prompt, conf, verbose)
+        return rag_files, False, prompt
+
+    # For small/unknown projects, do the traditional size check
     all_project_files = collect_sources(root_dir=str(conf.root), file_mask=conf.file_mask)
     total_size = sum(len(content.encode('utf-8')) for content in all_project_files.values())
 
