@@ -66,6 +66,20 @@ def _set_low_priority():
             # It's not critical, so we can ignore it.
             pass
 
+def _set_discovery_thread_low_priority():
+    """
+    Set the priority of the discovery/categorization thread to low to avoid
+    consuming 100% CPU. This is for POSIX-compliant systems.
+    """
+    if hasattr(os, 'nice'):
+        try:
+            # A positive value increases the "niceness" and thus lowers the priority.
+            os.nice(5)
+        except OSError:
+            # This can happen if the user doesn't have permission to change priority.
+            # It's not critical, so we can ignore it.
+            pass
+
 # Determine a reasonable number of workers for background indexing
 # to avoid saturating the CPU and making the UI unresponsive.
 try:
@@ -327,6 +341,9 @@ class IndexManager:
         Resume support: Files already present in old_index with matching hashes will be
         skipped, allowing indexing to resume from where it left off.
         """
+        # Set low priority for this discovery thread to avoid 100% CPU usage
+        _set_discovery_thread_low_priority()
+        
         try:
             with self._progress_lock:
                 self._is_discovering = True
