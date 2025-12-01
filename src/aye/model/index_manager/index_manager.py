@@ -79,6 +79,10 @@ class IndexManager:
     # =========================================================================
     
     @property
+    def is_discovering(self) -> bool:
+        return self._state.is_discovering
+    
+    @property
     def root_path(self) -> Path:
         return self.config.root_path
     
