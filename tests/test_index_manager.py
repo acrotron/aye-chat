@@ -8,9 +8,9 @@ import sys
 import time
 import threading
 
-import aye.model.index_manager as index_manager
-from aye.model.index_manager_utils import calculate_hash, set_low_priority
-from aye.model.index_manager_file_ops import (
+import aye.model.index_manager.index_manager as index_manager
+from aye.model.index_manager.index_manager_utils import calculate_hash, set_low_priority
+from aye.model.index_manager.index_manager_file_ops import (
     FileStatusChecker, 
     FileCategorizer, 
     IndexPersistence,
@@ -55,7 +55,7 @@ class TestIndexManager(unittest.TestCase):
         self.assertFalse(self.manager._init_coordinator.is_initialized)
         self.assertIsNone(self.manager.collection)
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
     @patch('aye.model.vector_db.initialize_index')
     def test_lazy_initialize_success(self, mock_init_index, mock_get_status):
         mock_collection = MagicMock()
@@ -65,7 +65,7 @@ class TestIndexManager(unittest.TestCase):
         self.assertEqual(self.manager.collection, mock_collection)
         self.assertTrue(self.manager._init_coordinator.is_initialized)
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
     @patch('aye.model.vector_db.initialize_index')
     def test_lazy_initialize_already_initialized(self, mock_init_index, mock_get_status):
         """Test that lazy_initialize is idempotent."""
@@ -81,7 +81,7 @@ class TestIndexManager(unittest.TestCase):
         self.assertTrue(result2)
         mock_init_index.assert_called_once()  # Only called once
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
     @patch('aye.model.vector_db.initialize_index')
     def test_lazy_initialize_concurrent_calls(self, mock_init_index, mock_get_status):
         """Test thread safety of lazy initialization."""
@@ -103,9 +103,9 @@ class TestIndexManager(unittest.TestCase):
         # But initialize_index should only be called once
         mock_init_index.assert_called_once()
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
     @patch('aye.model.vector_db.initialize_index', side_effect=Exception("DB error"))
-    @patch('aye.model.index_manager_state.rprint')
+    @patch('aye.model.index_manager.index_manager_state.rprint')
     def test_lazy_initialize_db_error(self, mock_rprint, mock_init_index, mock_get_status):
         result = self.manager._init_coordinator.initialize()
         self.assertFalse(result)
@@ -113,14 +113,14 @@ class TestIndexManager(unittest.TestCase):
         self.assertTrue(self.manager._init_coordinator.is_initialized) # Marked as initialized to prevent retries
         mock_rprint.assert_called_with("[red]Failed to initialize local code search: DB error[/red]")
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='FAILED')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='FAILED')
     def test_lazy_initialize_failed(self, mock_get_status):
         result = self.manager._init_coordinator.initialize()
         self.assertFalse(result)
         self.assertIsNone(self.manager.collection)
         self.assertTrue(self.manager._init_coordinator.is_initialized)
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='DOWNLOADING')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='DOWNLOADING')
     def test_lazy_initialize_not_ready(self, mock_get_status):
         result = self.manager._init_coordinator.initialize()
         self.assertFalse(result)
@@ -348,8 +348,8 @@ class TestIndexManager(unittest.TestCase):
         self.assertIn('remove.py', deleted)
         self.assertIn('another.py', deleted)
 
-    @patch('aye.model.index_manager.get_project_files_with_limit')
-    @patch('aye.model.index_manager.Confirm.ask', return_value=False)
+    @patch('aye.model.index_manager.index_manager.get_project_files_with_limit')
+    @patch('aye.model.index_manager.index_manager.Confirm.ask', return_value=False)
     def test_prepare_sync_limit_hit_cancel(self, mock_confirm, mock_get_files):
         self.manager._init_coordinator._is_initialized = True
         self.manager._init_coordinator.collection = MagicMock()
@@ -364,8 +364,8 @@ class TestIndexManager(unittest.TestCase):
         # Should not have any work queued
         self.assertFalse(self.manager.has_work())
 
-    @patch('aye.model.index_manager.get_project_files_with_limit')
-    @patch('aye.model.index_manager.Confirm.ask', return_value=False)
+    @patch('aye.model.index_manager.index_manager.get_project_files_with_limit')
+    @patch('aye.model.index_manager.index_manager.Confirm.ask', return_value=False)
     def test_prepare_sync_limit_hit_silent(self, mock_confirm, mock_get_files):
         """Test limit hit without verbose mode."""
         self.manager._init_coordinator._is_initialized = True
@@ -379,9 +379,9 @@ class TestIndexManager(unittest.TestCase):
         mock_confirm.assert_called_once()
         self.assertFalse(self.manager.has_work())
 
-    @patch('aye.model.index_manager.get_project_files_with_limit')
-    @patch('aye.model.index_manager.Confirm.ask', return_value=True)
-    @patch('aye.model.index_manager.threading.Thread')
+    @patch('aye.model.index_manager.index_manager.get_project_files_with_limit')
+    @patch('aye.model.index_manager.index_manager.Confirm.ask', return_value=True)
+    @patch('aye.model.index_manager.index_manager.threading.Thread')
     def test_prepare_sync_limit_hit_async(self, mock_thread, mock_confirm, mock_get_files):
         self.manager._init_coordinator._is_initialized = True
         self.manager._init_coordinator.collection = MagicMock()
@@ -397,9 +397,9 @@ class TestIndexManager(unittest.TestCase):
         mock_thread.assert_called_once()
         self.assertTrue(mock_thread.return_value.start.called)
 
-    @patch('aye.model.index_manager.get_project_files_with_limit')
-    @patch('aye.model.index_manager.Confirm.ask', return_value=True)
-    @patch('aye.model.index_manager.threading.Thread')
+    @patch('aye.model.index_manager.index_manager.get_project_files_with_limit')
+    @patch('aye.model.index_manager.index_manager.Confirm.ask', return_value=True)
+    @patch('aye.model.index_manager.index_manager.threading.Thread')
     def test_prepare_sync_limit_hit_async_verbose_false(self, mock_thread, mock_confirm, mock_get_files):
         """Test async discovery without verbose mode."""
         self.manager._init_coordinator._is_initialized = True
@@ -412,9 +412,9 @@ class TestIndexManager(unittest.TestCase):
         
         mock_thread.assert_called_once()
 
-    @patch('aye.model.index_manager.get_project_files_with_limit')
-    @patch('aye.model.index_manager.vector_db.delete_from_index')
-    @patch('aye.model.index_manager_state.rprint')
+    @patch('aye.model.index_manager.index_manager.get_project_files_with_limit')
+    @patch('aye.model.index_manager.index_manager.vector_db.delete_from_index')
+    @patch('aye.model.index_manager.index_manager_state.rprint')
     def test_prepare_sync_verbose_output(self, mock_rprint, mock_delete, mock_get_files):
         """Test debug output during prepare_sync."""
         self.manager._init_coordinator._is_initialized = True
@@ -434,8 +434,8 @@ class TestIndexManager(unittest.TestCase):
         # Should have printed debug output
         #self.assertTrue(mock_rprint.called)
 
-    @patch('aye.model.index_manager.get_project_files_with_limit')
-    @patch('aye.model.index_manager.vector_db.delete_from_index')
+    @patch('aye.model.index_manager.index_manager.get_project_files_with_limit')
+    @patch('aye.model.index_manager.index_manager.vector_db.delete_from_index')
     def test_prepare_sync_under_limit(self, mock_delete, mock_get_files):
         # Setup
         self.manager._init_coordinator._is_initialized = True
@@ -461,7 +461,7 @@ class TestIndexManager(unittest.TestCase):
         self.assertEqual(self.manager._state.files_to_refine, ['file1.py'])
         mock_delete.assert_called_once_with(self.manager.collection, ['file3.py'])
 
-    @patch('aye.model.index_manager.get_project_files_with_limit')
+    @patch('aye.model.index_manager.index_manager.get_project_files_with_limit')
     def test_prepare_sync_under_limit_no_changes(self, mock_get_files):
         """Test prepare_sync when all files are up-to-date."""
         self.manager._init_coordinator._is_initialized = True
@@ -482,18 +482,18 @@ class TestIndexManager(unittest.TestCase):
 
         self.assertFalse(self.manager.has_work())
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='DOWNLOADING')
-    @patch('aye.model.index_manager.rprint')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='DOWNLOADING')
+    @patch('aye.model.index_manager.index_manager.rprint')
     def test_prepare_sync_not_initialized(self, mock_rprint, mock_get_status):
         """Test prepare_sync when not initialized and model is downloading."""
         self.manager.prepare_sync(verbose=True)
         mock_rprint.assert_called_with("[yellow]Code lookup is initializing (downloading models)... Project scan will begin shortly.[/]")
         self.assertFalse(self.manager.has_work())
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
     @patch('aye.model.vector_db.initialize_index')
-    @patch('aye.model.index_manager.get_project_files_with_limit')
-    @patch('aye.model.index_manager.rprint')
+    @patch('aye.model.index_manager.index_manager.get_project_files_with_limit')
+    @patch('aye.model.index_manager.index_manager.rprint')
     def test_prepare_sync_collection_none(self, mock_rprint, mock_get_files, mock_init, mock_get_status):
         """Test prepare_sync when collection is None after initialization."""
         mock_init.return_value = None
@@ -503,9 +503,9 @@ class TestIndexManager(unittest.TestCase):
         # With collection None, no work should be queued
         self.assertFalse(self.manager.has_work())
 
-    @patch('aye.model.index_manager.get_project_files')
-    @patch('aye.model.index_manager.vector_db.delete_from_index')
-    @patch('aye.model.index_manager.threading.Thread')
+    @patch('aye.model.index_manager.index_manager.get_project_files')
+    @patch('aye.model.index_manager.index_manager.vector_db.delete_from_index')
+    @patch('aye.model.index_manager.index_manager.threading.Thread')
     def test_async_file_discovery_with_verbose(self, mock_thread, mock_delete, mock_get_files):
         """Test async discovery with debug output."""
         # Create a manager with debug=True
@@ -524,7 +524,7 @@ class TestIndexManager(unittest.TestCase):
             'file3.py': {'hash': 'somehash', 'mtime': 0, 'size': 0, 'refined': True}
         }
         
-        with patch('aye.model.index_manager_state.rprint') as mock_rprint:
+        with patch('aye.model.index_manager.index_manager_state.rprint') as mock_rprint:
             self.manager._async_file_discovery(old_index)
             # Check debug output was called
             self.assertTrue(mock_rprint.called)
@@ -532,9 +532,9 @@ class TestIndexManager(unittest.TestCase):
         # Verify indexing thread was started
         mock_thread.assert_called_once()
 
-    @patch('aye.model.index_manager.get_project_files')
-    @patch('aye.model.index_manager.vector_db.delete_from_index')
-    @patch('aye.model.index_manager.threading.Thread')
+    @patch('aye.model.index_manager.index_manager.get_project_files')
+    @patch('aye.model.index_manager.index_manager.vector_db.delete_from_index')
+    @patch('aye.model.index_manager.index_manager.threading.Thread')
     def test_async_file_discovery(self, mock_thread, mock_delete, mock_get_files):
         self.manager._init_coordinator._is_initialized = True
         self.manager._init_coordinator.collection = MagicMock()
@@ -564,8 +564,8 @@ class TestIndexManager(unittest.TestCase):
         mock_thread.assert_called_once()
         self.assertTrue(mock_thread.return_value.start.called)
 
-    @patch('aye.model.index_manager.get_project_files')
-    @patch('aye.model.index_manager.threading.Thread')
+    @patch('aye.model.index_manager.index_manager.get_project_files')
+    @patch('aye.model.index_manager.index_manager.threading.Thread')
     def test_async_file_discovery_no_work(self, mock_thread, mock_get_files):
         """Test async discovery when there's no work to do (no indexing thread should start)."""
         self.manager._init_coordinator._is_initialized = True
@@ -587,7 +587,7 @@ class TestIndexManager(unittest.TestCase):
         # No indexing thread should be started
         mock_thread.assert_not_called()
 
-    @patch('aye.model.index_manager.get_project_files', side_effect=Exception("Discovery error"))
+    @patch('aye.model.index_manager.index_manager.get_project_files', side_effect=Exception("Discovery error"))
     def test_async_file_discovery_error_handling(self, mock_get_files):
         """Test that async discovery handles errors gracefully."""
         self.manager._init_coordinator._is_initialized = True
@@ -708,7 +708,7 @@ class TestIndexManager(unittest.TestCase):
             result = executor._process_one_file_coarse(target)
         self.assertIsNone(result)
 
-    @patch('aye.model.index_manager.vector_db.update_index_coarse')
+    @patch('aye.model.index_manager.index_manager.vector_db.update_index_coarse')
     def test_process_one_file_coarse_success(self, mock_update):
         target = 'ok.py'
         (self.root_path / target).write_text('content')
@@ -738,7 +738,7 @@ class TestIndexManager(unittest.TestCase):
             result = executor._process_one_file_refine(target)
         self.assertIsNone(result)
 
-    @patch('aye.model.index_manager.vector_db.refine_file_in_index')
+    @patch('aye.model.index_manager.index_manager.vector_db.refine_file_in_index')
     def test_process_one_file_refine_success(self, mock_refine):
         target = 'fine.py'
         (self.root_path / target).write_text('content')
@@ -753,8 +753,8 @@ class TestIndexManager(unittest.TestCase):
         self.manager._state.target_index = {'file.py': {'hash': 'h', 'refined': False}}
         self.manager._state.current_index_on_disk = {}
         executor = self.manager._create_phase_executor()
-        with patch('aye.model.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
-             patch('aye.model.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
+        with patch('aye.model.index_manager.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
+             patch('aye.model.index_manager.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
             executor._run_phase(lambda p: p, ['file.py'], is_refinement=False, generation=0)
         self.assertIn('file.py', self.manager._state.current_index_on_disk)
         self.assertEqual(self.manager._state.current_index_on_disk['file.py']['hash'], 'h')
@@ -762,8 +762,8 @@ class TestIndexManager(unittest.TestCase):
     def test_run_work_phase_marks_refined(self):
         self.manager._state.current_index_on_disk = {'file.py': {'hash': 'h', 'refined': False}}
         executor = self.manager._create_phase_executor()
-        with patch('aye.model.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
-             patch('aye.model.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
+        with patch('aye.model.index_manager.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
+             patch('aye.model.index_manager.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
             executor._run_phase(lambda p: p, ['file.py'], is_refinement=True, generation=0)
         self.assertTrue(self.manager._state.current_index_on_disk['file.py']['refined'])
 
@@ -771,8 +771,8 @@ class TestIndexManager(unittest.TestCase):
         """Test work phase with empty file list."""
         self.manager._state.current_index_on_disk = {}
         executor = self.manager._create_phase_executor()
-        with patch('aye.model.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
-             patch('aye.model.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
+        with patch('aye.model.index_manager.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
+             patch('aye.model.index_manager.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
             executor._run_phase(lambda p: p, [], is_refinement=False, generation=0)
         # Should not crash
         self.assertEqual(self.manager._state.current_index_on_disk, {})
@@ -788,8 +788,8 @@ class TestIndexManager(unittest.TestCase):
             return path
         
         executor = self.manager._create_phase_executor()
-        with patch('aye.model.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
-             patch('aye.model.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
+        with patch('aye.model.index_manager.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
+             patch('aye.model.index_manager.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
             executor._run_phase(failing_worker, ['file1.py', 'file2.py'], is_refinement=False, generation=0)
         
         # Only successful file should be in index
@@ -805,8 +805,8 @@ class TestIndexManager(unittest.TestCase):
             raise Exception('Worker failed')
         
         executor = self.manager._create_phase_executor()
-        with patch('aye.model.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
-             patch('aye.model.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
+        with patch('aye.model.index_manager.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
+             patch('aye.model.index_manager.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
             executor._run_phase(failing_worker, ['file1.py', 'file2.py'], is_refinement=False, generation=0)
         
         # No files should be in index
@@ -826,8 +826,8 @@ class TestIndexManager(unittest.TestCase):
         # Replace save callback with our counter
         executor.save_callback = counting_save
         
-        with patch('aye.model.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
-             patch('aye.model.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
+        with patch('aye.model.index_manager.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor), \
+             patch('aye.model.index_manager.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures):
             executor._run_phase(lambda p: p, [f'file{i}.py' for i in range(5)], is_refinement=False, generation=0)
         
         # Should have saved at least twice (after every 2 files + final save)
@@ -871,7 +871,7 @@ class TestIndexManager(unittest.TestCase):
         # Should not crash and file should exist
         self.assertTrue(self.hash_index_path.exists())
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
     @patch('aye.model.vector_db.initialize_index')
     @patch('aye.model.vector_db.query_index')
     def test_query_success(self, mock_query_index, mock_init, mock_status):
@@ -881,7 +881,7 @@ class TestIndexManager(unittest.TestCase):
         self.assertEqual(len(results), 1)
         mock_query_index.assert_called_once()
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
     @patch('aye.model.vector_db.initialize_index')
     @patch('aye.model.vector_db.query_index')
     def test_query_with_parameters(self, mock_query_index, mock_init, mock_status):
@@ -899,19 +899,19 @@ class TestIndexManager(unittest.TestCase):
             min_relevance=0.5
         )
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='DOWNLOADING')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='DOWNLOADING')
     def test_query_not_ready(self, mock_status):
         """Test query when model is still downloading."""
         results = self.manager.query('query')
         self.assertEqual(results, [])
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='FAILED')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='FAILED')
     def test_query_disabled(self, mock_status):
         self.manager._init_coordinator.initialize() # This will set collection to None
         results = self.manager.query('query')
         self.assertEqual(results, [])
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
     @patch('aye.model.vector_db.initialize_index')
     def test_query_collection_none_after_init(self, mock_init, mock_status):
         """Test query when collection becomes None after init."""
@@ -920,11 +920,11 @@ class TestIndexManager(unittest.TestCase):
         results = self.manager.query('query')
         self.assertEqual(results, [])
 
-    @patch('aye.model.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor)
-    @patch('aye.model.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures)
-    @patch('aye.model.index_manager_executor.vector_db')
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
-    @patch('aye.model.index_manager.time.sleep')
+    @patch('aye.model.index_manager.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor)
+    @patch('aye.model.index_manager.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures)
+    @patch('aye.model.index_manager.index_manager_executor.vector_db')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.time.sleep')
     def test_run_sync_in_background(self, mock_sleep, mock_status, mock_vector_db, *_):
         # Setup
         self.manager._init_coordinator.collection = MagicMock()
@@ -972,11 +972,11 @@ class TestIndexManager(unittest.TestCase):
         self.assertFalse(self.manager.has_work())
         self.assertFalse(self.manager.is_indexing())
 
-    @patch('aye.model.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor)
-    @patch('aye.model.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures)
-    @patch('aye.model.index_manager_executor.vector_db')
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
-    @patch('aye.model.index_manager.time.sleep')
+    @patch('aye.model.index_manager.index_manager_executor.DaemonThreadPoolExecutor', ImmediateExecutor)
+    @patch('aye.model.index_manager.index_manager_executor.concurrent.futures.as_completed', lambda futures: futures)
+    @patch('aye.model.index_manager.index_manager_executor.vector_db')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.time.sleep')
     def test_run_sync_in_background_only_refine(self, mock_sleep, mock_status, mock_vector_db, *_):
         """Test run_sync_in_background when only refinement is needed."""
         self.manager._init_coordinator.collection = MagicMock()
@@ -997,7 +997,7 @@ class TestIndexManager(unittest.TestCase):
         # Refine phase should be called
         mock_vector_db.refine_file_in_index.assert_called_once()
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
     def test_run_sync_in_background_empty_work(self, mock_status):
         """Test early exit when there's no work to do."""
         self.manager._init_coordinator._is_initialized = True
@@ -1012,8 +1012,8 @@ class TestIndexManager(unittest.TestCase):
         self.assertFalse(self.manager._state.is_indexing)
         self.assertFalse(self.manager._state.is_refining)
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
-    @patch('aye.model.index_manager.time.sleep')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.time.sleep')
     def test_run_sync_in_background_waits_for_discovery(self, mock_sleep, mock_status):
         """Test that run_sync_in_background waits for async discovery to complete."""
         self.manager._init_coordinator._is_initialized = True
@@ -1034,8 +1034,8 @@ class TestIndexManager(unittest.TestCase):
         # Should have called sleep at least once while waiting
         self.assertGreaterEqual(mock_sleep.call_count, 1)
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status')
-    @patch('aye.model.index_manager.time.sleep')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status')
+    @patch('aye.model.index_manager.index_manager.time.sleep')
     def test_run_sync_in_background_initialization_timeout(self, mock_sleep, mock_status):
         """Test timeout waiting for initialization."""
         # Simulate model staying in DOWNLOADING state
@@ -1054,8 +1054,8 @@ class TestIndexManager(unittest.TestCase):
         # Should have tried multiple times
         self.assertGreaterEqual(call_count[0], 5)
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
-    @patch('aye.model.index_manager.time.sleep')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.time.sleep')
     def test_run_sync_in_background_discovery_timeout(self, mock_sleep, mock_status):
         """Test timeout waiting for discovery."""
         self.manager._init_coordinator._is_initialized = True
@@ -1075,7 +1075,7 @@ class TestIndexManager(unittest.TestCase):
         # Should have waited multiple times
         self.assertGreaterEqual(mock_sleep.call_count, 1)
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='READY')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='READY')
     def test_run_sync_in_background_no_collection(self, mock_status):
         """Test early exit when collection is None."""
         self.manager._init_coordinator._is_initialized = True
@@ -1087,8 +1087,8 @@ class TestIndexManager(unittest.TestCase):
         # No state should be changed
         self.assertFalse(self.manager.is_indexing())
 
-    @patch('aye.model.index_manager.onnx_manager.get_model_status', return_value='FAILED')
-    @patch('aye.model.index_manager.time.sleep')
+    @patch('aye.model.index_manager.index_manager.onnx_manager.get_model_status', return_value='FAILED')
+    @patch('aye.model.index_manager.index_manager.time.sleep')
     def test_run_sync_in_background_model_failed(self, mock_sleep, mock_status):
         """Test early exit when model download fails."""
         self.manager._init_coordinator._is_initialized = False
@@ -1117,7 +1117,7 @@ class TestIndexManager(unittest.TestCase):
         except Exception as e:
             self.fail(f"set_low_priority() should not raise on Windows: {e}")
 
-    @patch('aye.model.index_manager_file_ops.os.replace', side_effect=OSError("Permission denied"))
+    @patch('aye.model.index_manager.index_manager_file_ops.os.replace', side_effect=OSError("Permission denied"))
     def test_save_progress_error(self, mock_replace):
         """Test IndexPersistence handles save errors gracefully."""
         self.index_dir.mkdir()
