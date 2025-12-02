@@ -8,7 +8,7 @@ from rich import print as rprint
 from aye.model import auth, config, snapshot, download_plugins, vector_db, onnx_manager
 from aye.controller.plugin_manager import PluginManager
 from aye.controller.util import find_project_root
-from aye.model.index_manager import IndexManager
+from aye.model.index_manager.index_manager import IndexManager
 from aye.model.auth import get_user_config
 from aye.model.config import DEFAULT_MODEL_ID
 from aye.model.snapshot.git_backend import GitStashBackend
