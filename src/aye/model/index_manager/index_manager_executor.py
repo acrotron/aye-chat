@@ -6,6 +6,7 @@ This module contains:
 """
 
 import os
+import time
 import concurrent.futures
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable, TYPE_CHECKING
@@ -85,43 +86,60 @@ class PhaseExecutor:
         is_refinement: bool,
         generation: int
     ) -> None:
-        """Run a work phase with parallel processing."""
+        """Run a work phase with parallel processing in batches."""
         files_to_process = self._filter_files_for_processing(file_list, is_refinement)
         
         if not files_to_process:
             return
         
+        BATCH_SIZE = 5  # Configurable batch size for throttling
         processed_since_last_save = 0
         
         with DaemonThreadPoolExecutor(
             max_workers=self.config.max_workers,
             initializer=set_low_priority
         ) as executor:
-            future_to_path = {
-                executor.submit(worker_func, path): path
-                for path in files_to_process
-            }
-            
-            for future in concurrent.futures.as_completed(future_to_path):
+            i = 0
+            while i < len(files_to_process):
                 if self._should_abort(generation):
-                    self._cancel_remaining_futures(future_to_path)
                     break
                 
-                path = future_to_path[future]
-                try:
-                    if future.result():
-                        self._update_index_after_processing(path, is_refinement)
-                        processed_since_last_save += 1
-                except Exception as e:
-                    self.error_handler.handle_silent(e, f"processing {path}")
+                batch_end = min(i + BATCH_SIZE, len(files_to_process))
+                batch = files_to_process[i:batch_end]
                 
-                if processed_since_last_save >= self.config.save_interval:
-                    self.save_callback()
-                    processed_since_last_save = 0
+                future_to_path = {
+                    executor.submit(worker_func, path): path
+                    for path in batch
+                }
+                
+                for future in concurrent.futures.as_completed(future_to_path):
+                    if self._should_abort(generation):
+                        self._cancel_remaining_futures(future_to_path)
+                        break
+                    
+                    path = future_to_path[future]
+                    try:
+                        if future.result():
+                            self._update_index_after_processing(path, is_refinement)
+                            processed_since_last_save += 1
+                    except Exception as e:
+                        self.error_handler.handle_silent(e, f"processing {path}")
+                    
+                    if processed_since_last_save >= self.config.save_interval:
+                        self.save_callback()
+                        processed_since_last_save = 0
+                
+                i = batch_end
+
+                # Batch processing together with this sleep
+                # is what holding together this entire application.
+                # These 2 allow indexing in the background
+                # with releasing CPU cycles for typing
+                time.sleep(0.1)
         
         if processed_since_last_save > 0:
             self.save_callback()
-    
+   
     def _should_abort(self, generation: int) -> bool:
         """Check if the phase should be aborted."""
         if self.should_stop():
@@ -192,8 +210,15 @@ class PhaseExecutor:
         """Process a single file for coarse indexing."""
         if self.should_stop():
             return None
+        full_path = self.config.root_path / rel_path_str
         try:
-            content = (self.config.root_path / rel_path_str).read_text(encoding="utf-8")
+            file_size = full_path.stat().st_size
+            MAX_FILE_SIZE = 1024 * 1024  # 1MB limit
+            if file_size > MAX_FILE_SIZE:
+                self.error_handler.info(f"[Indexing] Skipping large file: {rel_path_str} ({file_size/1024/1024:.1f}MB)")
+                return None
+            #print(f"[Indexing] Processing: {rel_path_str}")
+            content = full_path.read_text(encoding="utf-8")
             if self.collection:
                 vector_db.update_index_coarse(self.collection, {rel_path_str: content})
             return rel_path_str
@@ -202,13 +227,21 @@ class PhaseExecutor:
             return None
         finally:
             self.progress.increment('coarse')
+            time.sleep(0.1)
     
     def _process_one_file_refine(self, rel_path_str: str) -> Optional[str]:
         """Process a single file for refinement."""
         if self.should_stop():
             return None
+        full_path = self.config.root_path / rel_path_str
         try:
-            content = (self.config.root_path / rel_path_str).read_text(encoding="utf-8")
+            file_size = full_path.stat().st_size
+            MAX_FILE_SIZE = 1024 * 1024  # 1MB limit
+            if file_size > MAX_FILE_SIZE:
+                self.error_handler.info(f"[Indexing] Skipping large file: {rel_path_str} ({file_size/1024/1024:.1f}MB)")
+                return None
+            #print(f"[Indexing] Processing: {rel_path_str}")
+            content = full_path.read_text(encoding="utf-8")
             if self.collection:
                 vector_db.refine_file_in_index(self.collection, rel_path_str, content)
             return rel_path_str
@@ -217,3 +250,5 @@ class PhaseExecutor:
             return None
         finally:
             self.progress.increment('refine')
+            time.sleep(0.1)
+

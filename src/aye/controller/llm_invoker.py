@@ -169,7 +169,7 @@ def _is_large_project(conf: Any) -> bool:
             pass
     
     # Check if we have work queued (indicates large project discovery happened)
-    if index_manager._coarse_total > 100 or index_manager._refine_total > 100:
+    if index_manager._state.coarse_total > 100 or index_manager._state.refine_total > 100:
         return True
     
     return False
