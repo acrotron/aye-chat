@@ -14,7 +14,6 @@ def print_help_message():
     print("  with <files>: <prompt>      - Run prompt with specified files in context, skipping code lookup. Supports wildcards (e.g., *.py, src/*.js).")
     print("  model                        - Select a different model. Selection will persist between sessions.")
     print("  verbose [on|off]             - Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)")
-    print("  debug [on|off]               - Toggle debug mode for detailed logging (on/off, persists between sessions)")
     print("  completion [readline|multi]  - Switch auto-completion style (readline or multi, persists between sessions)")
     print("  new                          - Start a new chat session (if you want to change the subject)")
     print("  history                      - Show snapshot history")
