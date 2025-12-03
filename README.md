@@ -166,39 +166,6 @@ On some Windows setups, `pip install` puts console scripts (like `aye.exe`) in a
 
 </details>
 
-<details>
-<summary>🪟 Windows install notes</summary>
-
-On some Windows setups, `pip install` puts console scripts (like `aye.exe`) in a directory that is not on your `PATH` by default. If, after installing, `aye` is not recognized, you have a few options:
-
-1. **Run via Python directly** (works immediately):
-
-   ```powershell
-   python -m aye chat
-   ```
-
-2. **Add the Python Scripts folder to `PATH`** so `aye` is found directly. For a typical user install this is something like:
-
-   ```
-   C:\Users\<you>\AppData\Roaming\Python\PythonXX\Scripts
-   ```
-
-   (Replace `PythonXX` with your actual Python version directory.)
-
-3. **Use `pipx` for a smoother global install** (recommended on Windows):
-
-   ```powershell
-   pip install pipx
-   pipx ensurepath
-   pipx install ayechat
-
-   aye chat
-   ```
-
-`pipx` installs Python CLI tools into an isolated environment and puts the entry points on your `PATH` automatically.
-
-</details>
-
 ## Contributing
 
 Aye Chat is open source! We welcome contributions.
