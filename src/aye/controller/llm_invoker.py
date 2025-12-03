@@ -12,6 +12,7 @@ from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
 from aye.model.offline_llm_manager import is_offline_model
 from aye.controller.util import is_truncated_json
+from aye.model.config import SYSTEM_PROMPT
 
 import os
 
@@ -154,7 +155,7 @@ def _is_large_project(conf: Any) -> bool:
     index_manager = conf.index_manager
     
     # If discovery is in progress or was triggered, it's a large project
-    if index_manager._is_discovering:
+    if index_manager.is_discovering:
         return True
     
     # If we have a collection with documents, check if it's substantial
@@ -169,7 +170,7 @@ def _is_large_project(conf: Any) -> bool:
             pass
     
     # Check if we have work queued (indicates large project discovery happened)
-    if index_manager._coarse_total > 100 or index_manager._refine_total > 100:
+    if index_manager._state.coarse_total > 100 or index_manager._state.refine_total > 100:
         return True
     
     return False
@@ -297,6 +298,9 @@ def invoke_llm(
    
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
     
+    # Get the system prompt to use (custom or default)
+    system_prompt = conf.ground_truth if hasattr(conf, 'ground_truth') and conf.ground_truth else SYSTEM_PROMPT
+    
     # Progressive messages for the spinner
     spinner_messages = [
         "Building prompt...",
@@ -313,7 +317,8 @@ def invoke_llm(
             "model_id": conf.selected_model,
             "source_files": source_files,
             "chat_id": chat_id,
-            "root": conf.root
+            "root": conf.root,
+            "system_prompt": system_prompt
         })
 
         if local_response is not None:
@@ -332,7 +337,8 @@ def invoke_llm(
             message=prompt,
             chat_id=chat_id or -1,
             source_files=source_files,
-            model=conf.selected_model
+            model=conf.selected_model,
+            system_prompt=system_prompt
         )
         
         if _is_debug():

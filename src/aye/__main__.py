@@ -76,10 +76,11 @@ def status():
 def chat(
     root: Path = typer.Option(None, "--root", "-r", help="Root folder where source files are located."),
     file_mask: str = typer.Option(None, "--include", "-i", help="Include patterns for source files. Comma-separated globs."),
+    ground_truth: str = typer.Option(None, "--ground-truth", "-g", hidden=True, help="Path to file containing custom system prompt"),
 ):
     """Start an interactive REPL."""
     # Centralized context and index preparation
-    conf = commands.initialize_project_context(root, file_mask)
+    conf = commands.initialize_project_context(root, file_mask, ground_truth)
     repl.chat_repl(conf)
 
 # ----------------------------------------------------------------------

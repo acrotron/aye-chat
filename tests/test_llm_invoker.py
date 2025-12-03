@@ -7,6 +7,7 @@ from pathlib import Path
 
 import aye.controller.llm_invoker as llm_invoker
 from aye.model.models import LLMResponse, LLMSource, VectorIndexResult
+from aye.model.config import SYSTEM_PROMPT
 
 
 class TestIsDebug(TestCase):
@@ -371,7 +372,8 @@ class TestLlmInvoker(TestCase):
                 "model_id": self.conf.selected_model,
                 "source_files": self.source_files,
                 "chat_id": None,
-                "root": self.conf.root
+                "root": self.conf.root,
+                "system_prompt": SYSTEM_PROMPT
             }
         )
         self.assertEqual(response.source, LLMSource.LOCAL)
@@ -408,7 +410,8 @@ class TestLlmInvoker(TestCase):
             message="test prompt",
             chat_id=123,
             source_files=self.source_files,
-            model=self.conf.selected_model
+            model=self.conf.selected_model,
+            system_prompt=SYSTEM_PROMPT
         )
         self.assertEqual(response.source, LLMSource.API)
         self.assertEqual(response.summary, "api summary")
@@ -526,7 +529,8 @@ class TestLlmInvoker(TestCase):
             message="p",
             chat_id=-1,
             source_files=self.source_files,
-            model=self.conf.selected_model
+            model=self.conf.selected_model,
+            system_prompt=SYSTEM_PROMPT
         )
 
         debug_prints = [call[0][0] for call in mock_print.call_args_list]
