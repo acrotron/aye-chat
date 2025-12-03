@@ -174,7 +174,7 @@ def delete_config_value(key: str) -> bool:
 
 # --- Context and Indexing Commands ---
 
-def initialize_project_context(root: Optional[Path], file_mask: Optional[str]) -> Any:
+def initialize_project_context(root: Optional[Path], file_mask: Optional[str], ground_truth_file: Optional[str] = None) -> Any:
     """
     Initializes the project context by finding the root, setting up plugins,
     and performing an initial file scan and index.
@@ -183,6 +183,21 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str]) -
 
     # Load verbose config first
     conf.verbose = get_user_config("verbose", "off").lower() == "on"
+
+    # Load custom system prompt from file if provided
+    conf.ground_truth = None
+    if ground_truth_file:
+        try:
+            prompt_file = Path(ground_truth_file)
+            if not prompt_file.exists():
+                rprint(f"[red]Error: Ground truth file not found: {ground_truth_file}[/]")
+                raise SystemExit(1)
+            conf.ground_truth = prompt_file.read_text(encoding="utf-8")
+            if conf.verbose:
+                rprint(f"[cyan]Using custom system prompt from: {ground_truth_file}[/]")
+        except Exception as e:
+            rprint(f"[red]Error reading ground truth file: {e}[/]")
+            raise SystemExit(1)
 
     # 1. Ensure the ONNX model is downloaded before proceeding. This is a blocking
     #    operation required for the RAG system to initialize correctly.

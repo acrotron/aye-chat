@@ -213,7 +213,7 @@ class OfflineLLMPlugin(Plugin):
             "updated_files": []
         }
 
-    def _generate_response(self, model_id: str, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    def _generate_response(self, model_id: str, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Generate a response using the offline model."""
         if not self._load_model(model_id):
             return self._create_error_response(f"Failed to load offline model '{model_id}'.")
@@ -228,7 +228,8 @@ class OfflineLLMPlugin(Plugin):
         user_message = self._build_user_message(prompt, source_files)
         
         # Build conversation history
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        effective_system_prompt = system_prompt if system_prompt else SYSTEM_PROMPT
+        messages = [{"role": "system", "content": effective_system_prompt}]
         messages.extend(self.chat_history[conv_id])
         messages.append({"role": "user", "content": user_message})
         
@@ -321,11 +322,12 @@ class OfflineLLMPlugin(Plugin):
             source_files = params.get("source_files", {})
             chat_id = params.get("chat_id")
             root = params.get("root")
+            system_prompt = params.get("system_prompt")
 
             self.history_file = Path(root) / ".aye" / "offline_chat_history.json" if root else Path.cwd() / ".aye" / "offline_chat_history.json"
             self._load_history()
 
-            res = self._generate_response(model_id, prompt, source_files, chat_id)
+            res = self._generate_response(model_id, prompt, source_files, chat_id, system_prompt)
             if self.debug:
                 print("[DEBUG] -------- end of offline_llm -------")
                 print(res)

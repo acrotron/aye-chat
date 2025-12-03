@@ -436,8 +436,8 @@ def test_on_command_local_model_invoke_success(monkeypatch, tmp_path):
 
     captured = {}
 
-    def fake_generate(model_id, prompt, source_files, chat_id):
-        captured["args"] = (model_id, prompt, source_files, chat_id)
+    def fake_generate(model_id, prompt, source_files, chat_id, system_prompt):
+        captured["args"] = (model_id, prompt, source_files, chat_id, system_prompt)
         return {"summary": "ok", "updated_files": []}
 
     monkeypatch.setattr(plugin, "_generate_response", fake_generate)
@@ -448,11 +448,12 @@ def test_on_command_local_model_invoke_success(monkeypatch, tmp_path):
         "source_files": {"a": "b"},
         "chat_id": 3,
         "root": tmp_path,
+        "system_prompt": "custom prompt"
     }
 
     result = plugin.on_command("local_model_invoke", params)
 
     assert result == {"summary": "ok", "updated_files": []}
-    assert captured["args"] == ("m", "Test", {"a": "b"}, 3)
+    assert captured["args"] == ("m", "Test", {"a": "b"}, 3, "custom prompt")
     assert loaded["called"] is True
     assert plugin.history_file == tmp_path / ".aye" / "offline_chat_history.json"

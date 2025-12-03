@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional
 
 import httpx
 from aye.model.auth import get_token, get_user_config
-from aye.model.config import SYSTEM_PROMPT
 
 # -------------------------------------------------
 # 👉  EDIT THIS TO POINT TO YOUR SERVICE
@@ -62,11 +61,14 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
 
 def cli_invoke(chat_id=-1, message="", source_files={},
                model: Optional[str] = None,
+               system_prompt: Optional[str] = None,
                dry_run: bool = False,
                poll_interval=2.0, poll_timeout=TIMEOUT):
-    payload = {"chat_id": chat_id, "message": message, "source_files": source_files, "system_prompt": SYSTEM_PROMPT, "dry_run": dry_run}
+    payload = {"chat_id": chat_id, "message": message, "source_files": source_files, "dry_run": dry_run}
     if model:
         payload["model"] = model
+    if system_prompt:
+        payload["system_prompt"] = system_prompt
     url = f"{BASE_URL}/invoke_cli"
 
     if _is_debug():
