@@ -86,12 +86,15 @@ class TestPluginManager(TestCase):
         mock_file_path.name = 'bad_plugin.py'
         mock_file_path.stem = 'bad_plugin'
         mock_glob.return_value = [mock_file_path]
-        
+
         manager = PluginManager(verbose=True)
         manager.discover()
 
         self.assertEqual(len(manager.registry), 0)
+        # Failed plugin should be tracked
+        self.assertIn('bad_plugin', manager.failed_plugins)
         mock_rprint.assert_any_call("[red]Failed to load plugin bad_plugin.py: Module load failed[/]")
+        mock_rprint.assert_any_call("[bold red]Plugins not loaded: bad_plugin[/]")
 
     def test_handle_command_no_plugins(self):
         response = self.plugin_manager.handle_command('test_command')
@@ -105,3 +108,34 @@ class TestPluginManager(TestCase):
             response = self.plugin_manager.handle_command('test_command', {'param': 1})
             self.assertEqual(response, {'data': 'test'})
             mock_on_command.assert_called_once_with('test_command', {'param': 1})
+
+    @patch('importlib.util.spec_from_file_location')
+    @patch('importlib.util.module_from_spec')
+    @patch('pathlib.Path.glob')
+    @patch('pathlib.Path.is_dir', return_value=True)
+    @patch('aye.controller.plugin_manager.rprint')
+    def test_plugin_with_syntax_error_reported_as_not_loaded(self, mock_rprint, mock_is_dir, mock_glob, mock_module, mock_spec):
+        """Test that plugins with syntax errors are tracked and reported as not loaded."""
+        mock_file_path = MagicMock(spec=os.PathLike)
+        mock_file_path.name = 'broken_plugin.py'
+        mock_file_path.stem = 'broken_plugin'
+        mock_glob.return_value = [mock_file_path]
+
+        # Simulate a SyntaxError during module loading
+        mock_loader = MagicMock()
+        mock_loader.exec_module.side_effect = SyntaxError("invalid syntax")
+        mock_spec_obj = MagicMock()
+        mock_spec_obj.loader = mock_loader
+        mock_spec.return_value = mock_spec_obj
+        mock_module.return_value = MagicMock()
+
+        manager = PluginManager()
+        manager.discover()
+
+        # Plugin should not be in registry
+        self.assertEqual(len(manager.registry), 0)
+        # Plugin should be tracked as failed
+        self.assertIn('broken_plugin', manager.failed_plugins)
+        self.assertIn('invalid syntax', manager.failed_plugins['broken_plugin'])
+        # Should report as not loaded
+        mock_rprint.assert_called_with("[bold red]Plugins not loaded: broken_plugin[/]")

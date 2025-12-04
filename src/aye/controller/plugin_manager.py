@@ -14,6 +14,7 @@ class PluginManager:
         self.tier = tier
         self.verbose = verbose
         self.registry: Dict[str, Plugin] = {}
+        self.failed_plugins: Dict[str, str] = {}  # plugin name -> error message
 
         if _is_debug():
             rprint(f"[bold yellow]Plugin Manager initialized with tier: {self.tier}[/]")
@@ -36,6 +37,7 @@ class PluginManager:
                         plug.init({"verbose": self.verbose, "debug": _is_debug()})
                         self.registry[plug.name] = plug
         except Exception as e:
+            self.failed_plugins[file.stem] = str(e)
             if self.verbose:
                 rprint(f"[red]Failed to load plugin {file.name}: {e}[/]")
 
@@ -59,6 +61,10 @@ class PluginManager:
         if self.registry:
             plugins = ", ".join(self.registry.keys())
             rprint(f"[bold cyan]Plugins loaded: {plugins}[/]")
+
+        if self.failed_plugins:
+            failed = ", ".join(self.failed_plugins.keys())
+            rprint(f"[bold red]Plugins not loaded: {failed}[/]")
 
     def all(self) -> List[Plugin]:
         return list(self.registry.values())
