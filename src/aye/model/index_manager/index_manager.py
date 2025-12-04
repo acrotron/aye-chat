@@ -137,7 +137,15 @@ class IndexManager:
         
         If more than 1000 files are found, asks for user confirmation and
         switches to async discovery.
+        
+        Skips all processing if the root path is the user's home directory.
         """
+        # Skip indexing in home directory to avoid scanning large/irrelevant areas
+        if self.config.root_path == Path.home():
+            if verbose:
+                rprint("[yellow]Skipping indexing in home directory.[/]")
+            return
+        
         if self._should_stop():
             return
         
@@ -540,3 +548,4 @@ class IndexManager:
             n_results=n_results,
             min_relevance=min_relevance
         )
+
