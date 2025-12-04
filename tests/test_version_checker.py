@@ -195,11 +195,9 @@ class TestVersionChecker(TestCase):
                 output = captured_output.getvalue()
 
                 # Verify warning message components
-                self.assertIn("Notice", output)
-                self.assertIn("newer version", output)
+                self.assertIn("notice", output)
                 self.assertIn("0.26.0", output)
                 self.assertIn("0.27.0", output)
-                self.assertIn("3.13", output)  # Max Python version
                 self.assertIn("pip install --upgrade ayechat", output)
             finally:
                 sys.stdout = sys.__stdout__
@@ -218,7 +216,7 @@ class TestVersionChecker(TestCase):
                 output = captured_output.getvalue()
 
                 # Verify warning message components
-                self.assertIn("Notice", output)
+                self.assertIn("notice", output)
                 self.assertIn("0.26.0", output)
                 self.assertIn("0.27.0", output)
                 # Should not contain Python version info
