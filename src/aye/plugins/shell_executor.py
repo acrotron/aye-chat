@@ -16,6 +16,7 @@ class ShellExecutorPlugin(Plugin):
     # Known interactive commands that require a TTY (add more as needed)
     INTERACTIVE_COMMANDS = {
         'vi', 'vim', 'nano', 'emacs', 'top', 'htop', 'less', 'more',
+        'hx', # helix editor
         'man', 'git-log', 'git-diff'  # git subcmds may need TTY for paging
     }
 
