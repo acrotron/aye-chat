@@ -187,6 +187,12 @@ def _determine_source_files(
     if explicit_source_files is not None:
         return explicit_source_files, False, prompt
 
+    # Quick check: Skip expensive scanning in home directory (no indexing, empty context)
+    if conf.root == Path.home():
+        if verbose:
+            rprint("[cyan]In home directory: skipping file scan, using empty context.[/]")
+        return {}, False, prompt
+
     stripped_prompt = prompt.strip()
     if stripped_prompt.lower().startswith('/all') and (len(stripped_prompt) == 4 or stripped_prompt[4].isspace()):
         all_files = collect_sources(root_dir=str(conf.root), file_mask=conf.file_mask)
@@ -353,3 +359,4 @@ def invoke_llm(
         chat_id=new_chat_id,
         source=LLMSource.API
     )
+
