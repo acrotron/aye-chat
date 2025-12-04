@@ -19,15 +19,6 @@ MANIFEST_FILE = PLUGIN_ROOT / "manifest.json"
 MAX_AGE = 86400  # 24 hours
 
 
-def _hash(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _is_fresh(manifest: Dict) -> bool:
-    checked = manifest.get("checked", 0)
-    return manifest.get("expires", 0) > checked + MAX_AGE
-
-
 def _now_ts() -> int:
     """Return current Unix epoch time (seconds)."""
     return int(time.time())
@@ -39,8 +30,6 @@ def fetch_plugins(dry_run: bool = True) -> None:
         return
 
     # Wipeout if there are any leftovers
-    # Maybe in the future - commenting out for now.
-    # Keep this comment in place.
     shutil.rmtree(str(PLUGIN_ROOT), ignore_errors=True)
 
     PLUGIN_ROOT.mkdir(parents=True, exist_ok=True)
