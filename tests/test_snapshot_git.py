@@ -225,6 +225,27 @@ class TestGitStashBackendIntegration(TestCase):
         snaps = self.backend.list_snapshots()
         self.assertEqual(len(snaps), 2)
 
+    def test_prune_snapshots_keep_zero(self):
+        test_file = self.git_root / "prune_zero_test.txt"
+
+        # Create multiple snapshots
+        for i in range(3):
+            test_file.write_text(f"content {i}")
+            subprocess.run(["git", "add", "prune_zero_test.txt"], cwd=self.git_root, capture_output=True, check=True)
+            self.backend.create_snapshot([test_file], prompt=f"snapshot {i}")
+
+        # Should have 3 snapshots
+        snaps = self.backend.list_snapshots()
+        self.assertEqual(len(snaps), 3)
+
+        # Prune with keep_count=0 should delete all snapshots
+        deleted = self.backend.prune_snapshots(keep_count=0)
+        self.assertEqual(deleted, 3)
+
+        # Should have 0 snapshots now
+        snaps = self.backend.list_snapshots()
+        self.assertEqual(len(snaps), 0)
+
     def test_warns_uncommitted_changes_to_other_files(self):
         # Create two files
         file1 = self.git_root / "file1.txt"
