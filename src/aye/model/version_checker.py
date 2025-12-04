@@ -4,6 +4,7 @@ import httpx
 import re
 from typing import Optional
 from packaging import version as pkg_version
+from rich import print as rprint
 
 
 def get_current_version() -> str:
@@ -132,12 +133,10 @@ def check_version_and_print_warning() -> None:
     is_newer, latest, current, python_requires = is_newer_version_available()
 
     if is_newer and latest:
-        print(f"\nℹ️ Notice: A newer version of Aye Chat is available!")
-        print(f"   Current version: {current}")
-        print(f"   Latest version:  {latest}")
+        rprint(f"[[blue]notice[/]] A new release of Aye Chat available: [red]{current}[/] → [green]{latest}[/]")
 
-        max_python = _parse_python_version_max(python_requires)
-        if max_python:
-            print(f"   Supports Python: up to {max_python}")
+        # max_python = _parse_python_version_max(python_requires)
+        # if max_python:
+        #     rprint(f"   Supports Python: up to {max_python}")
 
-        print(f"   Update with: pip install --upgrade ayechat\n")
+        rprint(f"[[blue]notice[/]] To update, run: [green]pip install --upgrade ayechat[/]\n")
