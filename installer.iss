@@ -79,12 +79,12 @@ Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 ; Add context menu for folders (right-click on folder) - uses HKCU for per-user install
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\ayechat"; ValueType: string; ValueData: "Open Aye Chat here"; Tasks: contextmenu; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\ayechat"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName}"; Tasks: contextmenu
-Root: HKCU; Subkey: "Software\Classes\Directory\shell\ayechat\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" -r ""%1"""; Tasks: contextmenu
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\ayechat\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" chat -r ""%1"""; Tasks: contextmenu
 
 ; Add context menu for folder background (right-click inside folder)
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\ayechat"; ValueType: string; ValueData: "Open Aye Chat here"; Tasks: contextmenu; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\ayechat"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName}"; Tasks: contextmenu
-Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\ayechat\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" -r ""%V"""; Tasks: contextmenu
+Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\ayechat\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" chat -r ""%V"""; Tasks: contextmenu
 
 [Code]
 // Pascal script for PATH manipulation
