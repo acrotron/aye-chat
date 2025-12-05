@@ -13,7 +13,7 @@ from aye.model.auth import get_token, get_user_config
 api_url = os.environ.get("AYE_CHAT_API_URL")
 
 if api_url:
-    rprint(f"[bold cyan] Using custom AYE_CHAT_API_URL: {api_url}[/bold cyan]")
+    rprint(f"[bold cyan]Using custom AYE_CHAT_API_URL: {api_url}[/bold cyan]")
 
 BASE_URL = api_url if api_url else "https://api.ayechat.ai"
 TIMEOUT = 900.0
