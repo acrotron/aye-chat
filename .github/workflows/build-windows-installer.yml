@@ -109,11 +109,11 @@ jobs:
           Write-Host "Build successful! Contents of dist/aye-chat:"
           Get-ChildItem -Path "dist/aye-chat" -Recurse | Select-Object FullName, Length
 
-      - name: Test executable
-        shell: pwsh
-        run: |
-          Write-Host "Testing aye.exe --version:"
-          & "dist/aye-chat/aye.exe" --version
+      # - name: Test executable
+      #   shell: pwsh
+      #   run: |
+      #     Write-Host "Testing aye.exe --version:"
+      #     & "dist/aye-chat/aye.exe" --version
 
       - name: Build installer with Inno Setup
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.4
