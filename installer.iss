@@ -11,6 +11,11 @@
   #define MyAppVersion "0.0.0"
 #endif
 
+; Numeric version for Windows VersionInfo (must be X.X.X.X format)
+#ifndef MyAppNumericVersion
+  #define MyAppNumericVersion "0.0.0.0"
+#endif
+
 [Setup]
 ; Unique identifier for this application (generate new GUID for your app)
 AppId={{A7E3B8C1-5D4F-4E6A-9B2C-1D3E5F7A8B9C}
@@ -41,13 +46,13 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; Uninstall settings
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
-; Version info
-VersionInfoVersion={#MyAppVersion}
+; Version info (VersionInfoVersion must be numeric X.X.X.X format)
+VersionInfoVersion={#MyAppNumericVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Installer
 VersionInfoCopyright=Copyright (C) 2024-2025 {#MyAppPublisher}
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppNumericVersion}
 ; Icon (optional - uncomment if you have one)
 SetupIconFile=assets\aye-chat.ico
 ; Disclaimer (must accept before installing)
