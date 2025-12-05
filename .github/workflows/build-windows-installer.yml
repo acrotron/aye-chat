@@ -31,12 +31,33 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ github.event.inputs.version }}" -ne "") {
+            # Manual input - use as-is
             $version = "${{ github.event.inputs.version }}"
-          } elseif ("${{ github.event.release.tag_name }}" -ne "") {
+          } elseif ("${{ github.event_name }}" -eq "release") {
+            # Release event - use tag directly (like python-publish.yml)
             $version = "${{ github.event.release.tag_name }}" -replace '^v', ''
           } else {
-            # Get version from latest git tag
-            $version = (git describe --tags --abbrev=0) -replace '^v', ''
+            # Dev branch push - generate dev version (like python-publish-dev.yml)
+            # Get the latest tag, or use 0.0.0 if no tags exist
+            $latestTag = git describe --tags --abbrev=0 2>$null
+            if (-not $latestTag) { $latestTag = "0.0.0" }
+            $latestTag = $latestTag -replace '^v', ''
+
+            # Split version into major.minor.patch
+            $parts = $latestTag.Split('.')
+            $major = if ($parts.Length -gt 0) { [int]$parts[0] } else { 0 }
+            $minor = if ($parts.Length -gt 1) { [int]$parts[1] } else { 0 }
+            $patch = if ($parts.Length -gt 2) { [int]($parts[2] -replace '[^0-9].*', '') } else { 0 }
+
+            # Increment patch version for dev releases
+            $nextPatch = $patch + 1
+            $nextVersion = "$major.$minor.$nextPatch"
+
+            # Generate timestamp-based dev version
+            $timestamp = Get-Date -Format "yyyyMMddHHmmss"
+            $version = "$nextVersion.dev$timestamp"
+
+            Write-Host "Latest release: $latestTag"
           }
           echo "VERSION=$version" >> $env:GITHUB_OUTPUT
           echo "Building version: $version"
@@ -152,11 +173,33 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ github.event.inputs.version }}" -ne "") {
+            # Manual input - use as-is
             $version = "${{ github.event.inputs.version }}"
-          } elseif ("${{ github.event.release.tag_name }}" -ne "") {
+          } elseif ("${{ github.event_name }}" -eq "release") {
+            # Release event - use tag directly (like python-publish.yml)
             $version = "${{ github.event.release.tag_name }}" -replace '^v', ''
           } else {
-            $version = (git describe --tags --abbrev=0) -replace '^v', ''
+            # Dev branch push - generate dev version (like python-publish-dev.yml)
+            # Get the latest tag, or use 0.0.0 if no tags exist
+            $latestTag = git describe --tags --abbrev=0 2>$null
+            if (-not $latestTag) { $latestTag = "0.0.0" }
+            $latestTag = $latestTag -replace '^v', ''
+
+            # Split version into major.minor.patch
+            $parts = $latestTag.Split('.')
+            $major = if ($parts.Length -gt 0) { [int]$parts[0] } else { 0 }
+            $minor = if ($parts.Length -gt 1) { [int]$parts[1] } else { 0 }
+            $patch = if ($parts.Length -gt 2) { [int]($parts[2] -replace '[^0-9].*', '') } else { 0 }
+
+            # Increment patch version for dev releases
+            $nextPatch = $patch + 1
+            $nextVersion = "$major.$minor.$nextPatch"
+
+            # Generate timestamp-based dev version
+            $timestamp = Get-Date -Format "yyyyMMddHHmmss"
+            $version = "$nextVersion.dev$timestamp"
+
+            Write-Host "Latest release: $latestTag"
           }
           echo "VERSION=$version" >> $env:GITHUB_OUTPUT
 
