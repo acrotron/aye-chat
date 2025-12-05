@@ -6,16 +6,17 @@ USE AT YOUR OWN RISK
 This software is provided "as is" without warranty of any kind. You assume full
 responsibility for any consequences arising from its use.
 
+NO LIABILITY
+The authors and publishers of this software shall not be held liable for any damages,
+including but not limited to direct, indirect, incidental, special, or consequential
+damages arising from the use or inability to use this software, regardless of the
+cause or nature of such damages.
+
 AI-GENERATED CODE
 Aye Chat uses artificial intelligence to generate code and suggestions. AI-generated
 content may contain errors, bugs, security vulnerabilities, or other issues. You are
 solely responsible for reviewing, testing, and validating any code before using it
 in your projects.
-
-NO LIABILITY
-The authors and publishers of this software shall not be held liable for any damages,
-including but not limited to direct, indirect, incidental, special, or consequential
-damages arising from the use or inability to use this software.
 
 DATA AND PRIVACY
 This software may send code snippets and prompts to external AI services for processing.
