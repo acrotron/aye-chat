@@ -47,6 +47,9 @@ MANIFEST
 *.manifest
 *.spec
 
+# Include the installer specifications
+!aye-chat.spec
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
@@ -220,3 +223,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ISCC installer output
+Output/
