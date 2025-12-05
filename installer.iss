@@ -55,8 +55,10 @@ VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppNumericVersion}
 ; Icon (optional - uncomment if you have one)
 SetupIconFile=assets\aye-chat.ico
-; Disclaimer (must accept before installing)
-LicenseFile=DISCLAIMER
+; Disclaimer (informational, shown first)
+InfoBeforeFile=DISCLAIMER
+; License (must accept before installing)
+LicenseFile=LICENSE
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
