@@ -178,6 +178,10 @@ Aye Chat is open source! We welcome contributions.
 
 MIT License - see [LICENSE](LICENSE) file
 
+## Disclaimer
+
+review the [DISCLAIMER](DISCLAIMER) before using this software.
+
 ---
 
 **Ready to code with AI without leaving your terminal?**
