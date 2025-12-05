@@ -2,7 +2,7 @@ name: Build Windows Installer
 
 on:
   push:
-    branches: [ "dev-installer" ]
+    branches: [ "dev" ]
   # release:
   #   types: [published]
   workflow_dispatch:
