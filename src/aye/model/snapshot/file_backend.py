@@ -233,7 +233,7 @@ class FileBasedBackend(SnapshotBackend):
         snapshots = self.list_all_snapshots()
         if len(snapshots) <= keep_count:
             return 0
-        to_delete = snapshots[:-keep_count]
+        to_delete = snapshots[:-keep_count] if keep_count > 0 else snapshots
         deleted_count = 0
         for snapshot_dir in to_delete:
             self.delete_snapshot(snapshot_dir)

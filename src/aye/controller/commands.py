@@ -212,6 +212,8 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str], g
         start_dir = Path.cwd()
         conf.root = find_project_root(start_dir)
 
+    rprint(f"[bold cyan]Project root: {conf.root}[/]")
+
     # 3. Initialize Plugin Manager and add to conf
     plugin_manager = PluginManager(verbose=conf.verbose)
     plugin_manager.discover()

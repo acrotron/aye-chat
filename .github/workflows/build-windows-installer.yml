@@ -1,0 +1,261 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches: [ "dev" ]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 0.29.1). Leave empty to use latest tag.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    name: Build Windows Installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for setuptools-scm to get version from tags
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event.inputs.version }}" -ne "") {
+            # Manual input - use as-is
+            $version = "${{ github.event.inputs.version }}"
+          } elseif ("${{ github.event_name }}" -eq "release") {
+            # Release event - use tag directly (like python-publish.yml)
+            $version = "${{ github.event.release.tag_name }}" -replace '^v', ''
+          } else {
+            # Dev branch push - generate dev version (like python-publish-dev.yml)
+            # Get the latest tag, or use 0.0.0 if no tags exist
+            $latestTag = git describe --tags --abbrev=0 2>$null
+            if (-not $latestTag) { $latestTag = "0.0.0" }
+            $latestTag = $latestTag -replace '^v', ''
+
+            # Split version into major.minor.patch
+            $parts = $latestTag.Split('.')
+            $major = if ($parts.Length -gt 0) { [int]$parts[0] } else { 0 }
+            $minor = if ($parts.Length -gt 1) { [int]$parts[1] } else { 0 }
+            $patch = if ($parts.Length -gt 2) { [int]($parts[2] -replace '[^0-9].*', '') } else { 0 }
+
+            # Increment patch version for dev releases
+            $nextPatch = $patch + 1
+            $nextVersion = "$major.$minor.$nextPatch"
+
+            # Generate timestamp-based dev version
+            $timestamp = Get-Date -Format "yyyyMMddHHmmss"
+            $version = "$nextVersion.dev$timestamp"
+
+            Write-Host "Latest release: $latestTag"
+          }
+
+          # Extract numeric version for Windows VersionInfo (X.X.X.X format)
+          # Remove any non-numeric suffix like .devXXX
+          $numericVersion = $version -replace '\.dev.*$', ''
+          # Ensure we have at least X.X.X format, pad with .0 if needed
+          $parts = $numericVersion.Split('.')
+          while ($parts.Length -lt 3) { $parts += "0" }
+          $numericVersion = ($parts[0..2] -join '.') + ".0"
+
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          echo "NUMERIC_VERSION=$numericVersion" >> $env:GITHUB_OUTPUT
+          echo "Building version: $version (numeric: $numericVersion)"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Create version info file
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $parts = $version.Split('.')
+          $major = if ($parts.Length -gt 0) { $parts[0] } else { "0" }
+          $minor = if ($parts.Length -gt 1) { $parts[1] } else { "0" }
+          $patch = if ($parts.Length -gt 2) { $parts[2] -replace '[^0-9].*', '' } else { "0" }
+
+          @"
+          VSVersionInfo(
+            ffi=FixedFileInfo(
+              filevers=($major, $minor, $patch, 0),
+              prodvers=($major, $minor, $patch, 0),
+              mask=0x3f,
+              flags=0x0,
+              OS=0x40004,
+              fileType=0x1,
+              subtype=0x0,
+              date=(0, 0)
+            ),
+            kids=[
+              StringFileInfo([
+                StringTable(
+                  '040904B0',
+                  [
+                    StringStruct('CompanyName', 'Acrotron, Inc.'),
+                    StringStruct('FileDescription', 'Aye Chat - Terminal-first AI Code Generator'),
+                    StringStruct('FileVersion', '$version'),
+                    StringStruct('InternalName', 'aye'),
+                    StringStruct('LegalCopyright', 'Copyright (C) 2024-2025 Acrotron, Inc.'),
+                    StringStruct('OriginalFilename', 'aye.exe'),
+                    StringStruct('ProductName', 'Aye Chat'),
+                    StringStruct('ProductVersion', '$version'),
+                  ]
+                )
+              ]),
+              VarFileInfo([VarStruct('Translation', [1033, 1200])])
+            ]
+          )
+          "@ | Out-File -FilePath version_info.txt -Encoding UTF8
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller aye-chat.spec --noconfirm
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist/aye-chat/aye.exe")) {
+            Write-Error "Build failed: aye.exe not found"
+            exit 1
+          }
+          Write-Host "Build successful! Contents of dist/aye-chat:"
+          Get-ChildItem -Path "dist/aye-chat" -Recurse | Select-Object FullName, Length
+
+      - name: Test executable
+        shell: pwsh
+        run: |
+          Write-Host "Testing aye.exe --version:"
+          & "dist/aye-chat/aye.exe" --version
+
+      - name: Build installer with Inno Setup
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.4
+        with:
+          path: installer.iss
+          options: /DMyAppVersion=${{ steps.version.outputs.VERSION }} /DMyAppNumericVersion=${{ steps.version.outputs.NUMERIC_VERSION }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aye-chat-installer-${{ steps.version.outputs.VERSION }}
+          path: Output/*.exe
+          if-no-files-found: error
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Output/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Optional: Create a portable ZIP as well
+  build-portable:
+    name: Build Portable ZIP
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event.inputs.version }}" -ne "") {
+            # Manual input - use as-is
+            $version = "${{ github.event.inputs.version }}"
+          } elseif ("${{ github.event_name }}" -eq "release") {
+            # Release event - use tag directly (like python-publish.yml)
+            $version = "${{ github.event.release.tag_name }}" -replace '^v', ''
+          } else {
+            # Dev branch push - generate dev version (like python-publish-dev.yml)
+            # Get the latest tag, or use 0.0.0 if no tags exist
+            $latestTag = git describe --tags --abbrev=0 2>$null
+            if (-not $latestTag) { $latestTag = "0.0.0" }
+            $latestTag = $latestTag -replace '^v', ''
+
+            # Split version into major.minor.patch
+            $parts = $latestTag.Split('.')
+            $major = if ($parts.Length -gt 0) { [int]$parts[0] } else { 0 }
+            $minor = if ($parts.Length -gt 1) { [int]$parts[1] } else { 0 }
+            $patch = if ($parts.Length -gt 2) { [int]($parts[2] -replace '[^0-9].*', '') } else { 0 }
+
+            # Increment patch version for dev releases
+            $nextPatch = $patch + 1
+            $nextVersion = "$major.$minor.$nextPatch"
+
+            # Generate timestamp-based dev version
+            $timestamp = Get-Date -Format "yyyyMMddHHmmss"
+            $version = "$nextVersion.dev$timestamp"
+
+            Write-Host "Latest release: $latestTag"
+          }
+
+          # Extract numeric version for Windows VersionInfo (X.X.X.X format)
+          # Remove any non-numeric suffix like .devXXX
+          $numericVersion = $version -replace '\.dev.*$', ''
+          # Ensure we have at least X.X.X format, pad with .0 if needed
+          $parts = $numericVersion.Split('.')
+          while ($parts.Length -lt 3) { $parts += "0" }
+          $numericVersion = ($parts[0..2] -join '.') + ".0"
+
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          echo "NUMERIC_VERSION=$numericVersion" >> $env:GITHUB_OUTPUT
+          echo "Building version: $version (numeric: $numericVersion)"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Build with PyInstaller
+        run: pyinstaller aye-chat.spec --noconfirm
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          Compress-Archive -Path "dist/aye-chat/*" -DestinationPath "aye-chat-$version-portable-win64.zip"
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aye-chat-portable-${{ steps.version.outputs.VERSION }}
+          path: "*.zip"
+          if-no-files-found: error
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.zip"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

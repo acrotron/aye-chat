@@ -344,9 +344,8 @@ class TestSnapshot(TestCase):
             (self.snap_root_val / f"{i+1:03d}_{ts}").mkdir()
 
         deleted_count = snapshot.prune_snapshots(keep_count=0)
-        # TODO: fix that bug!
-        ##self.assertEqual(deleted_count, 3)
-        ##self.assertEqual(len(list(p for p in self.snap_root_val.iterdir() if p.is_dir() and p.name != 'latest')), 0)
+        self.assertEqual(deleted_count, 3)
+        self.assertEqual(len(list(p for p in self.snap_root_val.iterdir() if p.is_dir() and p.name != 'latest')), 0)
 
     def test_cleanup_snapshots(self):
         # Create old and new snapshots
