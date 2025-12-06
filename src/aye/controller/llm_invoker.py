@@ -57,6 +57,33 @@ TRUNCATED_RESPONSE_MESSAGE = (
 )
 
 
+def _filter_ground_truth(files: Dict[str, str], conf: Any, verbose: bool) -> Dict[str, str]:
+    """
+    Exclude the ground truth file from source files to avoid duplication with system prompt.
+    """
+    if not hasattr(conf, 'ground_truth') or not conf.ground_truth:
+        return files
+
+    gt_content_stripped = conf.ground_truth.strip()
+    
+    # Filter out files that match the ground truth content
+    files_to_remove = [
+        path for path, content in files.items() 
+        if content.strip() == gt_content_stripped
+    ]
+    
+    if not files_to_remove:
+        return files
+        
+    filtered_files = files.copy()
+    for path in files_to_remove:
+        if verbose:
+            rprint(f"[yellow]Excluding ground truth file from context: {path}[/]")
+        del filtered_files[path]
+            
+    return filtered_files
+
+
 def _get_rag_context_files(
     prompt: str, conf: Any, verbose: bool
 ) -> Dict[str, str]:
@@ -196,6 +223,7 @@ def _determine_source_files(
     stripped_prompt = prompt.strip()
     if stripped_prompt.lower().startswith('/all') and (len(stripped_prompt) == 4 or stripped_prompt[4].isspace()):
         all_files = collect_sources(root_dir=str(conf.root), file_mask=conf.file_mask)
+        all_files = _filter_ground_truth(all_files, conf, verbose)
         return all_files, True, stripped_prompt[4:].strip()
 
     # For large projects, skip the expensive collect_sources() call and go straight to RAG
@@ -204,10 +232,13 @@ def _determine_source_files(
         if verbose:
             rprint("[cyan]Large project detected, using code lookup for context...[/]")
         rag_files = _get_rag_context_files(prompt, conf, verbose)
+        rag_files = _filter_ground_truth(rag_files, conf, verbose)
         return rag_files, False, prompt
 
     # For small/unknown projects, do the traditional size check
     all_project_files = collect_sources(root_dir=str(conf.root), file_mask=conf.file_mask)
+    all_project_files = _filter_ground_truth(all_project_files, conf, verbose)
+    
     total_size = sum(len(content.encode('utf-8')) for content in all_project_files.values())
 
     if total_size < CONTEXT_HARD_LIMIT:
@@ -217,6 +248,7 @@ def _determine_source_files(
 
     # Default to RAG for large projects
     rag_files = _get_rag_context_files(prompt, conf, verbose)
+    rag_files = _filter_ground_truth(rag_files, conf, verbose)
     return rag_files, False, prompt
 
 
@@ -359,4 +391,3 @@ def invoke_llm(
         chat_id=new_chat_id,
         source=LLMSource.API
     )
-
