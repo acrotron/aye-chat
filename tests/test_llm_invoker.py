@@ -240,13 +240,17 @@ class TestDetermineSourceFiles(TestCase):
         mock_collect.return_value = {"large.py": large_content}
         mock_rag.return_value = {"relevant.py": "content"}
         
+        # Set up index_manager so RAG path is triggered
+        self.conf.index_manager = MagicMock()
+        self.conf.use_rag = True  # Explicitly enable RAG
+        
         result, use_all, prompt = llm_invoker._determine_source_files(
             "prompt", self.conf, False, None
         )
         
         self.assertFalse(use_all)
         self.assertEqual(result, {"relevant.py": "content"})
-        mock_rag.assert_called_once()
+        mock_rag.assert_called_once()  # Verify RAG was actually called
 
 
 class TestPrintContextMessage(TestCase):

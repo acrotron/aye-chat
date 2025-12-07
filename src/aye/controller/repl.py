@@ -116,9 +116,9 @@ def chat_repl(conf: Any) -> None:
 
     print_startup_header(conf)
 
-    # Start background indexing if needed
-    index_manager = conf.index_manager
-    if index_manager.has_work():
+    # Start background indexing if needed (only for large projects with index_manager)
+    index_manager = getattr(conf, 'index_manager', None)
+    if index_manager and index_manager.has_work():
         if conf.verbose:
             rprint("[cyan]Starting background indexing...")
         thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
@@ -144,8 +144,9 @@ def chat_repl(conf: Any) -> None:
         while True:
             try:
                 prompt_str = print_prompt()
-                if conf.index_manager.is_indexing() and conf.verbose:
-                    progress = conf.index_manager.get_progress_display()
+                # Show indexing progress only if index_manager exists and is active
+                if index_manager and index_manager.is_indexing() and conf.verbose:
+                    progress = index_manager.get_progress_display()
                     prompt_str = f"(ツ ({progress}) » "
 
                 prompt = session.prompt(prompt_str)
@@ -233,8 +234,8 @@ def chat_repl(conf: Any) -> None:
                 elif lowered_first == "cd":
                     handle_cd_command(tokens, conf)
                 elif lowered_first == "db":
-                    if conf.index_manager and hasattr(conf.index_manager, 'collection'):
-                        collection = conf.index_manager.collection
+                    if index_manager and hasattr(index_manager, 'collection') and index_manager.collection:
+                        collection = index_manager.collection
                         count = collection.count()
                         rprint(f"[bold cyan]Vector DB Status[/]")
                         rprint(f"  Collection Name: '{collection.name}'")
@@ -261,7 +262,10 @@ def chat_repl(conf: Any) -> None:
                             rprint("[yellow]  The vector index is empty.[/yellow]")
                         rprint(f"\n[bold cyan]Total Indexed Chunks: {count}[/]")
                     else:
-                        rprint("[red]Index manager not available.[/red]")
+                        if not conf.use_rag:
+                            rprint("[yellow]Small project mode: RAG indexing is disabled.[/yellow]")
+                        else:
+                            rprint("[red]Index manager not available.[/red]")
                 else:
                     # Try shell command execution first
                     shell_response = conf.plugin_manager.handle_command("execute_shell_command", {"command": original_first, "args": tokens[1:]})
@@ -290,8 +294,8 @@ def chat_repl(conf: Any) -> None:
                 handle_llm_error(exc)
                 continue
     finally:
-        # Ensure clean shutdown of the index manager
-        if hasattr(conf, 'index_manager') and conf.index_manager:
-            conf.index_manager.shutdown()
+        # Ensure clean shutdown of the index manager (if it exists)
+        if index_manager:
+            index_manager.shutdown()
 
     collect_and_send_feedback(max(0, chat_id))
