@@ -15,6 +15,15 @@ DEFAULT_IGNORE_SET = {
     'target', 'bin', 'public', 'vendor'
 }
 
+# Threshold to define a "small" project by file count. Projects with more files
+# will trigger a confirmation prompt before indexing and use async discovery.
+SMALL_PROJECT_FILE_LIMIT = 200
+
+# Threshold to define a "small" project by total size in bytes.
+# Projects smaller than this will skip RAG and include all files directly.
+# Set to match CONTEXT_HARD_LIMIT (170KB) so all files can fit in context.
+SMALL_PROJECT_TOTAL_SIZE_LIMIT = 170 * 1024  # 170KB
+
 # Shared system prompt for all LLM interactions
 SYSTEM_PROMPT = (
     "You are a helpful assistant Archie, and you help users to use Aye Chat. "

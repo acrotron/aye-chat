@@ -166,43 +166,6 @@ def _get_rag_context_files(
     return source_files
 
 
-def _is_large_project(conf: Any) -> bool:
-    """
-    Check if this is a large project that should use RAG instead of full file collection.
-    
-    Uses the index manager's state to determine this without doing a full file walk.
-    A project is considered "large" if:
-    - Index manager exists and is initialized
-    - Index manager has indexed files (collection exists with documents)
-    - OR async discovery was triggered (indicating 1000+ files)
-    """
-    if not hasattr(conf, 'index_manager') or not conf.index_manager:
-        return False
-    
-    index_manager = conf.index_manager
-    
-    # If discovery is in progress or was triggered, it's a large project
-    if index_manager.is_discovering:
-        return True
-    
-    # If we have a collection with documents, check if it's substantial
-    if index_manager.collection:
-        try:
-            count = index_manager.collection.count()
-            # If we have more than ~50 indexed chunks, treat as large project
-            # (small projects typically have fewer chunks)
-            if count > 50:
-                return True
-        except Exception:
-            pass
-    
-    # Check if we have work queued (indicates large project discovery happened)
-    if index_manager._state.coarse_total > 100 or index_manager._state.refine_total > 100:
-        return True
-    
-    return False
-
-
 def _determine_source_files(
     prompt: str, conf: Any, verbose: bool, explicit_source_files: Optional[Dict[str, str]]
 ) -> Tuple[Dict[str, str], bool, str]:
@@ -226,16 +189,24 @@ def _determine_source_files(
         all_files = _filter_ground_truth(all_files, conf, verbose)
         return all_files, True, stripped_prompt[4:].strip()
 
-    # For large projects, skip the expensive collect_sources() call and go straight to RAG
-    # This avoids blocking the main thread with a full file walk
-    if _is_large_project(conf):
+    # Check if RAG is disabled for this project (small project mode)
+    if hasattr(conf, 'use_rag') and not conf.use_rag:
+        # Small project: always use all files, no RAG
         if verbose:
-            rprint("[cyan]Large project detected, using code lookup for context...[/]")
+            rprint("[cyan]Small project mode: including all files.[/]")
+        all_files = collect_sources(root_dir=str(conf.root), file_mask=conf.file_mask)
+        all_files = _filter_ground_truth(all_files, conf, verbose)
+        return all_files, True, prompt
+
+    # RAG is enabled - use vector search for context
+    if hasattr(conf, 'index_manager') and conf.index_manager:
+        if verbose:
+            rprint("[cyan]Using code lookup for context...[/]")
         rag_files = _get_rag_context_files(prompt, conf, verbose)
         rag_files = _filter_ground_truth(rag_files, conf, verbose)
         return rag_files, False, prompt
 
-    # For small/unknown projects, do the traditional size check
+    # Fallback: collect all sources and check size
     all_project_files = collect_sources(root_dir=str(conf.root), file_mask=conf.file_mask)
     all_project_files = _filter_ground_truth(all_project_files, conf, verbose)
     
@@ -246,10 +217,10 @@ def _determine_source_files(
             rprint(f"[cyan]Project size ({total_size / 1024:.1f}KB) is small; including all files.[/]")
         return all_project_files, True, prompt
 
-    # Default to RAG for large projects
-    rag_files = _get_rag_context_files(prompt, conf, verbose)
-    rag_files = _filter_ground_truth(rag_files, conf, verbose)
-    return rag_files, False, prompt
+    # Large project without index manager - return empty context with warning
+    if verbose:
+        rprint("[yellow]Large project without index: using empty context.[/]")
+    return {}, False, prompt
 
 
 def _print_context_message(
@@ -307,7 +278,7 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
                 print(assistant_resp_str)
             parsed = {"answer_summary": TRUNCATED_RESPONSE_MESSAGE, "source_files": []}
             return parsed, chat_id
-        
+
         if "error" in assistant_resp_str.lower():
             chat_title = resp.get('chat_title', 'Unknown')
             raise Exception(f"Server error in chat '{chat_title}': {assistant_resp_str}") from e

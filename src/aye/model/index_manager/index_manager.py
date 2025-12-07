@@ -18,6 +18,7 @@ from rich.prompt import Confirm
 from aye.model.models import VectorIndexResult
 from aye.model.source_collector import get_project_files, get_project_files_with_limit
 from aye.model import vector_db, onnx_manager
+from aye.model.config import SMALL_PROJECT_FILE_LIMIT
 
 from .index_manager_utils import register_manager, set_discovery_thread_low_priority
 from .index_manager_file_ops import FileCategorizer, IndexPersistence, get_deleted_files
@@ -155,7 +156,7 @@ class IndexManager:
         current_files, limit_hit = get_project_files_with_limit(
             root_dir=str(self.config.root_path),
             file_mask=self.config.file_mask,
-            limit=1000
+            limit=SMALL_PROJECT_FILE_LIMIT
         )
         
         if limit_hit:
@@ -175,7 +176,7 @@ class IndexManager:
     
     def _handle_large_project(self, old_index: Dict[str, Any]) -> None:
         """Handle projects with more than 1000 files."""
-        rprint("\n[bold yellow]⚠️  Whoa! 1000+ files discovered...[/]")
+        rprint("\n[bold yellow]⚠️  Whoa! 200+ files discovered...[/]")
         rprint("[yellow]Is this really how large your project is, or did some "
                "libraries get included by accident?[/]")
         rprint("[yellow]You can use .gitignore or .ayeignore to exclude "

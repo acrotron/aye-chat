@@ -3,7 +3,7 @@ from typing import List, Tuple
 import pathspec
 import platform
 
-from aye.model.config import DEFAULT_IGNORE_SET
+from aye.model.config import DEFAULT_IGNORE_SET, SMALL_PROJECT_FILE_LIMIT
 
 
 def _load_ignore_patterns(root_dir: Path) -> pathspec.PathSpec:
@@ -55,7 +55,7 @@ def _load_ignore_patterns(root_dir: Path) -> pathspec.PathSpec:
     return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
 
 
-def get_project_files_with_limit(root_dir: str, file_mask: str, limit: int = 1000) -> Tuple[List[Path], bool]:
+def get_project_files_with_limit(root_dir: str, file_mask: str, limit: int = SMALL_PROJECT_FILE_LIMIT) -> Tuple[List[Path], bool]:
     """
     Enumerate project files up to a limit.
     
