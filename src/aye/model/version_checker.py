@@ -133,7 +133,7 @@ def check_version_and_print_warning() -> None:
     is_newer, latest, current, python_requires = is_newer_version_available()
 
     if is_newer and latest:
-        rprint(f"[[blue]notice[/]] A new release of Aye Chat available: [red]{current}[/] → [green]{latest}[/]")
+        rprint(f"[[blue]notice[/]] A new release of Aye Chat available: [red]{current}[/] -> [green]{latest}[/]")
 
         # max_python = _parse_python_version_max(python_requires)
         # if max_python:
