@@ -1,4 +1,5 @@
 import os
+import threading
 from prompt_toolkit.document import Document
 from typing import Dict, Any, Optional, List
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
@@ -11,45 +12,92 @@ class CmdPathCompleter(Completer):
     Completes:
     • the first token with an optional list of commands (with or without leading slash)
     • the *last* token (any argument) as a filesystem path
+    
+    System commands are loaded lazily in a background thread to avoid
+    blocking startup on slow filesystems (e.g., WSL accessing Windows paths).
     """
 
     def __init__(self, commands: Optional[List[str]] = None):
         self._path_completer = PathCompleter()
-        system_commands = self._get_system_commands()
-        builtin_commands = commands or []
-        self.commands = sorted(list(set(system_commands + builtin_commands)))
+        self._builtin_commands = commands or []
+        self._system_commands: List[str] = []
+        self._system_commands_loaded = False
+        self._lock = threading.Lock()
+        
+        # Start background thread to load system commands
+        # This prevents blocking startup on slow PATH scans (e.g., WSL)
+        if not os.environ.get('AYE_SKIP_PATH_SCAN'):
+            thread = threading.Thread(target=self._load_system_commands_background, daemon=True)
+            thread.start()
 
-    def _get_system_commands(self):
-        """Get list of available system commands"""
+    def _load_system_commands_background(self):
+        """Load system commands in background thread."""
         try:
-            # Get PATH directories
+            system_cmds = self._get_system_commands()
+            with self._lock:
+                self._system_commands = system_cmds
+                self._system_commands_loaded = True
+        except Exception:
+            # Silently fail - completions will just be limited to builtins
+            with self._lock:
+                self._system_commands_loaded = True
+
+    @property
+    def commands(self) -> List[str]:
+        """Get combined list of builtin and system commands."""
+        with self._lock:
+            if self._system_commands_loaded:
+                return sorted(list(set(self._system_commands + self._builtin_commands)))
+            else:
+                # System commands still loading, return just builtins
+                return sorted(self._builtin_commands)
+
+    def _get_system_commands(self) -> List[str]:
+        """Get list of available system commands.
+        
+        Skips directories that are slow to access (Windows paths on WSL).
+        """
+        try:
             path_dirs = os.environ.get('PATH', '').split(os.pathsep)
             commands = set()
             
-            # Scan each directory for executables
             for directory in path_dirs:
-                if os.path.isdir(directory):
-                    for item in os.listdir(directory):
-                        item_path = os.path.join(directory, item)
-                        if os.path.isfile(item_path) and os.access(item_path, os.X_OK):
-                            commands.add(item)
+                # Skip Windows paths on WSL - they're extremely slow
+                if directory.startswith('/mnt/') and len(directory) > 5 and directory[5].isalpha():
+                    continue
+                
+                # Skip if directory doesn't exist or isn't accessible
+                if not os.path.isdir(directory):
+                    continue
+                
+                try:
+                    # Use scandir for better performance
+                    with os.scandir(directory) as entries:
+                        for entry in entries:
+                            try:
+                                if entry.is_file() and os.access(entry.path, os.X_OK):
+                                    commands.add(entry.name)
+                            except (OSError, IOError):
+                                continue
+                except (OSError, IOError, PermissionError):
+                    continue
             
             return list(commands)
         except Exception:
             return []
 
-
     def get_completions(self, document: Document, complete_event):
         text = document.text_before_cursor
         words = text.split()
+        
+        # Get current commands list (thread-safe)
+        current_commands = self.commands
 
         # ----- Handle slash-prefixed commands -----
         if text.startswith('/') and (len(words) == 0 or (len(words) == 1 and not text.endswith(" "))):
-            # User is typing a slash command
             prefix = text[1:]  # Remove the leading slash
-            for cmd in self.commands:
+            for cmd in current_commands:
                 if cmd.startswith(prefix):
-                    # Yield completion with slash prefix
                     yield Completion(
                         cmd,
                         start_position=-len(prefix),
@@ -62,9 +110,8 @@ class CmdPathCompleter(Completer):
         if len(words) == 0:
             return
         if len(words) == 1 and not text.endswith(" "):
-            # Still typing the command itself (non-slash case)
             prefix = words[0]
-            for cmd in self.commands:
+            for cmd in current_commands:
                 if cmd.startswith(prefix):
                     yield Completion(
                         cmd + " ",
@@ -74,20 +121,14 @@ class CmdPathCompleter(Completer):
             return
 
         # ----- 2️⃣  Anything after a space → path completion -----
-        # The word we are currently completing (the part after the last space)
         last_word = words[-1]
-
-        # Create a temporary Document that contains only that word.
         sub_doc = Document(text=last_word, cursor_position=len(last_word))
 
         for comp in self._path_completer.get_completions(sub_doc, complete_event):
-            # Append "/" if it's a folder
             completion_text = comp.text
             if os.path.isdir(last_word + completion_text):
                 completion_text += "/"
             
-            # Forward the inner completion unchanged – its start_position is
-            # already the negative length of `last_word`.
             yield Completion(
                 completion_text,
                 start_position=comp.start_position,
@@ -97,7 +138,7 @@ class CmdPathCompleter(Completer):
 
 class CompleterPlugin(Plugin):
     name = "completer"
-    version = "1.0.0"
+    version = "1.0.1"  # Version bump for lazy loading fix
     premium = "free"
 
     def init(self, cfg: Dict[str, Any]) -> None:
@@ -105,7 +146,6 @@ class CompleterPlugin(Plugin):
         super().init(cfg)
         if self.debug:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
-        pass
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Handle completion requests through the plugin system."""
