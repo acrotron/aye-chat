@@ -21,8 +21,11 @@ SMALL_PROJECT_FILE_LIMIT = 200
 
 # Threshold to define a "small" project by total size in bytes.
 # Projects smaller than this will skip RAG and include all files directly.
-# Set to match CONTEXT_HARD_LIMIT (170KB) so all files can fit in context.
+# Set to match default max_prompt_kb (170KB) so all files can fit in context.
 SMALL_PROJECT_TOTAL_SIZE_LIMIT = 170 * 1024  # 170KB
+
+# Default maximum output tokens for LLM responses
+DEFAULT_MAX_OUTPUT_TOKENS = 32000
 
 # Shared system prompt for all LLM interactions
 SYSTEM_PROMPT = (
@@ -120,29 +123,25 @@ SYSTEM_PROMPT = (
     '}'
 )
 
-# Models configuration (order unchanged)
+# Models configuration with max_prompt_kb and max_output_tokens
 MODELS = [
-    #{"id": "openai/gpt-oss-120b", "name": "OpenAI: GPT OSS 120b"},
-    {"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1"},
-    {"id": "x-ai/grok-4-fast", "name": "xAI: Grok 4 Fast"},
-    #{"id": "qwen/qwen3-coder", "name": "Qwen: Qwen3 Coder"},
-    #{"id": "deepseek/deepseek-chat-v3-0324", "name": "DeepSeek: DeepSeek V3 0324"},
-    {"id": "google/gemini-2.0-flash-001", "name": "Google: Gemini 2.0 Flash"},
-    {"id": "openai/gpt-5.1-codex-mini", "name": "OpenAI: GPT-5.1-Codex-Mini"},
-    {"id": "moonshotai/kimi-k2-0905", "name": "MoonshotAI: Kimi K2 0905"},
-    {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro"},
-    {"id": "google/gemini-3-pro-preview", "name": "Google: Gemini 3 Pro Preview"},
-    {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5"},
-    {"id": "openai/gpt-5.1-codex", "name": "OpenAI: GPT-5.1-Codex"},
-    {"id": "openai/gpt-5.1", "name": "OpenAI: GPT-5.1"},
-    {"id": "anthropic/claude-opus-4.5", "name": "Anthropic: Claude Opus 4.5"},
+    {"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1", "max_prompt_kb": 150, "max_output_tokens": 16000},
+    {"id": "x-ai/grok-4-fast", "name": "xAI: Grok 4 Fast", "max_prompt_kb": 340, "max_output_tokens": 32000},
+    {"id": "google/gemini-2.0-flash-001", "name": "Google: Gemini 2.0 Flash", "max_prompt_kb": 340, "max_output_tokens": 32000},
+    {"id": "openai/gpt-5.1-codex-mini", "name": "OpenAI: GPT-5.1-Codex-Mini", "max_prompt_kb": 240, "max_output_tokens": 16000},
+    {"id": "moonshotai/kimi-k2-0905", "name": "MoonshotAI: Kimi K2 0905", "max_prompt_kb": 170, "max_output_tokens": 32000},
+    {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro", "max_prompt_kb": 340, "max_output_tokens": 32000},
+    {"id": "google/gemini-3-pro-preview", "name": "Google: Gemini 3 Pro Preview", "max_prompt_kb": 340, "max_output_tokens": 32000},
+    {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5", "max_prompt_kb": 340, "max_output_tokens": 32000},
+    {"id": "openai/gpt-5.1-codex", "name": "OpenAI: GPT-5.1-Codex", "max_prompt_kb": 240, "max_output_tokens": 16000},
+    {"id": "openai/gpt-5.1", "name": "OpenAI: GPT-5.1", "max_prompt_kb": 240, "max_output_tokens": 16000},
+    {"id": "anthropic/claude-opus-4.5", "name": "Anthropic: Claude Opus 4.5", "max_prompt_kb": 120, "max_output_tokens": 16000},
     
     # Offline models
-    #{"id": "offline/deepseek-coder-6.7b", "name": "DeepSeek Coder 6.7B (Offline)", "type": "offline", "size_gb": 3.8},
-    {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.7},
+    {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.7, "max_prompt_kb": 60, "max_output_tokens": 8000},
 ]
 
-# Default model identifier – kept separate so the order of MODELS stays unchanged.
+# Default model identifier
 DEFAULT_MODEL_ID = "google/gemini-2.5-pro"
 
 

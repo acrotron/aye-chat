@@ -12,7 +12,7 @@ from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
 from aye.model.offline_llm_manager import is_offline_model
 from aye.controller.util import is_truncated_json
-from aye.model.config import SYSTEM_PROMPT
+from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS
 
 import os
 
@@ -36,12 +36,11 @@ def _get_int_env(name: str, default: int) -> int:
         return default
 
 
+# Context target size for RAG queries (in bytes)
 CONTEXT_TARGET_SIZE = _get_int_env(
     "AYE_CONTEXT_TARGET", 150 * 1024
-)  # 180KB, ~40K tokens in English language
-CONTEXT_HARD_LIMIT = _get_int_env(
-    "AYE_CONTEXT_HARD_LIMIT", 170 * 1024
-)  # 200KB, hard safety limit for API payload
+)  # 150KB, ~35K tokens in English language
+
 RELEVANCE_THRESHOLD = -1.0  # Accept all results from vector search, even with negative scores.
 
 # Message shown when LLM response is truncated due to output token limits
@@ -55,6 +54,22 @@ TRUNCATED_RESPONSE_MESSAGE = (
     "For example, instead of 'update all files to add logging', try:\n"
     "  `with src/main.py: add logging to this file`"
 )
+
+
+def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
+    """Get configuration for a specific model."""
+    for model in MODELS:
+        if model["id"] == model_id:
+            return model
+    return None
+
+
+def _get_context_hard_limit(model_id: str) -> int:
+    """Get the hard limit for context size based on model configuration."""
+    model_config = _get_model_config(model_id)
+    if model_config and "max_prompt_kb" in model_config:
+        return model_config["max_prompt_kb"] * 1024  # Convert KB to bytes
+    return 170 * 1024  # Default fallback: 170KB
 
 
 def _filter_ground_truth(files: Dict[str, str], conf: Any, verbose: bool) -> Dict[str, str]:
@@ -89,7 +104,7 @@ def _get_rag_context_files(
 ) -> Dict[str, str]:
     """
     Queries the vector index and packs the most relevant files into a dictionary,
-    respecting context size limits.
+    respecting context size limits based on the selected model.
     """
     source_files = {}
     if not hasattr(conf, 'index_manager') or not conf.index_manager:
@@ -119,6 +134,9 @@ def _get_rag_context_files(
             unique_files_ranked.append(chunk.file_path)
             seen_files.add(chunk.file_path)
 
+    # Get context limits for the selected model
+    context_hard_limit = _get_context_hard_limit(conf.selected_model)
+
     # --- Context Packing Logic ---
     # Track files with their sizes for potential trimming
     files_with_sizes: List[Tuple[str, str, int]] = []  # (path, content, size)
@@ -137,7 +155,7 @@ def _get_rag_context_files(
             file_size = len(content.encode('utf-8'))
             
             # Skip individual files that are too large
-            if current_size + file_size > CONTEXT_HARD_LIMIT:
+            if current_size + file_size > context_hard_limit:
                 if verbose:
                     rprint(f"[yellow]Skipping large file {file_path_str} ({file_size / 1024:.1f}KB) to stay within payload limits.[/]")
                 continue
@@ -150,9 +168,9 @@ def _get_rag_context_files(
                 rprint(f"[red]Could not read file {file_path_str}: {e}[/red]")
             continue
     
-    # Final safety check: ensure total size is under CONTEXT_HARD_LIMIT
+    # Final safety check: ensure total size is under context_hard_limit
     # This handles edge cases where we accumulated files close to TARGET but over HARD_LIMIT
-    while current_size > CONTEXT_HARD_LIMIT and files_with_sizes:
+    while current_size > context_hard_limit and files_with_sizes:
         # Remove the last (least relevant) file
         removed_path, _, removed_size = files_with_sizes.pop()
         current_size -= removed_size
@@ -211,8 +229,9 @@ def _determine_source_files(
     all_project_files = _filter_ground_truth(all_project_files, conf, verbose)
     
     total_size = sum(len(content.encode('utf-8')) for content in all_project_files.values())
+    context_hard_limit = _get_context_hard_limit(conf.selected_model)
 
-    if total_size < CONTEXT_HARD_LIMIT:
+    if total_size < context_hard_limit:
         if verbose:
             rprint(f"[cyan]Project size ({total_size / 1024:.1f}KB) is small; including all files.[/]")
         return all_project_files, True, prompt
@@ -310,6 +329,10 @@ def invoke_llm(
     # Get the system prompt to use (custom or default)
     system_prompt = conf.ground_truth if hasattr(conf, 'ground_truth') and conf.ground_truth else SYSTEM_PROMPT
     
+    # Get max output tokens for the selected model
+    model_config = _get_model_config(conf.selected_model)
+    max_output_tokens = model_config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS) if model_config else DEFAULT_MAX_OUTPUT_TOKENS
+    
     # Progressive messages for the spinner
     spinner_messages = [
         "Building prompt...",
@@ -327,7 +350,8 @@ def invoke_llm(
             "source_files": source_files,
             "chat_id": chat_id,
             "root": conf.root,
-            "system_prompt": system_prompt
+            "system_prompt": system_prompt,
+            "max_output_tokens": max_output_tokens
         })
 
         if local_response is not None:
@@ -347,7 +371,8 @@ def invoke_llm(
             chat_id=chat_id or -1,
             source_files=source_files,
             model=conf.selected_model,
-            system_prompt=system_prompt
+            system_prompt=system_prompt,
+            max_output_tokens=max_output_tokens
         )
         
         if _is_debug():
