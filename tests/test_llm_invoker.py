@@ -7,7 +7,10 @@ from pathlib import Path
 
 import aye.controller.llm_invoker as llm_invoker
 from aye.model.models import LLMResponse, LLMSource, VectorIndexResult
-from aye.model.config import SYSTEM_PROMPT
+from aye.model.config import SYSTEM_PROMPT, DEFAULT_MAX_OUTPUT_TOKENS
+
+# Default hard limit used in llm_invoker for unknown models
+CONTEXT_HARD_LIMIT = 170 * 1024
 
 
 class TestIsDebug(TestCase):
@@ -236,7 +239,7 @@ class TestDetermineSourceFiles(TestCase):
     @patch('aye.controller.llm_invoker._get_rag_context_files')
     @patch('aye.controller.llm_invoker.collect_sources')
     def test_large_project_uses_rag(self, mock_collect, mock_rag):
-        large_content = "a" * (llm_invoker.CONTEXT_HARD_LIMIT + 1)
+        large_content = "a" * (CONTEXT_HARD_LIMIT + 1)
         mock_collect.return_value = {"large.py": large_content}
         mock_rag.return_value = {"relevant.py": "content"}
         
@@ -377,7 +380,8 @@ class TestLlmInvoker(TestCase):
                 "source_files": self.source_files,
                 "chat_id": None,
                 "root": self.conf.root,
-                "system_prompt": SYSTEM_PROMPT
+                "system_prompt": SYSTEM_PROMPT,
+                "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS
             }
         )
         self.assertEqual(response.source, LLMSource.LOCAL)
@@ -415,7 +419,8 @@ class TestLlmInvoker(TestCase):
             chat_id=123,
             source_files=self.source_files,
             model=self.conf.selected_model,
-            system_prompt=SYSTEM_PROMPT
+            system_prompt=SYSTEM_PROMPT,
+            max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS
         )
         self.assertEqual(response.source, LLMSource.API)
         self.assertEqual(response.summary, "api summary")
@@ -426,7 +431,7 @@ class TestLlmInvoker(TestCase):
     @patch('aye.controller.llm_invoker.thinking_spinner')
     def test_invoke_llm_large_project_uses_rag(self, mock_spinner, mock_rprint):
         """Test that large projects use RAG to select relevant files."""
-        large_content = "a" * (llm_invoker.CONTEXT_HARD_LIMIT + 1)
+        large_content = "a" * (CONTEXT_HARD_LIMIT + 1)
         
         # Mock _determine_source_files to simulate large project behavior
         mock_index_manager = MagicMock()
@@ -534,7 +539,8 @@ class TestLlmInvoker(TestCase):
             chat_id=-1,
             source_files=self.source_files,
             model=self.conf.selected_model,
-            system_prompt=SYSTEM_PROMPT
+            system_prompt=SYSTEM_PROMPT,
+            max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS
         )
 
         debug_prints = [call[0][0] for call in mock_print.call_args_list]
@@ -581,7 +587,7 @@ class TestLlmInvoker(TestCase):
         mock_index_manager.query.return_value = [mock_chunk]
         self.conf.index_manager = mock_index_manager
         
-        large_content = "a" * (llm_invoker.CONTEXT_HARD_LIMIT + 1)
+        large_content = "a" * (CONTEXT_HARD_LIMIT + 1)
         
         with patch('pathlib.Path.is_file', return_value=True), \
              patch('pathlib.Path.read_text', return_value=large_content):
