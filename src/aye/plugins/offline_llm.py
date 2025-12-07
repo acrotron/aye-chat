@@ -172,7 +172,7 @@ class OfflineLLMPlugin(Plugin):
             if is_truncated_json(generated_text):
                 if self.debug:
                     print(f"[DEBUG] Response appears to be truncated:")
-                    print(assistant_resp_str)
+                    print(generated_text)
                 return {
                     "summary": TRUNCATED_RESPONSE_MESSAGE,
                     "updated_files": []
