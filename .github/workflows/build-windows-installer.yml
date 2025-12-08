@@ -225,7 +225,7 @@ jobs:
 
       - name: Sign installer with certificate
         run: |
-           smctl sign --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input "${{ steps.find-installer.outputs.INSTALLER_PATH }}" --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
+           smctl sign --verbose --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input "${{ steps.find-installer.outputs.INSTALLER_PATH }}" --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
         shell: cmd
         env:
           SM_HOST: ${{ secrets.SM_HOST }}
