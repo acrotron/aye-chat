@@ -45,9 +45,13 @@ jobs:
         id: stm-setup
         uses: digicert/code-signing-software-trust-action@v1.0.0
 
-      - name: Signing using certificate fingerprint      
+      - name: Check PKCS11 config file
         run: |
-           smctl sign --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input Output/*.exe --config-file pkcs11properties.cfg
+          IF EXIST "${{ steps.stm-setup.outputs.PKCS11_CONFIG }}" (
+            echo file exists: ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
+          ) ELSE (
+            echo !! file doesn't exist: ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
+          )
         shell: cmd
 
       - name: Stop for debugging
