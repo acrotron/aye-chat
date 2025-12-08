@@ -212,9 +212,9 @@ jobs:
           path: installer.iss
           options: /DMyAppVersion=${{ steps.version.outputs.VERSION }} /DMyAppNumericVersion=${{ steps.version.outputs.NUMERIC_VERSION }}
 
-      - name: Signing using certificate fingerprint
+      - name: Sign installer with certificate
         run: |
-           smctl sign --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input Output/*.exe --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
+           smctl sign --certificate D:\Certificate_pkcs12.p12 --input Output/*.exe --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
         shell: cmd
         env:
           SM_HOST: ${{ secrets.SM_HOST }}
