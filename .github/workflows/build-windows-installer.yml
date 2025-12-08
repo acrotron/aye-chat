@@ -26,6 +26,21 @@ jobs:
         with:
           fetch-depth: 0  # Needed for setuptools-scm to get version from tags
 
+      - name: Set up certificate 
+        run: | 
+            echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | base64 --decode > /d/Certificate_pkcs12.p12 
+        shell: bash 
+
+      - name: Set variables 
+        id: variables 
+        run: | 
+          echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT 
+          echo "SM_HOST=${{ secrets.SM_HOST }}" >> "$GITHUB_ENV" 
+          echo "SM_API_KEY=${{ secrets.SM_API_KEY }}" >> "$GITHUB_ENV" 
+          echo "SM_CLIENT_CERT_FILE=D:\\Certificate_pkcs12.p12" >> "$GITHUB_ENV" 
+          echo "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" >> "$GITHUB_ENV" 
+        shell: bash 
+
       - name: Setup Software Trust Manager (new)
         id: stm-setup
         uses: digicert/code-signing-software-trust-action@v1.0.0
