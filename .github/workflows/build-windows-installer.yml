@@ -45,6 +45,9 @@ jobs:
         id: stm-setup
         uses: digicert/code-signing-software-trust-action@v1.0.0
 
+      - name: List certificates
+        run: smctl certificate list
+        shell: cmd
 
       - name: Determine version
         id: version
