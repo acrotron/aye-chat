@@ -66,6 +66,8 @@ jobs:
             ls -la D:/Certificate_pkcs12.p12
             echo "Verifying certificate file format..."
             openssl pkcs12 -in D:/Certificate_pkcs12.p12 -info -nokeys -passin pass:${{ secrets.SM_CLIENT_CERT_PASSWORD }} 2>&1 | head -20 || echo "Failed to read certificate - may be wrong password or corrupted file"
+            echo "Getting certificate fingerprint (SHA1)..."
+            openssl pkcs12 -in D:/Certificate_pkcs12.p12 -passin pass:${{ secrets.SM_CLIENT_CERT_PASSWORD }} -nokeys 2>/dev/null | openssl x509 -fingerprint -sha1 -noout || echo "Failed to get fingerprint"
           else
             echo "Certificate file NOT found!"
           fi
@@ -214,7 +216,7 @@ jobs:
 
       - name: Sign installer with certificate
         run: |
-           smctl sign --certificate D:\Certificate_pkcs12.p12 --input Output/*.exe --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
+           smctl sign --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input Output/*.exe --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
         shell: cmd
         env:
           SM_HOST: ${{ secrets.SM_HOST }}
