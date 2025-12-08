@@ -45,14 +45,13 @@ jobs:
         id: stm-setup
         uses: digicert/code-signing-software-trust-action@v1.0.0
 
-      - name: List certificates
-        run: smctl certificate list
+      - name: Signing using certificate fingerprint      
+        run: |
+           smctl sign --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input Output/*.exe --config-file pkcs11properties.cfg
         shell: cmd
-        env:
-          SM_HOST: ${{ secrets.SM_HOST }}
-          SM_API_KEY: ${{ secrets.SM_API_KEY }}
-          SM_CLIENT_CERT_FILE: D:\Certificate_pkcs12.p12
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+
+      - name: Stop for debugging
+        run: exit 1
 
       - name: Determine version
         id: version
