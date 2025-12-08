@@ -54,8 +54,12 @@ jobs:
           )
         shell: cmd
 
-      - name: Stop for debugging
-        run: exit 1
+      - name: Find smctl location
+        run: where smctl
+        shell: cmd
+
+      # - name: Stop for debugging
+      #   run: exit 1
 
       - name: Determine version
         id: version
@@ -185,7 +189,7 @@ jobs:
 
       - name: Signing using certificate fingerprint      
         run: |
-           smctl sign --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input Output/*.exe --config-file pkcs11properties.cfg
+           smctl sign --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input Output/*.exe --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
         shell: cmd
 
       - name: Upload installer artifact
