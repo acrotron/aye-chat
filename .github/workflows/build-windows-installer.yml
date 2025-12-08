@@ -187,10 +187,15 @@ jobs:
           path: installer.iss
           options: /DMyAppVersion=${{ steps.version.outputs.VERSION }} /DMyAppNumericVersion=${{ steps.version.outputs.NUMERIC_VERSION }}
 
-      - name: Signing using certificate fingerprint      
+      - name: Signing using certificate fingerprint
         run: |
            smctl sign --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input Output/*.exe --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
         shell: cmd
+        env:
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: D:\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
