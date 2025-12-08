@@ -223,6 +223,15 @@ jobs:
           echo "INSTALLER_PATH=$($exe.FullName)" >> $env:GITHUB_OUTPUT
           echo "Found installer: $($exe.FullName)"
 
+      - name: Add signtool to PATH
+        shell: pwsh
+        run: |
+          $sdkPath = "C:\Program Files (x86)\Windows Kits\10\bin"
+          $latestSdk = Get-ChildItem -Path $sdkPath -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Sort-Object Name -Descending | Select-Object -First 1
+          $signtoolPath = Join-Path $latestSdk.FullName "x64"
+          echo "Adding to PATH: $signtoolPath"
+          echo "$signtoolPath" >> $env:GITHUB_PATH
+
       - name: Sign installer with certificate
         run: |
            smctl sign --verbose --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input "${{ steps.find-installer.outputs.INSTALLER_PATH }}" --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
