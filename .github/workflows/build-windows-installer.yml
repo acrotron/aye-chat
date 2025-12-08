@@ -58,6 +58,31 @@ jobs:
         run: where smctl
         shell: cmd
 
+      - name: Debug certificate setup
+        run: |
+          echo "Checking if certificate file exists..."
+          if [ -f "D:/Certificate_pkcs12.p12" ]; then
+            echo "Certificate file exists"
+            ls -la D:/Certificate_pkcs12.p12
+            echo "Verifying certificate file format..."
+            openssl pkcs12 -in D:/Certificate_pkcs12.p12 -info -nokeys -passin pass:${{ secrets.SM_CLIENT_CERT_PASSWORD }} 2>&1 | head -20 || echo "Failed to read certificate - may be wrong password or corrupted file"
+          else
+            echo "Certificate file NOT found!"
+          fi
+        shell: bash
+
+      - name: Verify secrets are set
+        run: |
+          echo Checking required secrets...
+          if [ -z "${{ secrets.SM_HOST }}" ]; then echo "ERROR: SM_HOST is not set"; else echo "SM_HOST is set"; fi
+          if [ -z "${{ secrets.SM_API_KEY }}" ]; then echo "ERROR: SM_API_KEY is not set"; else echo "SM_API_KEY is set (length: ${#SM_API_KEY})"; fi
+          if [ -z "${{ secrets.SM_CLIENT_CERT_PASSWORD }}" ]; then echo "ERROR: SM_CLIENT_CERT_PASSWORD is not set"; else echo "SM_CLIENT_CERT_PASSWORD is set"; fi
+          if [ -z "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" ]; then echo "ERROR: SM_CLIENT_CERT_FILE_B64 is not set"; else echo "SM_CLIENT_CERT_FILE_B64 is set"; fi
+          if [ -z "${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" ]; then echo "ERROR: SM_CODE_SIGNING_CERT_SHA1_HASH is not set"; else echo "SM_CODE_SIGNING_CERT_SHA1_HASH is set"; fi
+        shell: bash
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+
       # - name: Stop for debugging
       #   run: exit 1
 
