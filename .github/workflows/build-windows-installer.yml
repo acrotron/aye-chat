@@ -188,6 +188,7 @@ jobs:
 
   # Optional: Create a portable ZIP as well
   build-portable:
+    if: false  # Disabled
     name: Build Portable ZIP
     runs-on: windows-latest
 
