@@ -209,14 +209,23 @@ jobs:
           & "dist/aye-chat/aye.exe" --version
 
       - name: Build installer with Inno Setup
+        id: inno-setup
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.4
         with:
           path: installer.iss
           options: /DMyAppVersion=${{ steps.version.outputs.VERSION }} /DMyAppNumericVersion=${{ steps.version.outputs.NUMERIC_VERSION }}
 
+      - name: Find installer executable
+        id: find-installer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path Output -Filter *.exe | Select-Object -First 1
+          echo "INSTALLER_PATH=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          echo "Found installer: $($exe.FullName)"
+
       - name: Sign installer with certificate
         run: |
-           smctl sign --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input Output/*.exe --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
+           smctl sign --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input "${{ steps.find-installer.outputs.INSTALLER_PATH }}" --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
         shell: cmd
         env:
           SM_HOST: ${{ secrets.SM_HOST }}
