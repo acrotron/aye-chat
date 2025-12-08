@@ -45,6 +45,90 @@ jobs:
         id: stm-setup
         uses: digicert/code-signing-software-trust-action@v1.0.0
 
+      - name: Debug DigiCert Keylocker setup
+        shell: cmd
+        run: |
+          echo --
+
+          echo DigiCert Keylocker environment variables.
+          rem echo SM_API_KEY: $(SM_API_KEY)
+          echo SM_CLIENT_CERT_FILE: $(SM_CLIENT_CERT_FILE)
+          rem echo SM_CLIENT_CERT_PASSWORD: $(SM_CLIENT_CERT_PASSWORD)
+          echo SM_HOST: $(SM_HOST)
+          echo PKCS11_CONFIG: $(PKCS11_CONFIG)
+          echo SM_TLS_SKIP_VERIFY: $(SM_TLS_SKIP_VERIFY)
+          echo SM_LOG_OUTPUT: $(SM_LOG_OUTPUT)
+          echo --
+
+          echo where smctl
+          where smctl
+          echo --
+
+          echo supporting tool to determine keypair alias
+          echo smctl keypair list
+          smctl keypair list
+          echo --
+
+          echo smctl certificate list
+          smctl certificate list
+          echo --
+
+          echo smctl certificate download --keypair-alias="$(SM_KEYPAIR)" --name=KeyCert.pem --out=$(Agent.TempDirectory)
+          smctl certificate download --keypair-alias="$(SM_KEYPAIR)" --name=KeyCert.pem --out=$(Agent.TempDirectory)
+          echo --
+
+          IF EXIST $(SM_CLIENT_CERT_FILE) (
+              echo file exists: $(SM_CLIENT_CERT_FILE)
+          ) else (
+              echo !! file doesn't exist: $(SM_CLIENT_CERT_FILE)
+          )
+          echo --
+
+          IF EXIST $(Agent.TempDirectory)\KeyCert.pem (
+              echo file exists: $(Agent.TempDirectory)\KeyCert.pem
+          ) else (
+              echo !! file doesn't exist: $(Agent.TempDirectory)\KeyCert.pem
+          )
+          echo --
+
+          IF EXIST $(SSMClientToolsSetup.PKCS11_CONFIG) (
+              echo file exists: $(SSMClientToolsSetup.PKCS11_CONFIG)
+          ) else (
+              echo !! file doesn't exist: $(SSMClientToolsSetup.PKCS11_CONFIG)
+          )
+          echo --
+
+          IF EXIST $(Agent.TempDirectory)\smtools-windows-x64\smctl.exe (
+              echo file exists: $(Agent.TempDirectory)\smtools-windows-x64\smctl.exe
+          ) else (
+              echo !! file doesn't exist: $(Agent.TempDirectory)\smtools-windows-x64\smctl.exe
+          )
+          echo --
+
+          IF EXIST $(Agent.TempDirectory)\smtools-windows-x64\pkcs11properties.cfg (
+              echo file exists: $(Agent.TempDirectory)\smtools-windows-x64\pkcs11properties.cfg
+          ) else (
+              echo !! file doesn't exist: $(Agent.TempDirectory)\smtools-windows-x64\pkcs11properties.cfg
+          )
+          echo --
+
+          echo smctl sign --verbose --keypair-alias="$(SM_KEYPAIR)" --certificate=$(Agent.TempDirectory)\KeyCert.pem  --config-file $(SSMClientToolsSetup.PKCS11_CONFIG) --input $(Build.SourcesDirectory)\HelloWorld.exe --pkcs11-module $(Agent.TempDirectory)\$(SM_CLIENT_CERT_FILE)
+          smctl sign --verbose --keypair-alias="$(SM_KEYPAIR)" --certificate=$(Agent.TempDirectory)\KeyCert.pem  --config-file $(SSMClientToolsSetup.PKCS11_CONFIG) --input $(Build.SourcesDirectory)\HelloWorld.exe --pkcs11-module $(Agent.TempDirectory)\$(SM_CLIENT_CERT_FILE)
+          echo --
+
+
+          rem echo dir "%USERPROFILE%\.signingmanager\logs"
+          rem dir "%USERPROFILE%\.signingmanager\logs"
+          rem echo --
+
+          rem echo type "%USERPROFILE%\.signingmanager\logs\smctl.log"
+          rem type "%USERPROFILE%\.signingmanager\logs\smctl.log"
+          rem echo --
+
+          rem echo signtool (sometimes gives better error messages)
+          rem echo signtool sign /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 /csp "DigiCert Signing Manager KSP" /kc "$(SM_KEYPAIR)" /f $(Agent.TempDirectory)\KeyCert.pem /v $(Build.SourcesDirectory)\HelloWorld.exe
+          rem signtool sign /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 /csp "DigiCert Signing Manager KSP" /kc "$(SM_KEYPAIR)" /f $(Agent.TempDirectory)\KeyCert.pem /v $(Build.SourcesDirectory)\HelloWorld.exe
+
       - name: Determine version
         id: version
         shell: pwsh
