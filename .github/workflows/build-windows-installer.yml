@@ -48,6 +48,11 @@ jobs:
       - name: List certificates
         run: smctl certificate list
         shell: cmd
+        env:
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: D:\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
 
       - name: Determine version
         id: version
