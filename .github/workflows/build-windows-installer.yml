@@ -232,6 +232,14 @@ jobs:
           echo "Adding to PATH: $signtoolPath"
           echo "$signtoolPath" >> $env:GITHUB_PATH
 
+      - name: Sync Certificates to Windows Store
+        run: smctl windows certsync
+
+      - name: Verify Certificate (Debug)
+        run: |
+          smctl keypair ls
+          certutil -store My
+
       - name: Sign installer with certificate
         run: |
            smctl sign --verbose --fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} --input "${{ steps.find-installer.outputs.INSTALLER_PATH }}" --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
