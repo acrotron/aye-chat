@@ -81,6 +81,7 @@ jobs:
           if [ -z "${{ secrets.SM_CLIENT_CERT_PASSWORD }}" ]; then echo "ERROR: SM_CLIENT_CERT_PASSWORD is not set"; else echo "SM_CLIENT_CERT_PASSWORD is set"; fi
           if [ -z "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" ]; then echo "ERROR: SM_CLIENT_CERT_FILE_B64 is not set"; else echo "SM_CLIENT_CERT_FILE_B64 is set"; fi
           if [ -z "${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" ]; then echo "ERROR: SM_CODE_SIGNING_CERT_SHA1_HASH is not set"; else echo "SM_CODE_SIGNING_CERT_SHA1_HASH is set"; fi
+          if [ -z "${{ secrets.SM_KEYPAIR_ALIAS }}" ]; then echo "ERROR: SM_KEYPAIR_ALIAS is not set"; else echo "SM_KEYPAIR_ALIAS is set"; fi
         shell: bash
         env:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
@@ -88,7 +89,6 @@ jobs:
       - name: Verify Certificate (Debug)
         run: |
           smctl keypair ls
-          certutil -store My
 
       - name: Sync Certificates to Windows Store
         run: smctl windows certsync
@@ -96,10 +96,9 @@ jobs:
       - name: Verify Certificate (Debug)
         run: |
           smctl keypair ls
-          certutil -store My
 
-      - name: Stop for debugging
-        run: exit 1
+      # - name: Stop for debugging
+      #   run: exit 1
 
       - name: Determine version
         id: version
