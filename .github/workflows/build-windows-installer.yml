@@ -222,7 +222,7 @@ jobs:
 
       - name: Build installer with Inno Setup
         id: inno-setup
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.4
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
         with:
           path: installer.iss
           options: /DMyAppVersion=${{ steps.version.outputs.VERSION }} /DMyAppNumericVersion=${{ steps.version.outputs.NUMERIC_VERSION }}
