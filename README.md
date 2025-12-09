@@ -9,7 +9,7 @@ $ pip install ayechat
 $ aye chat          # Start in any project
 ```
 
-> On Windows, you can also install via the standalone installer: download [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/download/v0.30.2/aye-chat-0.30.2-setup.exe) and run it.
+> On Windows, you can also install via the standalone installer: download [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/download/v0.31.0/aye-chat-0.31.0-setup.exe) and run it.
 
 ![Aye Chat: The AI-powered terminal workspace](https://raw.githubusercontent.com/acrotron/aye-media/refs/heads/main/files/ai-shell.gif)
 
