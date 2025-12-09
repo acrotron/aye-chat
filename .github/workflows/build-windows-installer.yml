@@ -2,7 +2,7 @@ name: Build Windows Installer
 
 on:
   push:
-    branches: [ "dev", "signing" ]
+    branches: [ "dev" ]
   release:
     types: [published]
   workflow_dispatch:
@@ -86,16 +86,16 @@ jobs:
         env:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
 
-      - name: Verify Certificate (Debug)
-        run: |
-          smctl keypair ls
+      # - name: Verify Certificate (Debug)
+      #   run: |
+      #     smctl keypair ls
 
-      - name: Sync Certificates to Windows Store
-        run: smctl windows certsync
+      # - name: Sync Certificates to Windows Store
+      #   run: smctl windows certsync
 
-      - name: Verify Certificate (Debug)
-        run: |
-          smctl keypair ls
+      # - name: Verify Certificate (Debug)
+      #   run: |
+      #     smctl keypair ls
 
       # - name: Stop for debugging
       #   run: exit 1
@@ -245,6 +245,7 @@ jobs:
           echo "$signtoolPath" >> $env:GITHUB_PATH
 
       - name: Sign installer with certificate
+        if: github.event_name == 'release'
         run: |
            smctl sign --verbose --keypair-alias ${{ secrets.SM_KEYPAIR_ALIAS }} --input "${{ steps.find-installer.outputs.INSTALLER_PATH }}" --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
         shell: cmd
@@ -271,7 +272,6 @@ jobs:
 
   # Optional: Create a portable ZIP as well
   build-portable:
-    if: false  # Disabled
     name: Build Portable ZIP
     runs-on: windows-latest
 
