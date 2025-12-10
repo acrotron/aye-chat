@@ -11,6 +11,10 @@ $ aye chat          # Start in any project
 
 **macOS (Homebrew):**
 ```bash
+# Install Homebrew first (if not already installed):
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Then install Aye Chat:
 brew install acrotron/ayechat/aye-chat
 ```
 
