@@ -439,7 +439,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish to Homebrew Tap
-        if: (github.event_name == 'release') || (github.event.inputs.publish_to_tap == 'true')
+        # if: (github.event_name == 'release') || (github.event.inputs.publish_to_tap == 'true')
         env:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
         run: |
