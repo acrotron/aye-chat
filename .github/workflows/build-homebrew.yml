@@ -1,0 +1,656 @@
+name: Build Homebrew Formula
+
+on:
+  push:
+    branches: [ "dev-homebrew" ]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 0.29.1). Leave empty to use latest tag.'
+        required: false
+        type: string
+      publish_to_tap:
+        description: 'Publish formula to homebrew tap repository'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  PACKAGE_NAME: ayechat
+  FORMULA_NAME: aye-chat
+  TAP_REPO: acrotron/homebrew-ayechat
+
+jobs:
+  build-formula:
+    name: Build Homebrew Formula
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for setuptools-scm to get version from tags
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            # Manual input - use as-is
+            VERSION="${{ github.event.inputs.version }}"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            # Release event - use tag directly (like python-publish.yml)
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"  # Remove 'v' prefix if present
+          else
+            # Dev branch push - generate dev version (like python-publish-dev.yml)
+            # Get the latest tag, or use 0.0.0 if no tags exist
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+            LATEST_TAG="${LATEST_TAG#v}"  # Remove 'v' prefix if present
+
+            # Split version into major.minor.patch
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
+            MAJOR=${MAJOR:-0}
+            MINOR=${MINOR:-0}
+            # Remove any non-numeric suffix from PATCH
+            PATCH=$(echo "${PATCH:-0}" | sed 's/[^0-9].*//')
+
+            # Increment patch version for dev releases
+            NEXT_PATCH=$((PATCH + 1))
+            NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+
+            # Generate timestamp-based dev version
+            TIMESTAMP=$(date +"%Y%m%d%H%M%S")
+            VERSION="${NEXT_VERSION}.dev${TIMESTAMP}"
+
+            echo "Latest release: $LATEST_TAG"
+          fi
+
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building formula for version: $VERSION"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download package from PyPI and get SHA256
+        id: pypi
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          PACKAGE_NAME="${{ env.PACKAGE_NAME }}"
+
+          # Create Python script to fetch PyPI info
+          cat > /tmp/get_main_pypi_info.py << 'PYEOF'
+          import sys
+          import json
+          import urllib.request
+
+          def get_pypi_info(pkg, version):
+              url = f"https://pypi.org/pypi/{pkg}/{version}/json"
+              try:
+                  with urllib.request.urlopen(url) as response:
+                      data = json.loads(response.read().decode())
+                      for url_info in data.get("urls", []):
+                          if url_info.get("packagetype") == "sdist":
+                              filename = url_info.get("filename", "")
+                              if filename.endswith(".tar.gz"):
+                                  return url_info.get("url", ""), url_info.get("digests", {}).get("sha256", "")
+              except Exception as e:
+                  print(f"Error: {e}", file=sys.stderr)
+              return "", ""
+
+          if __name__ == "__main__":
+              pkg = sys.argv[1]
+              version = sys.argv[2]
+              url, sha = get_pypi_info(pkg, version)
+              print(url)
+              print(sha)
+          PYEOF
+
+          # Try to get URL and SHA256 from PyPI API first
+          PYPI_RESULT=$(python3 /tmp/get_main_pypi_info.py "$PACKAGE_NAME" "$VERSION")
+          PYPI_URL=$(echo "$PYPI_RESULT" | head -1 | tr -d '[:space:]')
+          PYPI_SHA=$(echo "$PYPI_RESULT" | tail -1 | tr -d '[:space:]')
+
+          if [ -n "$PYPI_URL" ] && [ -n "$PYPI_SHA" ]; then
+            echo "Found package on PyPI"
+            echo "URL=$PYPI_URL" >> $GITHUB_OUTPUT
+            echo "SHA256=$PYPI_SHA" >> $GITHUB_OUTPUT
+            echo "URL: $PYPI_URL"
+            echo "SHA256: $PYPI_SHA"
+          else
+            echo "Package not found on PyPI, using GitHub release tarball instead"
+            TARBALL_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/${{ env.PACKAGE_NAME }}-${VERSION}.tar.gz"
+
+            # Download and calculate SHA256
+            mkdir -p ./dist
+            curl -sL "$TARBALL_URL" -o "./dist/${PACKAGE_NAME}-${VERSION}.tar.gz"
+
+            TARBALL=$(ls ./dist/*.tar.gz 2>/dev/null | head -1)
+            if [ -z "$TARBALL" ]; then
+              echo "Error: No tarball found"
+              exit 1
+            fi
+
+            SHA256=$(shasum -a 256 "$TARBALL" | cut -d ' ' -f 1)
+
+            echo "URL=$TARBALL_URL" >> $GITHUB_OUTPUT
+            echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+            echo "URL: $TARBALL_URL"
+            echo "SHA256: $SHA256"
+          fi
+
+      - name: Generate Homebrew Formula
+        id: formula
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          SHA256="${{ steps.pypi.outputs.SHA256 }}"
+          URL="${{ steps.pypi.outputs.URL }}"
+
+          mkdir -p Formula
+
+          cat > Formula/aye-chat.rb << 'FORMULA_EOF'
+          class AyeChat < Formula
+            include Language::Python::Virtualenv
+
+            desc "Terminal-first AI Code Generator"
+            homepage "https://ayechat.ai"
+            url "URL_PLACEHOLDER"
+            sha256 "MAIN_PACKAGE_SHA256_PLACEHOLDER"
+            license "MIT"
+
+            depends_on "python@3.12"
+
+            resource "typer" do
+              url "TYPER_URL_PLACEHOLDER"
+              sha256 "TYPER_SHA256_PLACEHOLDER"
+            end
+
+            resource "httpx" do
+              url "HTTPX_URL_PLACEHOLDER"
+              sha256 "HTTPX_SHA256_PLACEHOLDER"
+            end
+
+            resource "keyring" do
+              url "KEYRING_URL_PLACEHOLDER"
+              sha256 "KEYRING_SHA256_PLACEHOLDER"
+            end
+
+            resource "prompt-toolkit" do
+              url "PROMPT_TOOLKIT_URL_PLACEHOLDER"
+              sha256 "PROMPT_TOOLKIT_SHA256_PLACEHOLDER"
+            end
+
+            resource "pathspec" do
+              url "PATHSPEC_URL_PLACEHOLDER"
+              sha256 "PATHSPEC_SHA256_PLACEHOLDER"
+            end
+
+            def install
+              virtualenv_install_with_resources
+            end
+
+            test do
+              assert_match "aye", shell_output("#{bin}/aye --version")
+            end
+          end
+          FORMULA_EOF
+
+          # Replace placeholders
+          sed -i '' "s|URL_PLACEHOLDER|$URL|g" Formula/aye-chat.rb
+          sed -i '' "s|MAIN_PACKAGE_SHA256_PLACEHOLDER|$SHA256|g" Formula/aye-chat.rb
+
+          echo "Generated formula:"
+          cat Formula/aye-chat.rb
+
+      - name: Fetch dependency SHA256 hashes and URLs
+        run: |
+          # Create a Python script to fetch PyPI info
+          cat > /tmp/get_pypi_info.py << 'PYEOF'
+          import sys
+          import json
+          import urllib.request
+
+          def get_pypi_info(pkg, version):
+              url = f"https://pypi.org/pypi/{pkg}/{version}/json"
+              try:
+                  with urllib.request.urlopen(url) as response:
+                      data = json.loads(response.read().decode())
+                      for url_info in data.get("urls", []):
+                          if url_info.get("packagetype") == "sdist":
+                              filename = url_info.get("filename", "")
+                              if filename.endswith(".tar.gz"):
+                                  return url_info.get("url", ""), url_info.get("digests", {}).get("sha256", "")
+              except Exception as e:
+                  print(f"Error: {e}", file=sys.stderr)
+              return "FETCH_FAILED", "FETCH_FAILED"
+
+          if __name__ == "__main__":
+              pkg = sys.argv[1]
+              version = sys.argv[2]
+              url, sha = get_pypi_info(pkg, version)
+              print(f"{url}")
+              print(f"{sha}")
+          PYEOF
+
+          # Function to get SHA256 and URL for a PyPI package
+          get_pypi_info() {
+            local pkg=$1
+            local version=$2
+            local url_file=$3
+            local sha_file=$4
+
+            local result=$(python3 /tmp/get_pypi_info.py "$pkg" "$version")
+            local pkg_url=$(echo "$result" | head -1)
+            local pkg_sha=$(echo "$result" | tail -1)
+
+            echo "$pkg_url" > "$url_file"
+            echo "$pkg_sha" > "$sha_file"
+          }
+
+          # Fetch all dependencies
+          echo "Fetching typer..."
+          get_pypi_info "typer" "0.15.1" "/tmp/typer_url" "/tmp/typer_sha"
+          TYPER_SHA=$(cat /tmp/typer_sha | tr -d '[:space:]')
+          TYPER_URL=$(cat /tmp/typer_url | tr -d '[:space:]')
+          echo "TYPER_SHA=$TYPER_SHA"
+          echo "TYPER_URL=$TYPER_URL"
+
+          echo "Fetching httpx..."
+          get_pypi_info "httpx" "0.28.1" "/tmp/httpx_url" "/tmp/httpx_sha"
+          HTTPX_SHA=$(cat /tmp/httpx_sha | tr -d '[:space:]')
+          HTTPX_URL=$(cat /tmp/httpx_url | tr -d '[:space:]')
+          echo "HTTPX_SHA=$HTTPX_SHA"
+          echo "HTTPX_URL=$HTTPX_URL"
+
+          echo "Fetching keyring..."
+          get_pypi_info "keyring" "25.6.0" "/tmp/keyring_url" "/tmp/keyring_sha"
+          KEYRING_SHA=$(cat /tmp/keyring_sha | tr -d '[:space:]')
+          KEYRING_URL=$(cat /tmp/keyring_url | tr -d '[:space:]')
+          echo "KEYRING_SHA=$KEYRING_SHA"
+          echo "KEYRING_URL=$KEYRING_URL"
+
+          echo "Fetching prompt_toolkit..."
+          get_pypi_info "prompt_toolkit" "3.0.48" "/tmp/prompt_toolkit_url" "/tmp/prompt_toolkit_sha"
+          PROMPT_TOOLKIT_SHA=$(cat /tmp/prompt_toolkit_sha | tr -d '[:space:]')
+          PROMPT_TOOLKIT_URL=$(cat /tmp/prompt_toolkit_url | tr -d '[:space:]')
+          echo "PROMPT_TOOLKIT_SHA=$PROMPT_TOOLKIT_SHA"
+          echo "PROMPT_TOOLKIT_URL=$PROMPT_TOOLKIT_URL"
+
+          echo "Fetching pathspec..."
+          get_pypi_info "pathspec" "0.12.1" "/tmp/pathspec_url" "/tmp/pathspec_sha"
+          PATHSPEC_SHA=$(cat /tmp/pathspec_sha | tr -d '[:space:]')
+          PATHSPEC_URL=$(cat /tmp/pathspec_url | tr -d '[:space:]')
+          echo "PATHSPEC_SHA=$PATHSPEC_SHA"
+          echo "PATHSPEC_URL=$PATHSPEC_URL"
+
+          # Update the formula with actual SHA256 values and URLs
+          update_value() {
+            local placeholder=$1
+            local value=$2
+            local is_sha=$3
+
+            if [ "$is_sha" = "true" ]; then
+              # Validate it's exactly a 64-char lowercase hex string
+              if [ ${#value} -eq 64 ] && [[ "$value" =~ ^[a-f0-9]+$ ]]; then
+                sed -i '' "s|${placeholder}|${value}|g" Formula/aye-chat.rb
+                echo "Updated $placeholder -> $value"
+              else
+                echo "ERROR: Invalid hash for $placeholder: '$value' (length: ${#value})"
+              fi
+            else
+              # URL - just check it's not empty or FETCH_FAILED
+              if [ -n "$value" ] && [ "$value" != "FETCH_FAILED" ]; then
+                sed -i '' "s|${placeholder}|${value}|g" Formula/aye-chat.rb
+                echo "Updated $placeholder -> $value"
+              else
+                echo "ERROR: Invalid URL for $placeholder: '$value'"
+              fi
+            fi
+          }
+
+          update_value "TYPER_SHA256_PLACEHOLDER" "$TYPER_SHA" "true"
+          update_value "TYPER_URL_PLACEHOLDER" "$TYPER_URL" "false"
+          update_value "HTTPX_SHA256_PLACEHOLDER" "$HTTPX_SHA" "true"
+          update_value "HTTPX_URL_PLACEHOLDER" "$HTTPX_URL" "false"
+          update_value "KEYRING_SHA256_PLACEHOLDER" "$KEYRING_SHA" "true"
+          update_value "KEYRING_URL_PLACEHOLDER" "$KEYRING_URL" "false"
+          update_value "PROMPT_TOOLKIT_SHA256_PLACEHOLDER" "$PROMPT_TOOLKIT_SHA" "true"
+          update_value "PROMPT_TOOLKIT_URL_PLACEHOLDER" "$PROMPT_TOOLKIT_URL" "false"
+          update_value "PATHSPEC_SHA256_PLACEHOLDER" "$PATHSPEC_SHA" "true"
+          update_value "PATHSPEC_URL_PLACEHOLDER" "$PATHSPEC_URL" "false"
+
+          echo "Updated formula:"
+          cat Formula/aye-chat.rb
+
+      - name: Test formula locally
+        run: |
+          # Install brew dependencies
+          brew install python@3.12
+
+          # Test the formula syntax
+          brew style --fix Formula/aye-chat.rb || true
+
+          echo "Formula syntax check completed"
+
+          # Verify no placeholder values remain in the formula
+          echo "Checking for unresolved placeholders..."
+          if grep -q "_PLACEHOLDER" Formula/aye-chat.rb; then
+            echo "ERROR: Formula contains unresolved placeholders:"
+            grep "_PLACEHOLDER" Formula/aye-chat.rb
+            exit 1
+          fi
+          echo "No placeholders found - all SHA256 values resolved"
+
+          # Verify main package SHA256 by re-downloading and comparing
+          echo "Verifying main package SHA256..."
+          URL="${{ steps.pypi.outputs.URL }}"
+          EXPECTED_SHA="${{ steps.pypi.outputs.SHA256 }}"
+
+          mkdir -p verify_tmp
+          curl -sL "$URL" -o verify_tmp/package.tar.gz
+
+          if [ -f verify_tmp/package.tar.gz ] && [ -s verify_tmp/package.tar.gz ]; then
+            ACTUAL_SHA=$(shasum -a 256 verify_tmp/package.tar.gz | cut -d ' ' -f 1)
+            echo "Expected SHA256: $EXPECTED_SHA"
+            echo "Actual SHA256:   $ACTUAL_SHA"
+
+            if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+              echo "ERROR: SHA256 mismatch for main package!"
+              echo "The PyPI URL may point to a different file than what was downloaded earlier."
+              exit 1
+            fi
+            echo "SHA256 verification passed for main package"
+          else
+            echo "WARNING: Could not download package from $URL for verification"
+            echo "This may be expected if the package isn't on PyPI yet"
+          fi
+
+          rm -rf verify_tmp
+
+          # Verify the SHA256 values in the formula match actual package downloads
+          echo "Verifying dependency SHA256 values..."
+          verify_dep_sha() {
+            local name=$1
+            local url=$2
+            local expected_sha=$3
+
+            if [ "$expected_sha" = "" ] || [[ "$expected_sha" == *"PLACEHOLDER"* ]]; then
+              echo "SKIP: $name has no valid SHA256"
+              return 1
+            fi
+
+            mkdir -p verify_tmp
+            curl -sL "$url" -o verify_tmp/dep.tar.gz 2>/dev/null
+
+            if [ -f verify_tmp/dep.tar.gz ] && [ -s verify_tmp/dep.tar.gz ]; then
+              actual_sha=$(shasum -a 256 verify_tmp/dep.tar.gz | cut -d ' ' -f 1)
+              if [ "$expected_sha" != "$actual_sha" ]; then
+                echo "ERROR: SHA256 mismatch for $name"
+                echo "  Expected: $expected_sha"
+                echo "  Actual:   $actual_sha"
+                rm -rf verify_tmp
+                return 1
+              fi
+              echo "OK: $name SHA256 verified"
+            else
+              echo "WARN: Could not download $name for verification"
+            fi
+            rm -rf verify_tmp
+            return 0
+          }
+
+          # Extract SHA256 and URL values from the formula and verify them
+          TYPER_SHA=$(grep -A2 'resource "typer"' Formula/aye-chat.rb | grep sha256 | sed 's/.*sha256 "\([^"]*\)".*/\1/')
+          TYPER_URL=$(grep -A2 'resource "typer"' Formula/aye-chat.rb | grep 'url "' | sed 's/.*url "\([^"]*\)".*/\1/')
+          HTTPX_SHA=$(grep -A2 'resource "httpx"' Formula/aye-chat.rb | grep sha256 | sed 's/.*sha256 "\([^"]*\)".*/\1/')
+          HTTPX_URL=$(grep -A2 'resource "httpx"' Formula/aye-chat.rb | grep 'url "' | sed 's/.*url "\([^"]*\)".*/\1/')
+          KEYRING_SHA=$(grep -A2 'resource "keyring"' Formula/aye-chat.rb | grep sha256 | sed 's/.*sha256 "\([^"]*\)".*/\1/')
+          KEYRING_URL=$(grep -A2 'resource "keyring"' Formula/aye-chat.rb | grep 'url "' | sed 's/.*url "\([^"]*\)".*/\1/')
+          PROMPT_TOOLKIT_SHA=$(grep -A2 'resource "prompt-toolkit"' Formula/aye-chat.rb | grep sha256 | sed 's/.*sha256 "\([^"]*\)".*/\1/')
+          PROMPT_TOOLKIT_URL=$(grep -A2 'resource "prompt-toolkit"' Formula/aye-chat.rb | grep 'url "' | sed 's/.*url "\([^"]*\)".*/\1/')
+          PATHSPEC_SHA=$(grep -A2 'resource "pathspec"' Formula/aye-chat.rb | grep sha256 | sed 's/.*sha256 "\([^"]*\)".*/\1/')
+          PATHSPEC_URL=$(grep -A2 'resource "pathspec"' Formula/aye-chat.rb | grep 'url "' | sed 's/.*url "\([^"]*\)".*/\1/')
+
+          FAILED=0
+          verify_dep_sha "typer" "$TYPER_URL" "$TYPER_SHA" || FAILED=1
+          verify_dep_sha "httpx" "$HTTPX_URL" "$HTTPX_SHA" || FAILED=1
+          verify_dep_sha "keyring" "$KEYRING_URL" "$KEYRING_SHA" || FAILED=1
+          verify_dep_sha "prompt_toolkit" "$PROMPT_TOOLKIT_URL" "$PROMPT_TOOLKIT_SHA" || FAILED=1
+          verify_dep_sha "pathspec" "$PATHSPEC_URL" "$PATHSPEC_SHA" || FAILED=1
+
+          if [ $FAILED -eq 1 ]; then
+            echo "ERROR: One or more SHA256 verifications failed"
+            exit 1
+          fi
+
+          echo "All SHA256 verifications passed!"
+
+      - name: Upload formula artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula-${{ steps.version.outputs.VERSION }}
+          path: Formula/aye-chat.rb
+          if-no-files-found: error
+
+      - name: Publish to Homebrew Tap
+        if: (github.event_name == 'release') || (github.event.inputs.publish_to_tap == 'true')
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$TAP_GITHUB_TOKEN" ]; then
+            echo "Warning: TAP_GITHUB_TOKEN not set, skipping tap publication"
+            exit 0
+          fi
+
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          # Clone the tap repository
+          git clone "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/${{ env.TAP_REPO }}.git" tap-repo
+
+          # Copy the formula
+          mkdir -p tap-repo/Formula
+          cp Formula/aye-chat.rb tap-repo/Formula/
+
+          # Commit and push
+          cd tap-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/aye-chat.rb
+          git commit -m "Update aye-chat to $VERSION" || echo "No changes to commit"
+          git push || echo "Failed to push - check TAP_GITHUB_TOKEN permissions"
+
+  # Alternative: Build a standalone binary and create a Homebrew Cask
+  build-cask:
+    name: Build macOS Binary & Cask
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for setuptools-scm to get version from tags
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            # Manual input - use as-is
+            VERSION="${{ github.event.inputs.version }}"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            # Release event - use tag directly (like python-publish.yml)
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"  # Remove 'v' prefix if present
+          else
+            # Dev branch push - generate dev version (like python-publish-dev.yml)
+            # Get the latest tag, or use 0.0.0 if no tags exist
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+            LATEST_TAG="${LATEST_TAG#v}"  # Remove 'v' prefix if present
+
+            # Split version into major.minor.patch
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_TAG"
+            MAJOR=${MAJOR:-0}
+            MINOR=${MINOR:-0}
+            # Remove any non-numeric suffix from PATCH
+            PATCH=$(echo "${PATCH:-0}" | sed 's/[^0-9].*//')
+
+            # Increment patch version for dev releases
+            NEXT_PATCH=$((PATCH + 1))
+            NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+
+            # Generate timestamp-based dev version
+            TIMESTAMP=$(date +"%Y%m%d%H%M%S")
+            VERSION="${NEXT_VERSION}.dev${TIMESTAMP}"
+
+            echo "Latest release: $LATEST_TAG"
+          fi
+
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building cask for version: $VERSION"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Create macOS spec file
+        run: |
+          cat > aye-chat-mac.spec << 'EOF'
+          # -*- mode: python ; coding: utf-8 -*-
+
+          a = Analysis(
+              ['src/aye/__main__.py'],
+              pathex=[],
+              binaries=[],
+              datas=[],
+              hiddenimports=[
+                  'chromadb',
+                  'onnxruntime',
+                  'typer',
+                  'httpx',
+                  'keyring',
+                  'prompt_toolkit',
+                  'pathspec',
+              ],
+              hookspath=[],
+              hooksconfig={},
+              runtime_hooks=[],
+              excludes=[],
+              noarchive=False,
+          )
+
+          pyz = PYZ(a.pure)
+
+          exe = EXE(
+              pyz,
+              a.scripts,
+              [],
+              exclude_binaries=True,
+              name='aye',
+              debug=False,
+              bootloader_ignore_signals=False,
+              strip=False,
+              upx=True,
+              console=True,
+          )
+
+          coll = COLLECT(
+              exe,
+              a.binaries,
+              a.datas,
+              strip=False,
+              upx=True,
+              upx_exclude=[],
+              name='aye-chat',
+          )
+          EOF
+
+      - name: Build with PyInstaller
+        run: pyinstaller aye-chat-mac.spec --noconfirm
+
+      - name: Test the build
+        run: |
+          ./dist/aye-chat/aye --version
+
+      - name: Create tarball
+        id: tarball
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          ARCH=$(uname -m)
+
+          cd dist
+          tar -czvf "aye-chat-${VERSION}-macos-${ARCH}.tar.gz" aye-chat/
+
+          # Calculate SHA256
+          SHA256=$(shasum -a 256 "aye-chat-${VERSION}-macos-${ARCH}.tar.gz" | cut -d ' ' -f 1)
+
+          echo "TARBALL=aye-chat-${VERSION}-macos-${ARCH}.tar.gz" >> $GITHUB_OUTPUT
+          echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+          echo "ARCH=$ARCH" >> $GITHUB_OUTPUT
+
+          echo "Created tarball: aye-chat-${VERSION}-macos-${ARCH}.tar.gz"
+          echo "SHA256: $SHA256"
+
+      - name: Generate Homebrew Cask
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          SHA256="${{ steps.tarball.outputs.SHA256 }}"
+          ARCH="${{ steps.tarball.outputs.ARCH }}"
+
+          mkdir -p Casks
+
+          cat > Casks/aye-chat.rb << EOF
+          cask "aye-chat" do
+            version "$VERSION"
+            sha256 "$SHA256"
+
+            url "https://github.com/${{ github.repository }}/releases/download/v#{version}/aye-chat-#{version}-macos-${ARCH}.tar.gz"
+            name "Aye Chat"
+            desc "Terminal-first AI Code Generator"
+            homepage "https://ayechat.ai"
+
+            binary "aye-chat/aye"
+
+            zap trash: [
+              "~/.aye",
+              "~/.config/aye",
+            ]
+          end
+          EOF
+
+          echo "Generated cask:"
+          cat Casks/aye-chat.rb
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-binary-${{ steps.version.outputs.VERSION }}-${{ steps.tarball.outputs.ARCH }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+      - name: Upload cask artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-cask-${{ steps.version.outputs.VERSION }}
+          path: Casks/aye-chat.rb
+          if-no-files-found: error
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
