@@ -2,7 +2,7 @@ name: Build Homebrew Formula
 
 on:
   push:
-    branches: [ "dev-homebrew" ]
+    branches: [ "dev" ]
   release:
     types: [published]
   workflow_dispatch:
