@@ -13,7 +13,11 @@ jobs:
       - name: Tap and install aye-chat
         run: |
           brew tap acrotron/ayechat
-          brew install --verbose --debug aye-chat 2>&1 || (cat $(brew --prefix)/var/log/Homebrew/aye-chat/* 2>/dev/null; exit 1)
+          brew install --verbose --debug aye-chat 2>&1 || {
+            echo "=== Homebrew logs ==="
+            find ~/Library/Logs/Homebrew -name "*.log" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null
+            exit 1
+          }
 
       - name: Verify installation
         run: |
