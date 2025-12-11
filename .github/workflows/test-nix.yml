@@ -1,0 +1,60 @@
+name: Test Nix Package
+
+on:
+  push:
+    paths:
+      - 'ayechat.nix'
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/workflows/test-nix.yml'
+  pull_request:
+    paths:
+      - 'ayechat.nix'
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/workflows/test-nix.yml'
+  workflow_dispatch:
+
+jobs:
+  test-local-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Generate flake.lock
+        run: nix flake lock
+
+      - name: Commit flake.lock if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add flake.lock
+          if git diff --staged --quiet; then
+            echo "No changes to flake.lock"
+          else
+            git commit -m "Update flake.lock"
+            git push
+          fi
+
+      - name: Check flake
+        run: nix flake check
+
+      - name: Build package
+        run: nix build
+
+      - name: Test binary
+        run: |
+          ./result/bin/aye --version
+
+      - name: Verify package metadata
+        run: |
+          echo "Package built successfully"
+          ls -la ./result/bin/
