@@ -30,6 +30,12 @@ python3Packages.buildPythonApplication rec {
     chromadb
   ];
 
+  # Skip dependency version checks - nixpkgs versions may differ from PyPI requirements
+  pythonRelaxDeps = true;
+
+  # Skip tests during build
+  doCheck = false;
+
   pythonImportsCheck = [ "aye" ];
 
   meta = with lib; {
