@@ -16,14 +16,16 @@ jobs:
         run: |
           brew update
           brew tap acrotron/aye-chat
-          brew install --verbose aye-chat 2>&1 || {
+          brew install --verbose --debug aye-chat 2>&1 || {
             echo "=== Homebrew logs ==="
-            find ~/Library/Logs/Homebrew/aye-chat -name "*.log" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null
-            echo "=== Trying to get pip output ==="
-            # Try manual installation to see full error
-            brew install python@3.12
-            python3.12 -m venv /tmp/test-venv
-            /tmp/test-venv/bin/pip install ayechat 2>&1 || true
+            find ~/Library/Logs/Homebrew -name "*.log" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
+            echo "=== Post-install log ==="
+            cat ~/Library/Logs/Homebrew/aye-chat/post_install.* 2>/dev/null || true
+            echo "=== Formula info ==="
+            brew info aye-chat || true
+            echo "=== Cellar contents ==="
+            ls -la $(brew --cellar)/aye-chat/ 2>/dev/null || true
+            ls -la $(brew --cellar)/aye-chat/*/libexec/bin/ 2>/dev/null || true
             exit 1
           }
 
