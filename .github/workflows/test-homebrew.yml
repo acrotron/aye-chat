@@ -10,9 +10,9 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - name: Tap and install ayechat
+      - name: Tap and install aye-chat
         run: |
-          brew tap acrotron/ayechat
+          brew tap acrotron/aye-chat
           brew install ayechat
 
       - name: Verify installation
