@@ -46,7 +46,7 @@ jobs:
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.TAP_GITHUB_TOKEN }}
-          repository: acrotron/homebrew-ayechat
+          repository: acrotron/homebrew-aye-chat
           event-type: update-formula
           client-payload: |
             {
