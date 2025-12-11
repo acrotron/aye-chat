@@ -1,4 +1,4 @@
-name: Test Nix GitHub Installation
+name: Test Nix Installation
 
 on:
   workflow_dispatch:
