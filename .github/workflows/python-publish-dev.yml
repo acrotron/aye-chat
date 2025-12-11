@@ -62,6 +62,8 @@ jobs:
           with open('pyproject.toml', 'r') as f:
               config = toml.load(f)
 
+          # Change package name from ayechat to ayechat-dev
+          config['project']['name'] = 'ayechat-dev'
           # Remove dynamic version and set static version
           config['project']['version'] = '${{ steps.version.outputs.version }}'
           if 'dynamic' in config['project']:
