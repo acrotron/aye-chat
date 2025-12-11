@@ -2,10 +2,12 @@ name: Test Nix GitHub Installation
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - dev-nix
- 
+    inputs:
+      branch:
+        description: 'Branch to test (default: dev-nix)'
+        required: false
+        default: 'dev-nix'
+
 jobs:
   test-github-install:
     runs-on: ubuntu-latest
@@ -18,10 +20,10 @@ jobs:
 
       - name: Test nix run from GitHub
         run: |
-          nix run github:acrotron/aye-chat -- --version
+          nix run github:acrotron/aye-chat/${{ github.event.inputs.branch || 'dev-nix' }} -- --version
 
       - name: Test nix profile install from GitHub
         run: |
-          nix profile install github:acrotron/aye-chat
+          nix profile install github:acrotron/aye-chat/${{ github.event.inputs.branch || 'dev-nix' }}
           aye --version
           nix profile remove '.*aye.*'
