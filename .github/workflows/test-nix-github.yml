@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: 'Branch to test (default: dev-nix)'
+        description: 'Branch to test (default: dev)'
         required: false
-        default: 'dev-nix'
+        default: 'dev'
   push:
     branches:
-      - dev-nix
+      - dev
       
 jobs:
   test-github-install:
