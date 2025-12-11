@@ -13,7 +13,7 @@ jobs:
       - name: Tap and install aye-chat
         run: |
           brew tap acrotron/ayechat
-          brew install ayechat
+          brew install aye-chat
 
       - name: Verify installation
         run: |
