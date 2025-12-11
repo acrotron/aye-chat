@@ -1,7 +1,4 @@
-# This workflow will upload a Python Package to PyPI when a push is made to the dev branch
-# It automatically generates a dev version number based on the latest tag + timestamp
-
-name: Upload Python Dev Package to PyPI
+name: Upload Python Package to PyPI from DEV branch
 
 on:
   push:

@@ -11,14 +11,22 @@ $ aye chat          # Start in any project
 
 **macOS (Homebrew):**
 ```bash
-# Install Homebrew first (if not already installed):
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Then install Aye Chat:
-brew install acrotron/ayechat/aye-chat
+brew tap acrotron/aye-chat
+brew install aye-chat
 ```
 
-> On Windows, you can also install via the standalone installer: download [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/download/v0.30.2/aye-chat-0.30.2-setup.exe) and run it.
+**Windows (Installer):**
+
+Download and run [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/latest/download/aye-chat-setup.exe)
+
+**NixOS/Nix:**
+```bash
+# Run directly without installing
+nix run github:acrotron/aye-chat
+
+# Or install to your profile
+nix profile install github:acrotron/aye-chat
+```
 
 ![Aye Chat: The AI-powered terminal workspace](https://raw.githubusercontent.com/acrotron/aye-media/refs/heads/main/files/ai-shell.gif)
 
@@ -76,8 +84,7 @@ application that requires no manual setup.
 
 #### Installation
 
-1.  Download the `aye-chat-X.X.X-setup.exe` file from the latest [GitHub
-release](https://github.com/acrotron/aye-chat/releases/latest).
+1.  Download the latest [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/latest/download/aye-chat-setup.exe) from the GitHub Releases page.
 2.  Run the downloaded installer.
 3.  During setup, it is highly recommended to keep the following options enabled:
     - `Add the application directory to your PATH`
