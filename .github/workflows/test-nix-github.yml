@@ -21,15 +21,20 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      - name: Test nix run from GitHub
+      - name: nix run aye-chat directly from GitHub
         run: |
           nix run github:acrotron/aye-chat/${{ github.event.inputs.branch || 'dev-nix' }} -- --version
 
-      - name: Test nix profile install from GitHub
+      - name: Install aye-chat through nix profile install from GitHub
         run: |
           nix profile install github:acrotron/aye-chat/${{ github.event.inputs.branch || 'dev-nix' }}
+
+      - name: Test aye-chat execution
+        run: |
           aye --version
 
+      - name: Remove installation
+        run: |
           # List all installed packages
           echo "Installed packages:"
           nix profile list
