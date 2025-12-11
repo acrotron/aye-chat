@@ -1,0 +1,23 @@
+name: Test Homebrew Installation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-homebrew:
+    runs-on: macos-latest
+
+    steps:
+      - name: Tap and install ayechat
+        run: |
+          brew tap acrotron/ayechat
+          brew install ayechat
+
+      - name: Verify installation
+        run: |
+          which aye
+          aye --version
+
+      - name: Test basic functionality
+        run: |
+          aye --help
