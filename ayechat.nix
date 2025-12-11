@@ -1,6 +1,5 @@
 { lib
 , python3Packages
-, fetchPypi
 }:
 
 python3Packages.buildPythonApplication rec {
@@ -8,9 +7,42 @@ python3Packages.buildPythonApplication rec {
   version = "0.31.0";
   pyproject = true;
 
-  src = fetchPypi {
-    inherit pname version;
-    hash = "sha256-K8+HIQXlMlaWK1aKdCQu53xAoCLt6kePkdRoTt0DNvc=";
+  src = lib.cleanSourceWith {
+    src = ./.;
+    filter = path: type:
+      let
+        baseName = baseNameOf path;
+        relPath = lib.removePrefix (toString ./. + "/") (toString path);
+      in
+      # Exclude common unnecessary files and directories
+      !(baseName == "__pycache__" ||
+        baseName == ".git" ||
+        baseName == ".aye" ||
+        baseName == ".venv" ||
+        baseName == ".env" ||
+        baseName == "venv" ||
+        baseName == "env" ||
+        baseName == "node_modules" ||
+        baseName == "dist" ||
+        baseName == "build" ||
+        baseName == ".eggs" ||
+        baseName == "*.egg-info" ||
+        baseName == ".pytest_cache" ||
+        baseName == ".mypy_cache" ||
+        baseName == ".ruff_cache" ||
+        baseName == ".tox" ||
+        baseName == ".nox" ||
+        baseName == "htmlcov" ||
+        baseName == ".coverage" ||
+        baseName == "*.pyc" ||
+        baseName == "*.pyo" ||
+        baseName == "*.so" ||
+        baseName == "result" ||
+        lib.hasSuffix ".egg-info" baseName ||
+        lib.hasSuffix ".pyc" baseName ||
+        lib.hasSuffix ".pyo" baseName ||
+        lib.hasPrefix ".#" baseName ||
+        lib.hasSuffix "~" baseName);
   };
 
   build-system = with python3Packages; [
