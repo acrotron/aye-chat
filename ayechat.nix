@@ -1,47 +1,41 @@
-{ python3Packages
-, lib ? python3Packages.lib
+{ lib
+, python3Packages
+, fetchPypi
 }:
 
 python3Packages.buildPythonApplication rec {
   pname = "ayechat";
   version = "0.31.0";
+  pyproject = true;
 
-  src = python3Packages.fetchPypi {
+  src = fetchPypi {
     inherit pname version;
-    sha256 = "sha256-K8+HIQXlMlaWK1aKdCQu53xAoCLt6kePkdRoTt0DNvc=";
+    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
   };
 
-  postPatch = ''
-    cat requirements.txt
-    if [ -f requirements.txt ]; then
-      sed -i 's/==.*$//g' requirements.txt
-    fi
-    
-    if [ -f pyproject.toml ]; then
-      sed -i -E 's/(>=|==)[^"]*/>=0/g' pyproject.toml
-    fi
+  build-system = with python3Packages; [
+    setuptools
+    wheel
+  ];
 
-    cat pyproject.toml
-  '';
-
-  propagatedBuildInputs = with python3Packages; [
+  dependencies = with python3Packages; [
+    rich
+    typer
+    keyring
     prompt-toolkit
     httpx
     pathspec
     tree-sitter
-    typer
-    keyring
     chromadb
   ];
 
-  doCheck = false;
-
-  pyproject = true;
-  build-system = [ python3Packages.setuptools-scm ];
+  pythonImportsCheck = [ "aye" ];
 
   meta = with lib; {
-    description = "My Python application from PyPI";
-    homepage = "https://pypi.org/project/myapp/";
+    description = "AI-powered terminal workspace";
+    homepage = "https://ayechat.ai";
     license = licenses.mit;
+    maintainers = [ ];
+    mainProgram = "aye";
   };
 }
