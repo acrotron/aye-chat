@@ -1,0 +1,55 @@
+name: Update Homebrew Formula
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  update-homebrew:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version and ref
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            REF="${{ github.event.release.tag_name }}"
+          else
+            # For dev-homebrew branch, use latest tag
+            REF="${{ github.sha }}"
+            VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+          fi
+          VERSION="${VERSION#v}"  # Remove 'v' prefix if present
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "REF=$REF" >> $GITHUB_OUTPUT
+          echo "Updating Homebrew formula for version: $VERSION (ref: $REF)"
+
+      - name: Download source tarball and calculate SHA256
+        id: sha256
+        run: |
+          URL="https://github.com/${{ github.repository }}/archive/${{ steps.release.outputs.REF }}.tar.gz"
+          echo "Downloading: $URL"
+          curl -sL "$URL" -o source.tar.gz
+          SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)
+          echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+          echo "SHA256: $SHA256"
+
+      - name: Update Homebrew tap
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          repository: acrotron/homebrew-aye-chat
+          event-type: update-formula
+          client-payload: |
+            {
+              "version": "${{ steps.release.outputs.VERSION }}",
+              "sha256": "${{ steps.sha256.outputs.SHA256 }}"
+            }
