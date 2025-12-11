@@ -2,7 +2,7 @@ name: Test Homebrew Installation
 
 on:
   push:
-    branches: [dev-homebrew]
+    branches: [dev]
   workflow_dispatch:
 
 jobs:
