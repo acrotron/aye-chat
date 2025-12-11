@@ -14,10 +14,16 @@ jobs:
         env:
           HOMEBREW_NO_INTERACTIVE: 1
         run: |
+          brew update
           brew tap acrotron/aye-chat
           brew install --verbose aye-chat 2>&1 || {
             echo "=== Homebrew logs ==="
-            find ~/Library/Logs/Homebrew -name "*.log" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null
+            find ~/Library/Logs/Homebrew/aye-chat -name "*.log" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null
+            echo "=== Trying to get pip output ==="
+            # Try manual installation to see full error
+            brew install python@3.12
+            python3.12 -m venv /tmp/test-venv
+            /tmp/test-venv/bin/pip install ayechat 2>&1 || true
             exit 1
           }
 
