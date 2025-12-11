@@ -23,11 +23,12 @@ jobs:
 
       - name: nix run aye-chat directly from GitHub
         run: |
-          nix run github:acrotron/aye-chat/${{ github.event.inputs.branch }} -- --version
+          nix run github:acrotron/aye-chat/${{ github.event.inputs.branch || 'dev-nix' }} -- --version
 
       - name: Install aye-chat through nix profile install from GitHub
         run: |
-          nix profile install github:acrotron/aye-chat/${{ github.event.inputs.branch }}
+          nix profile install github:acrotron/aye-chat/${{ github.event.inputs.branch || 'dev-nix' }}
+
       - name: Test aye-chat execution
         run: |
           aye --version
