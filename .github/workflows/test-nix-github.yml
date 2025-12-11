@@ -2,7 +2,10 @@ name: Test Nix GitHub Installation
 
 on:
   workflow_dispatch:
-
+  push:
+    branches:
+      - dev-nix
+ 
 jobs:
   test-github-install:
     runs-on: ubuntu-latest
