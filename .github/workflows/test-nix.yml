@@ -1,0 +1,47 @@
+name: Test Nix Package
+
+on:
+  push:
+    paths:
+      - 'ayechat.nix'
+      - '.github/workflows/test-nix.yml'
+  pull_request:
+    paths:
+      - 'ayechat.nix'
+      - '.github/workflows/test-nix.yml'
+  workflow_dispatch:
+
+jobs:
+  test-nix-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-24.05
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Create test expression
+        run: |
+          cat > test-build.nix << 'EOF'
+          let
+            pkgs = import <nixpkgs> {};
+            ayechat = pkgs.callPackage ./ayechat.nix {};
+          in
+            ayechat
+          EOF
+
+      - name: Build ayechat package
+        run: nix-build test-build.nix
+
+      - name: Test binary
+        run: |
+          ./result/bin/aye --version
+
+      - name: Verify package metadata
+        run: |
+          echo "Package built successfully"
+          ls -la ./result/bin/
