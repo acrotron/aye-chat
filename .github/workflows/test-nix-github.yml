@@ -7,7 +7,10 @@ on:
         description: 'Branch to test (default: dev-nix)'
         required: false
         default: 'dev-nix'
-
+  push:
+    branches:
+      - dev-nix
+      
 jobs:
   test-github-install:
     runs-on: ubuntu-latest
