@@ -4,15 +4,19 @@ on:
   push:
     paths:
       - 'ayechat.nix'
+      - 'flake.nix'
+      - 'flake.lock'
       - '.github/workflows/test-nix.yml'
   pull_request:
     paths:
       - 'ayechat.nix'
+      - 'flake.nix'
+      - 'flake.lock'
       - '.github/workflows/test-nix.yml'
   workflow_dispatch:
 
 jobs:
-  test-nix-build:
+  test-local-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,22 +24,14 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
-          nix_path: nixpkgs=channel:nixpkgs-unstable
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      - name: Create test expression
-        run: |
-          cat > test-build.nix << 'EOF'
-          let
-            pkgs = import <nixpkgs> {};
-            ayechat = pkgs.callPackage ./ayechat.nix {};
-          in
-            ayechat
-          EOF
+      - name: Check flake
+        run: nix flake check
 
-      - name: Build ayechat package
-        run: nix-build test-build.nix
+      - name: Build package
+        run: nix build
 
       - name: Test binary
         run: |

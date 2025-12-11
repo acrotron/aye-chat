@@ -1,0 +1,24 @@
+name: Test Nix GitHub Installation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-github-install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Test nix run from GitHub
+        run: |
+          nix run github:acrotron/aye-chat -- --version
+
+      - name: Test nix profile install from GitHub
+        run: |
+          nix profile install github:acrotron/aye-chat
+          aye --version
+          nix profile remove '.*aye.*'
