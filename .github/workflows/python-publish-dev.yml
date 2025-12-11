@@ -42,7 +42,7 @@ jobs:
 
           # Generate timestamp-based dev version
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          DEV_VERSION="${NEXT_VERSION}.dev${TIMESTAMP}"
+          DEV_VERSION="${NEXT_VERSION}.${TIMESTAMP}"
 
           echo "Latest release: $LATEST_TAG"
           echo "Dev version: $DEV_VERSION"
