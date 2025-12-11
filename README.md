@@ -9,6 +9,12 @@ $ pip install ayechat
 $ aye chat          # Start in any project
 ```
 
+**macOS (Homebrew):**
+```bash
+brew tap acrotron/aye-chat
+brew install aye-chat
+```
+
 **Windows (Installer):**
 
 Download and run [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/latest/download/aye-chat-setup.exe)
