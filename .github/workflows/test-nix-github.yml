@@ -34,21 +34,4 @@ jobs:
           echo "Installed packages:"
           nix profile list
 
-          # Find and remove the installed package by name
-          # nix profile list output format (newer nix versions):
-          # Name:               aye-chat
-          # Flake attribute:    ...
-          # The package name can be used directly with nix profile remove
-          PACKAGE_NAME=$(nix profile list | grep -E '^Name:' | awk '{print $2}' | grep -E 'aye-chat|ayechat' | head -1)
-          echo "Found package name: '$PACKAGE_NAME'"
-
-          if [ -n "$PACKAGE_NAME" ]; then
-            nix profile remove "$PACKAGE_NAME"
-            echo "Package removed successfully"
-          else
-            echo "Could not find package name, trying alternative removal..."
-            # Try removing by common names
-            nix profile remove "aye-chat" 2>/dev/null || \
-            nix profile remove "ayechat" 2>/dev/null || \
-            echo "Warning: Could not remove package, but installation test passed"
-          fi
+          nix profile remove aye-chat
