@@ -11,9 +11,11 @@ jobs:
 
     steps:
       - name: Tap and install aye-chat
+        env:
+          HOMEBREW_NO_INTERACTIVE: 1
         run: |
           brew tap acrotron/ayechat
-          brew install --verbose --debug aye-chat 2>&1 || {
+          brew install --verbose aye-chat 2>&1 || {
             echo "=== Homebrew logs ==="
             find ~/Library/Logs/Homebrew -name "*.log" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null
             exit 1
