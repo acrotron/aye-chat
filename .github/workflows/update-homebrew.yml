@@ -1,8 +1,6 @@
 name: Update Homebrew Formula
 
 on:
-  push:
-    branches: [dev-homebrew]
   release:
     types: [published]
 
