@@ -31,9 +31,12 @@ jobs:
           aye --version
 
           # Find and remove the installed package by its index
-          PACKAGE_INDEX=$(nix profile list | grep -E 'ayechat|aye-chat' | head -1 | awk '{print $1}')
+          PACKAGE_INDEX=$(nix profile list | grep -E 'ayechat|aye-chat|aye' | head -1 | awk '{print $1}')
+          echo "Found package index: '$PACKAGE_INDEX'"
+          
           if [ -n "$PACKAGE_INDEX" ]; then
             nix profile remove "$PACKAGE_INDEX"
+            echo "Package removed successfully"
           else
             echo "Package not found in profile, listing all:"
             nix profile list
