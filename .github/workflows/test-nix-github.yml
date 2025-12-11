@@ -29,4 +29,12 @@ jobs:
         run: |
           nix profile install github:acrotron/aye-chat/${{ github.event.inputs.branch || 'dev-nix' }}
           aye --version
-          nix profile remove '.*aye.*'
+
+          # Find and remove the installed package by its index
+          PACKAGE_INDEX=$(nix profile list | grep -E 'ayechat|aye-chat' | head -1 | awk '{print $1}')
+          if [ -n "$PACKAGE_INDEX" ]; then
+            nix profile remove "$PACKAGE_INDEX"
+          else
+            echo "Package not found in profile, listing all:"
+            nix profile list
+          fi
