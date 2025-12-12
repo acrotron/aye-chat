@@ -1,18 +1,15 @@
+"""Plugin download and management module.
+
+Handles fetching, validating, and storing plugins from the remote server.
+"""
 import hashlib
 import json
-import httpx
-from pathlib import Path
-from typing import List, Dict
-import traceback
-import time
-import base64
 import shutil
+import time
+from pathlib import Path
 
-import binascii
-from typing import Union
-
+from aye.model.api import fetch_plugin_manifest
 from aye.model.auth import get_token
-from aye.model.api import fetch_plugin_manifest, fetch_server_time
 
 PLUGIN_ROOT = Path.home() / ".aye" / "plugins"
 MANIFEST_FILE = PLUGIN_ROOT / "manifest.json"
@@ -25,6 +22,11 @@ def _now_ts() -> int:
 
 
 def fetch_plugins(dry_run: bool = True) -> None:
+    """Fetch plugins from the remote server and store them locally.
+
+    Args:
+        dry_run: If True, performs a dry run without making changes.
+    """
     token = get_token()
     if not token:
         return
@@ -37,7 +39,7 @@ def fetch_plugins(dry_run: bool = True) -> None:
     # Load any existing manifest so we can preserve previous timestamps
     try:
         old_manifest = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         old_manifest = {}
 
     manifest = {}
@@ -78,8 +80,8 @@ def fetch_plugins(dry_run: bool = True) -> None:
         #print(json.dumps(sorted_manifest, indent=4))
         MANIFEST_FILE.write_text(json.dumps(sorted_manifest, indent=4), encoding="utf-8")
 
-    except Exception as e:
-        raise RuntimeError(f"{e}")
+    except (OSError, json.JSONDecodeError, KeyError) as e:
+        raise RuntimeError(f"{e}") from e
 
 
 def driver() -> None:
@@ -87,7 +89,7 @@ def driver() -> None:
     try:
         fetch_plugins()
         print("Plugins fetched successfully.")
-    except Exception as e:
+    except RuntimeError as e:
         print(f"Error fetching plugins: {e}")
 
 
