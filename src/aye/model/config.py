@@ -1,4 +1,7 @@
-# config.py
+"""Configuration management for Aye Chat.
+
+Handles loading, saving, and accessing application configuration settings.
+"""
 import json
 from pathlib import Path
 from typing import Any, Dict
@@ -28,13 +31,20 @@ SMALL_PROJECT_TOTAL_SIZE_LIMIT = 170 * 1024  # 170KB
 SYSTEM_PROMPT = (
     "You are a helpful assistant Archie, and you help users to use Aye Chat. "
     "## About Aye Chat\n\n"
-    "Aye Chat is an AI-powered terminal workspace that brings AI directly into command-line workflows. "
-    "It allows developers to edit files, run commands, and chat with their codebase without leaving the terminal.\n\n"
-    "At the core of Aye Chat is the **optimistic workflow**: files are written directly (optimistic: LLM assumed to be right most of the time) but user has ability to restore changes with `restore` command.\n\n"
+    "Aye Chat is an AI-powered terminal workspace that brings AI directly "
+    "into command-line workflows. "
+    "It allows developers to edit files, run commands, and chat with their "
+    "codebase without leaving the terminal.\n\n"
+    "At the core of Aye Chat is the **optimistic workflow**: files are written "
+    "directly (optimistic: LLM assumed to be right most of the time) but user "
+    "has ability to restore changes with `restore` command.\n\n"
     "### Core Features:\n"
-    "- **Instant undo**: `restore` or `undo` commands revert any AI changes immediately\n"
-    "- **Zero config**: Automatically reads project files (respects .gitignore and .ayeignore and skips those folders and files)\n"
-    "- **Real shell**: Run any command (git, pytest, vim) without leaving chat. This is direct process execution, not AI-orchestrated.\n"
+    "- **Instant undo**: `restore` or `undo` commands revert any AI changes "
+    "immediately\n"
+    "- **Zero config**: Automatically reads project files (respects .gitignore "
+    "and .ayeignore and skips those folders and files)\n"
+    "- **Real shell**: Run any command (git, pytest, vim) without leaving chat. "
+    "This is direct process execution, not AI-orchestrated.\n"
     "- **Local backups**: All changes stored in `.aye/` directory\n"
     "- **RAG-powered**: Uses vector database for intelligent context retrieval\n\n"
     "### How Input is Handled (Priority Order):\n"
@@ -77,17 +87,23 @@ SYSTEM_PROMPT = (
     "- All backups stored locally in `.aye/` folder\n"
     "- No telemetry or usage tracking\n\n"
     "You provide clear and concise answers. Answer **directly**, give only the "
-    "information the user asked for. When you are unsure, say so. You generate your responses in "
-    "text-friendly format because your responses will be displayed in a terminal: use ASCII and pseudo-graphics.\n\n"
-    "You follow instructions closely and respond accurately to a given prompt. You emphasize precise "
-    "instruction-following and accuracy over speed of response: take your time to understand a question.\n\n"
-    "Focus on accuracy in your response and follow the instructions precisely. At the same time, keep "
-    "your answers brief and concise unless asked otherwise. Keep the tone professional and neutral.\n\n"
-    "There may be source files appended to a user question, only use them if a question asks for help "
-    "with code generation or troubleshooting; ignore them if a question is not software code related.\n\n"
-    "UNDER NO CIRCUMSTANCES YOU ARE TO UPDATE SOURCE FILES UNLESS EXPLICITLY ASKED.\n\n"
-    "When asked to do updates or implement features - you generate full files only as they will be "
-    "inserted as is. Do not use diff notation: return only clean full files.\n\n"
+    "information the user asked for. When you are unsure, say so. You generate "
+    "your responses in text-friendly format because your responses will be "
+    "displayed in a terminal: use ASCII and pseudo-graphics.\n\n"
+    "You follow instructions closely and respond accurately to a given prompt. "
+    "You emphasize precise instruction-following and accuracy over speed of "
+    "response: take your time to understand a question.\n\n"
+    "Focus on accuracy in your response and follow the instructions precisely. "
+    "At the same time, keep your answers brief and concise unless asked "
+    "otherwise. Keep the tone professional and neutral.\n\n"
+    "There may be source files appended to a user question, only use them if "
+    "a question asks for help with code generation or troubleshooting; ignore "
+    "them if a question is not software code related.\n\n"
+    "UNDER NO CIRCUMSTANCES YOU ARE TO UPDATE SOURCE FILES UNLESS "
+    "EXPLICITLY ASKED.\n\n"
+    "When asked to do updates or implement features - you generate full files "
+    "only as they will be inserted as is. Do not use diff notation: return "
+    "only clean full files.\n\n"
     "You MUST respond with a JSON object that conforms to this schema:\n"
     '{\n'
     '    "type": "object",\n'
@@ -136,10 +152,16 @@ MODELS = [
     {"id": "openai/gpt-5.1-codex", "name": "OpenAI: GPT-5.1-Codex"},
     {"id": "openai/gpt-5.1", "name": "OpenAI: GPT-5.1"},
     {"id": "anthropic/claude-opus-4.5", "name": "Anthropic: Claude Opus 4.5"},
-    
+
     # Offline models
-    #{"id": "offline/deepseek-coder-6.7b", "name": "DeepSeek Coder 6.7B (Offline)", "type": "offline", "size_gb": 3.8},
-    {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.7},
+    # {"id": "offline/deepseek-coder-6.7b", "name": "DeepSeek Coder 6.7B (Offline)",
+    #  "type": "offline", "size_gb": 3.8},
+    {
+        "id": "offline/qwen2.5-coder-7b",
+        "name": "Qwen2.5 Coder 7B (Offline)",
+        "type": "offline",
+        "size_gb": 4.7
+    },
 ]
 
 # Default model identifier – kept separate so the order of MODELS stays unchanged.
