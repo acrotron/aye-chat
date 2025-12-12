@@ -1,9 +1,19 @@
+"""ONNX model manager for handling model downloads and status tracking.
+
+This module manages the download and status of ONNX embedding models
+used for vector database operations.
+"""
 import os
 import threading
 from pathlib import Path
 
+import chromadb
+from chromadb.utils import embedding_functions
+
 # Represents the download status of the ONNX model.
+# pylint: disable=invalid-name
 _status = "NOT_CHECKED"
+# pylint: enable=invalid-name
 _lock = threading.Lock()
 
 def _get_model_flag_file() -> Path:
@@ -12,7 +22,7 @@ def _get_model_flag_file() -> Path:
         # We create a flag inside Chroma's cache dir if possible, as it's a good central spot.
         chroma_cache_dir = Path(os.getenv("CHROMA_CACHE_DIR", Path.home() / ".cache/chroma"))
         return chroma_cache_dir / "onnx_model.downloaded"
-    except Exception:
+    except (OSError, TypeError):
         # Fallback to our own config directory if home directory is not writable, etc.
         return Path.home() / ".aye" / "onnx_model.downloaded"
 
@@ -23,7 +33,7 @@ def get_model_status():
     Checks and returns the current status of the ONNX model.
     Statuses: "READY", "NOT_DOWNLOADED", "DOWNLOADING", "FAILED".
     """
-    global _status
+    global _status  # pylint: disable=global-statement
     with _lock:
         if _status == "NOT_CHECKED":
             if _model_flag_file.exists():
@@ -32,13 +42,13 @@ def get_model_status():
                 _status = "NOT_DOWNLOADED"
         return _status
 
-import chromadb
-from chromadb.utils import embedding_functions
 
-# this artificial workaround is to trigger the download of a model
-# in our environment: for some reason, regular things like 
-# ONNXMiniLM_L6_V2() invocation does not work.
 def download_onnx():
+    """Download the ONNX model by triggering chromadb embedding function.
+
+    This is an artificial workaround to trigger the download of a model
+    in our environment, as regular invocation of ONNXMiniLM_L6_V2() does not work.
+    """
     print("Preparing the system...")
     client = chromadb.Client()
     ef = embedding_functions.DefaultEmbeddingFunction()
@@ -51,32 +61,30 @@ def download_onnx():
 
 def _download_model_sync():
     """Blocking function to download the model and create a flag file on success."""
-    global _status
-    from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
-    from aye.model.vector_db import suppress_stdout_stderr
+    global _status  # pylint: disable=global-statement
 
     try:
         with _lock:
             _status = "DOWNLOADING"
-        
+
         # This is the blocking call that downloads the model files on first run.
         download_onnx()
-        
+
         # If the download succeeds, create the flag file for future checks.
         _model_flag_file.parent.mkdir(parents=True, exist_ok=True)
         _model_flag_file.touch()
-        
+
         with _lock:
             _status = "READY"
-            
-    except Exception:
+
+    except (OSError, RuntimeError):
         with _lock:
             _status = "FAILED"
 
 def download_model_if_needed(background: bool = True):
     """
     Checks for the ONNX model and starts a download if it's missing.
-    
+
     Args:
         background: If True, the download runs on a background daemon thread.
                     If False, it runs synchronously and blocks.
