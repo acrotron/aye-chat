@@ -16,9 +16,10 @@ dependencies = [
     "typer>=0.20.0",          # CLI framework + rich formatting (Python 3.8+)
     "httpx>=0.28.1",              # HTTP client
     "keyring>=25.7.0",            # Secure storage for the token (Python 3.10+)
-    "prompt-toolkit>=3.0.52",      # REPL UI
+    "prompt-toolkit>=3.0.52",     # REPL UI
     "pathspec>=0.12.1",           # Utility library for gitignore style pattern matching of file paths.
-    "chromadb>=1.3.5"                    # Vector DB with lightweight ONNX runtime for embeddings (Python 3.10+)
+    "chromadb>=1.3.5",            # Vector DB with lightweight ONNX runtime for embeddings (Python 3.10+)
+    "rapidfuzz",
 ]
 
 [project.urls]
@@ -32,6 +33,7 @@ dev = [
     "pytest>=9.0.1",                # test runner (Python 3.10+)
     "ruff>=0.14.6",                  # linting/formatter (Python 3.7+)
     "coverage>=7.12.0",              # code coverage (Python 3.10+)
+    "pexpect>-4.9.0",
 ]
 
 [project.scripts]
