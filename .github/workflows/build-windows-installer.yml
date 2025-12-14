@@ -26,6 +26,80 @@ jobs:
         with:
           fetch-depth: 0  # Needed for setuptools-scm to get version from tags
 
+      - name: Set up certificate 
+        run: | 
+            echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | base64 --decode > /d/Certificate_pkcs12.p12 
+        shell: bash 
+
+      - name: Set variables 
+        id: variables 
+        run: | 
+          echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT 
+          echo "SM_HOST=${{ secrets.SM_HOST }}" >> "$GITHUB_ENV" 
+          echo "SM_API_KEY=${{ secrets.SM_API_KEY }}" >> "$GITHUB_ENV" 
+          echo "SM_CLIENT_CERT_FILE=D:\\Certificate_pkcs12.p12" >> "$GITHUB_ENV" 
+          echo "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" >> "$GITHUB_ENV" 
+        shell: bash 
+
+      - name: Setup Software Trust Manager (new)
+        id: stm-setup
+        uses: digicert/code-signing-software-trust-action@v1.0.0
+
+      - name: Check PKCS11 config file
+        run: |
+          IF EXIST "${{ steps.stm-setup.outputs.PKCS11_CONFIG }}" (
+            echo file exists: ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
+          ) ELSE (
+            echo !! file doesn't exist: ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
+          )
+        shell: cmd
+
+      - name: Find smctl location
+        run: where smctl
+        shell: cmd
+
+      - name: Debug certificate setup
+        run: |
+          echo "Checking if certificate file exists..."
+          if [ -f "D:/Certificate_pkcs12.p12" ]; then
+            echo "Certificate file exists"
+            ls -la D:/Certificate_pkcs12.p12
+            echo "Verifying certificate file format..."
+            openssl pkcs12 -in D:/Certificate_pkcs12.p12 -info -nokeys -passin pass:${{ secrets.SM_CLIENT_CERT_PASSWORD }} 2>&1 | head -20 || echo "Failed to read certificate - may be wrong password or corrupted file"
+            echo "Getting certificate fingerprint (SHA1)..."
+            openssl pkcs12 -in D:/Certificate_pkcs12.p12 -passin pass:${{ secrets.SM_CLIENT_CERT_PASSWORD }} -nokeys 2>/dev/null | openssl x509 -fingerprint -sha1 -noout || echo "Failed to get fingerprint"
+          else
+            echo "Certificate file NOT found!"
+          fi
+        shell: bash
+
+      - name: Verify secrets are set
+        run: |
+          echo Checking required secrets...
+          if [ -z "${{ secrets.SM_HOST }}" ]; then echo "ERROR: SM_HOST is not set"; else echo "SM_HOST is set"; fi
+          if [ -z "${{ secrets.SM_API_KEY }}" ]; then echo "ERROR: SM_API_KEY is not set"; else echo "SM_API_KEY is set (length: ${#SM_API_KEY})"; fi
+          if [ -z "${{ secrets.SM_CLIENT_CERT_PASSWORD }}" ]; then echo "ERROR: SM_CLIENT_CERT_PASSWORD is not set"; else echo "SM_CLIENT_CERT_PASSWORD is set"; fi
+          if [ -z "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" ]; then echo "ERROR: SM_CLIENT_CERT_FILE_B64 is not set"; else echo "SM_CLIENT_CERT_FILE_B64 is set"; fi
+          if [ -z "${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" ]; then echo "ERROR: SM_CODE_SIGNING_CERT_SHA1_HASH is not set"; else echo "SM_CODE_SIGNING_CERT_SHA1_HASH is set"; fi
+          if [ -z "${{ secrets.SM_KEYPAIR_ALIAS }}" ]; then echo "ERROR: SM_KEYPAIR_ALIAS is not set"; else echo "SM_KEYPAIR_ALIAS is set"; fi
+        shell: bash
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+
+      # - name: Verify Certificate (Debug)
+      #   run: |
+      #     smctl keypair ls
+
+      # - name: Sync Certificates to Windows Store
+      #   run: smctl windows certsync
+
+      # - name: Verify Certificate (Debug)
+      #   run: |
+      #     smctl keypair ls
+
+      # - name: Stop for debugging
+      #   run: exit 1
+
       - name: Determine version
         id: version
         shell: pwsh
@@ -147,10 +221,39 @@ jobs:
           & "dist/aye-chat/aye.exe" --version
 
       - name: Build installer with Inno Setup
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.4
+        id: inno-setup
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.7
         with:
           path: installer.iss
           options: /DMyAppVersion=${{ steps.version.outputs.VERSION }} /DMyAppNumericVersion=${{ steps.version.outputs.NUMERIC_VERSION }}
+
+      - name: Find installer executable
+        id: find-installer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path Output -Filter *.exe | Select-Object -First 1
+          echo "INSTALLER_PATH=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          echo "Found installer: $($exe.FullName)"
+
+      - name: Add signtool to PATH
+        shell: pwsh
+        run: |
+          $sdkPath = "C:\Program Files (x86)\Windows Kits\10\bin"
+          $latestSdk = Get-ChildItem -Path $sdkPath -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Sort-Object Name -Descending | Select-Object -First 1
+          $signtoolPath = Join-Path $latestSdk.FullName "x64"
+          echo "Adding to PATH: $signtoolPath"
+          echo "$signtoolPath" >> $env:GITHUB_PATH
+
+      - name: Sign installer with certificate
+        if: github.event_name == 'release'
+        run: |
+           smctl sign --verbose --keypair-alias ${{ secrets.SM_KEYPAIR_ALIAS }} --input "${{ steps.find-installer.outputs.INSTALLER_PATH }}" --config-file ${{ steps.stm-setup.outputs.PKCS11_CONFIG }}
+        shell: cmd
+        env:
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: D:\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -242,8 +345,7 @@ jobs:
       - name: Create portable ZIP
         shell: pwsh
         run: |
-          $version = "${{ steps.version.outputs.VERSION }}"
-          Compress-Archive -Path "dist/aye-chat/*" -DestinationPath "aye-chat-$version-portable-win64.zip"
+          Compress-Archive -Path "dist/aye-chat/*" -DestinationPath "aye-chat-portable-win64.zip"
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4

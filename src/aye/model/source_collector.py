@@ -93,6 +93,8 @@ def get_project_files_with_limit(root_dir: str, file_mask: str, limit: int = SMA
                 if ignore_spec.match_file(rel_path_str):
                     continue
                     
+                # all directories starting with a dot are ignored
+                # including common directories such as .github, but this is by design
                 if any(part.startswith('.') for part in rel_path.parts):
                     continue
                     

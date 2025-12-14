@@ -31,7 +31,7 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 ; Output settings
 OutputDir=Output
-OutputBaseFilename=aye-chat-{#MyAppVersion}-setup
+OutputBaseFilename=aye-chat-setup
 ; Compression
 Compression=lzma2/max
 SolidCompression=yes

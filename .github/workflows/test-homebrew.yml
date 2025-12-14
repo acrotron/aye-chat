@@ -1,0 +1,37 @@
+name: Test Homebrew Installation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-homebrew:
+    runs-on: macos-latest
+
+    steps:
+      - name: Tap and install aye-chat
+        env:
+          HOMEBREW_NO_INTERACTIVE: 1
+        run: |
+          brew update
+          brew tap acrotron/aye-chat
+          brew install --verbose --debug aye-chat 2>&1 || {
+            echo "=== Homebrew logs ==="
+            find ~/Library/Logs/Homebrew -name "*.log" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
+            echo "=== Post-install log ==="
+            cat ~/Library/Logs/Homebrew/aye-chat/post_install.* 2>/dev/null || true
+            echo "=== Formula info ==="
+            brew info aye-chat || true
+            echo "=== Cellar contents ==="
+            ls -la $(brew --cellar)/aye-chat/ 2>/dev/null || true
+            ls -la $(brew --cellar)/aye-chat/*/libexec/bin/ 2>/dev/null || true
+            exit 1
+          }
+
+      - name: Verify installation
+        run: |
+          which aye
+          aye --version
+
+      - name: Test basic functionality
+        run: |
+          aye --help
