@@ -172,7 +172,7 @@ class OfflineLLMPlugin(Plugin):
             if is_truncated_json(generated_text):
                 if self.debug:
                     print(f"[DEBUG] Response appears to be truncated:")
-                    print(assistant_resp_str)
+                    print(generated_text)
                 return {
                     "summary": TRUNCATED_RESPONSE_MESSAGE,
                     "updated_files": []
@@ -213,7 +213,7 @@ class OfflineLLMPlugin(Plugin):
             "updated_files": []
         }
 
-    def _generate_response(self, model_id: str, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def _generate_response(self, model_id: str, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = 4096) -> Optional[Dict[str, Any]]:
         """Generate a response using the offline model."""
         if not self._load_model(model_id):
             return self._create_error_response(f"Failed to load offline model '{model_id}'.")
@@ -240,7 +240,7 @@ class OfflineLLMPlugin(Plugin):
             response = self._llm_instance.create_chat_completion(
                 messages=messages,
                 temperature=0.7,
-                max_tokens=4096,
+                max_tokens=max_output_tokens,
                 response_format={"type": "json_object"}
             )
 
@@ -323,11 +323,12 @@ class OfflineLLMPlugin(Plugin):
             chat_id = params.get("chat_id")
             root = params.get("root")
             system_prompt = params.get("system_prompt")
+            max_output_tokens = params.get("max_output_tokens", 4096)
 
             self.history_file = Path(root) / ".aye" / "offline_chat_history.json" if root else Path.cwd() / ".aye" / "offline_chat_history.json"
             self._load_history()
 
-            res = self._generate_response(model_id, prompt, source_files, chat_id, system_prompt)
+            res = self._generate_response(model_id, prompt, source_files, chat_id, system_prompt, max_output_tokens)
             if self.debug:
                 print("[DEBUG] -------- end of offline_llm -------")
                 print(res)

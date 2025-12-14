@@ -7,11 +7,10 @@ from pathlib import Path
 from rich import print as rprint
 
 from .plugin_base import Plugin
-from aye.model.config import SYSTEM_PROMPT
+from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS
 from aye.controller.util import is_truncated_json
 
 LLM_TIMEOUT = 600.0
-LLM_OUTPUT_TOKENS = 49152
 
 
 # Message shown when LLM response is truncated due to output token limits
@@ -25,6 +24,14 @@ TRUNCATED_RESPONSE_MESSAGE = (
     "For example, instead of 'update all files to add logging', try:\n"
     "  `with src/main.py: add logging to this file`"
 )
+
+
+def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
+    """Get configuration for a specific model."""
+    for model in MODELS:
+        if model["id"] == model_id:
+            return model
+    return None
 
 
 class LocalModelPlugin(Plugin):
@@ -128,7 +135,7 @@ class LocalModelPlugin(Plugin):
             "updated_files": []
         }
 
-    def _handle_databricks(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def _handle_databricks(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
         api_url = os.environ.get("AYE_DBX_API_URL")
         api_key = os.environ.get("AYE_DBX_API_KEY")
         model_name = os.environ.get("AYE_DBX_MODEL", "gpt-3.5-turbo")
@@ -146,7 +153,7 @@ class LocalModelPlugin(Plugin):
         messages = [{"role": "system", "content": effective_system_prompt}] + self.chat_history[conv_id] + [{"role": "user", "content": user_message}]
         
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": 16384, "response_format": {"type": "json_object"}}
+        payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": max_output_tokens, "response_format": {"type": "json_object"}}
         
         try:
             with httpx.Client(timeout=LLM_TIMEOUT) as client:
@@ -171,7 +178,7 @@ class LocalModelPlugin(Plugin):
         except Exception as e:
             return self._create_error_response(f"Error calling Databricks API: {str(e)}")
 
-    def _handle_openai_compatible(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def _handle_openai_compatible(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
         api_url = os.environ.get("AYE_LLM_API_URL")
         api_key = os.environ.get("AYE_LLM_API_KEY")
         model_name = os.environ.get("AYE_LLM_MODEL", "gpt-3.5-turbo")
@@ -187,7 +194,7 @@ class LocalModelPlugin(Plugin):
         effective_system_prompt = system_prompt if system_prompt else SYSTEM_PROMPT
         messages = [{"role": "system", "content": effective_system_prompt}] + self.chat_history[conv_id] + [{"role": "user", "content": user_message}]
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": LLM_OUTPUT_TOKENS, "response_format": {"type": "json_object"}}
+        payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": max_output_tokens, "response_format": {"type": "json_object"}}
         
         try:
             with httpx.Client(timeout=LLM_TIMEOUT) as client:
@@ -212,7 +219,7 @@ class LocalModelPlugin(Plugin):
         except Exception as e:
             return self._create_error_response(f"Error calling OpenAI-compatible API: {str(e)}")
 
-    def _handle_gemini_pro_25(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def _handle_gemini_pro_25(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             return None
@@ -229,7 +236,7 @@ class LocalModelPlugin(Plugin):
         contents.append({"role": "user", "parts": [{"text": user_message}]})
         
         effective_system_prompt = system_prompt if system_prompt else SYSTEM_PROMPT
-        payload = {"contents": contents, "systemInstruction": {"parts": [{"text": effective_system_prompt}]}, "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.95, "maxOutputTokens": LLM_OUTPUT_TOKENS, "responseMimeType": "application/json"}}
+        payload = {"contents": contents, "systemInstruction": {"parts": [{"text": effective_system_prompt}]}, "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.95, "maxOutputTokens": max_output_tokens, "responseMimeType": "application/json"}}
 
         try:
             with httpx.Client(timeout=LLM_TIMEOUT) as client:
@@ -264,18 +271,19 @@ class LocalModelPlugin(Plugin):
             chat_id = params.get("chat_id")
             root = params.get("root")
             system_prompt = params.get("system_prompt")
+            max_output_tokens = params.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)
 
             self.history_file = Path(root) / ".aye" / "chat_history.json" if root else Path.cwd() / ".aye" / "chat_history.json"
             self._load_history()
 
-            result = self._handle_openai_compatible(prompt, source_files, chat_id, system_prompt)
+            result = self._handle_openai_compatible(prompt, source_files, chat_id, system_prompt, max_output_tokens)
             if result is not None: return result
 
-            result = self._handle_databricks(prompt, source_files, chat_id, system_prompt)
+            result = self._handle_databricks(prompt, source_files, chat_id, system_prompt, max_output_tokens)
             if result is not None: return result
 
             if model_id == "google/gemini-2.5-pro":
-                return self._handle_gemini_pro_25(prompt, source_files, chat_id, system_prompt)
+                return self._handle_gemini_pro_25(prompt, source_files, chat_id, system_prompt, max_output_tokens)
             
             return None
 
