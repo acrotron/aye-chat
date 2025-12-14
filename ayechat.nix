@@ -60,6 +60,7 @@ python3Packages.buildPythonApplication rec {
     pathspec
     tree-sitter
     chromadb
+    rapidfuzz
   ];
 
   # Skip dependency version checks - nixpkgs versions may differ from PyPI requirements
