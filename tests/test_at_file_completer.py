@@ -58,8 +58,9 @@ class TestAtFileCompleter(TestCase):
         self.assertIn("main.py", files)
         self.assertIn("utils.py", files)
         self.assertIn("config.json", files)
-        self.assertIn(str(Path("src/app.py")), files)
-        self.assertIn(str(Path("src/helpers.py")), files)
+        # Use as_posix() to ensure cross-platform compatibility (forward slashes)
+        self.assertIn(Path("src/app.py").as_posix(), files)
+        self.assertIn(Path("src/helpers.py").as_posix(), files)
         # .git should be ignored
         self.assertNotIn(".git/config", files)
 
@@ -132,7 +133,8 @@ class TestAtFileCompleter(TestCase):
         completions = list(completer.get_completions(doc, None))
         
         completion_texts = [c.text for c in completions]
-        self.assertIn(str(Path("src/app.py")), completion_texts)
+        # Completer now returns posix paths, so we check against posix path string
+        self.assertIn(Path("src/app.py").as_posix(), completion_texts)
 
     def test_completions_filename_prefix_match(self):
         completer = AtFileCompleter(project_root=self.project_root)
@@ -141,7 +143,7 @@ class TestAtFileCompleter(TestCase):
         completions = list(completer.get_completions(doc, None))
         
         completion_texts = [c.text for c in completions]
-        self.assertIn(str(Path("src/helpers.py")), completion_texts)
+        self.assertIn(Path("src/helpers.py").as_posix(), completion_texts)
 
     def test_completions_substring_match(self):
         completer = AtFileCompleter(project_root=self.project_root)

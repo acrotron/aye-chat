@@ -61,7 +61,8 @@ class AtFileCompleter(Completer):
                     filepath = Path(root) / filename
                     try:
                         rel_path = filepath.relative_to(self.project_root)
-                        files.append(str(rel_path))
+                        # Use POSIX paths for consistency across platforms (forward slashes)
+                        files.append(rel_path.as_posix())
                     except ValueError:
                         continue
         except Exception:
@@ -177,6 +178,8 @@ class AtFileCompleterPlugin(Plugin):
     name = "at_file_completer"
     version = "1.0.0"
     premium = "free"
+    debug = False
+    verbose = False
 
     def __init__(self):
         super().__init__()
@@ -186,6 +189,13 @@ class AtFileCompleterPlugin(Plugin):
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the at-file completer plugin."""
         super().init(cfg)
+        
+        # Explicitly apply config to ensure consistency across platforms/environments
+        if 'debug' in cfg:
+            self.debug = cfg['debug']
+        if 'verbose' in cfg:
+            self.verbose = cfg['verbose']
+
         if self.debug:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
 
