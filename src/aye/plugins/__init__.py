@@ -1,3 +1,5 @@
+from . import at_file_completer
+
 from . import auto_detect_mask
 
 from . import completer
