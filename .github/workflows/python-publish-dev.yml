@@ -1,7 +1,4 @@
-# This workflow will upload a Python Package to PyPI when a push is made to the dev branch
-# It automatically generates a dev version number based on the latest tag + timestamp
-
-name: Upload Python Dev Package to PyPI
+name: Upload Python Package to PyPI from DEV branch
 
 on:
   push:
@@ -42,7 +39,7 @@ jobs:
 
           # Generate timestamp-based dev version
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          DEV_VERSION="${NEXT_VERSION}.dev${TIMESTAMP}"
+          DEV_VERSION="${NEXT_VERSION}.${TIMESTAMP}"
 
           echo "Latest release: $LATEST_TAG"
           echo "Dev version: $DEV_VERSION"
@@ -62,6 +59,8 @@ jobs:
           with open('pyproject.toml', 'r') as f:
               config = toml.load(f)
 
+          # Change package name from ayechat to ayechat-dev
+          config['project']['name'] = 'ayechat-dev'
           # Remove dynamic version and set static version
           config['project']['version'] = '${{ steps.version.outputs.version }}'
           if 'dynamic' in config['project']:
@@ -101,7 +100,7 @@ jobs:
 
     # Use a separate environment for dev releases
     environment:
-      name: pypi
+      name: pypi-dev
 
     steps:
       - name: Retrieve dev distributions

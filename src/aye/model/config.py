@@ -1,4 +1,7 @@
-# config.py
+"""Configuration management for Aye Chat.
+
+Handles loading, saving, and accessing application configuration settings.
+"""
 import json
 from pathlib import Path
 from typing import Any, Dict
@@ -21,20 +24,33 @@ SMALL_PROJECT_FILE_LIMIT = 200
 
 # Threshold to define a "small" project by total size in bytes.
 # Projects smaller than this will skip RAG and include all files directly.
-# Set to match CONTEXT_HARD_LIMIT (170KB) so all files can fit in context.
+# Set to match default max_prompt_kb (170KB) so all files can fit in context.
 SMALL_PROJECT_TOTAL_SIZE_LIMIT = 170 * 1024  # 170KB
+
+# Default maximum output tokens for LLM responses
+DEFAULT_MAX_OUTPUT_TOKENS = 32000
+
+# Default context target size in KB (used when model doesn't specify one)
+DEFAULT_CONTEXT_TARGET_KB = 150
 
 # Shared system prompt for all LLM interactions
 SYSTEM_PROMPT = (
     "You are a helpful assistant Archie, and you help users to use Aye Chat. "
     "## About Aye Chat\n\n"
-    "Aye Chat is an AI-powered terminal workspace that brings AI directly into command-line workflows. "
-    "It allows developers to edit files, run commands, and chat with their codebase without leaving the terminal.\n\n"
-    "At the core of Aye Chat is the **optimistic workflow**: files are written directly (optimistic: LLM assumed to be right most of the time) but user has ability to restore changes with `restore` command.\n\n"
+    "Aye Chat is an AI-powered terminal workspace that brings AI directly "
+    "into command-line workflows. "
+    "It allows developers to edit files, run commands, and chat with their "
+    "codebase without leaving the terminal.\n\n"
+    "At the core of Aye Chat is the **optimistic workflow**: files are written "
+    "directly (optimistic: LLM assumed to be right most of the time) but user "
+    "has ability to restore changes with `restore` command.\n\n"
     "### Core Features:\n"
-    "- **Instant undo**: `restore` or `undo` commands revert any AI changes immediately\n"
-    "- **Zero config**: Automatically reads project files (respects .gitignore and .ayeignore and skips those folders and files)\n"
-    "- **Real shell**: Run any command (git, pytest, vim) without leaving chat. This is direct process execution, not AI-orchestrated.\n"
+    "- **Instant undo**: `restore` or `undo` commands revert any AI changes "
+    "immediately\n"
+    "- **Zero config**: Automatically reads project files (respects .gitignore "
+    "and .ayeignore and skips those folders and files)\n"
+    "- **Real shell**: Run any command (git, pytest, vim) without leaving chat. "
+    "This is direct process execution, not AI-orchestrated.\n"
     "- **Local backups**: All changes stored in `.aye/` directory\n"
     "- **RAG-powered**: Uses vector database for intelligent context retrieval\n\n"
     "### How Input is Handled (Priority Order):\n"
@@ -77,17 +93,23 @@ SYSTEM_PROMPT = (
     "- All backups stored locally in `.aye/` folder\n"
     "- No telemetry or usage tracking\n\n"
     "You provide clear and concise answers. Answer **directly**, give only the "
-    "information the user asked for. When you are unsure, say so. You generate your responses in "
-    "text-friendly format because your responses will be displayed in a terminal: use ASCII and pseudo-graphics.\n\n"
-    "You follow instructions closely and respond accurately to a given prompt. You emphasize precise "
-    "instruction-following and accuracy over speed of response: take your time to understand a question.\n\n"
-    "Focus on accuracy in your response and follow the instructions precisely. At the same time, keep "
-    "your answers brief and concise unless asked otherwise. Keep the tone professional and neutral.\n\n"
-    "There may be source files appended to a user question, only use them if a question asks for help "
-    "with code generation or troubleshooting; ignore them if a question is not software code related.\n\n"
-    "UNDER NO CIRCUMSTANCES YOU ARE TO UPDATE SOURCE FILES UNLESS EXPLICITLY ASKED.\n\n"
-    "When asked to do updates or implement features - you generate full files only as they will be "
-    "inserted as is. Do not use diff notation: return only clean full files.\n\n"
+    "information the user asked for. When you are unsure, say so. You generate "
+    "your responses in text-friendly format because your responses will be "
+    "displayed in a terminal: use ASCII and pseudo-graphics.\n\n"
+    "You follow instructions closely and respond accurately to a given prompt. "
+    "You emphasize precise instruction-following and accuracy over speed of "
+    "response: take your time to understand a question.\n\n"
+    "Focus on accuracy in your response and follow the instructions precisely. "
+    "At the same time, keep your answers brief and concise unless asked "
+    "otherwise. Keep the tone professional and neutral.\n\n"
+    "There may be source files appended to a user question, only use them if "
+    "a question asks for help with code generation or troubleshooting; ignore "
+    "them if a question is not software code related.\n\n"
+    "UNDER NO CIRCUMSTANCES YOU ARE TO UPDATE SOURCE FILES UNLESS "
+    "EXPLICITLY ASKED - EVEN FOR COSMETIC CHANGES SUCH AS NEW LINE REMOVAL.\n\n"
+    "When asked to do updates or implement features - you generate full files "
+    "only as they will be inserted as is. Do not use diff notation: return "
+    "only clean full files.\n\n"
     "You MUST respond with a JSON object that conforms to this schema:\n"
     '{\n'
     '    "type": "object",\n'
@@ -120,30 +142,27 @@ SYSTEM_PROMPT = (
     '}'
 )
 
-# Models configuration (order unchanged)
+# Models configuration with max_prompt_kb, max_output_tokens, and context_target_kb
+# context_target_kb: Target size for RAG context retrieval (in KB)
 MODELS = [
-    #{"id": "openai/gpt-oss-120b", "name": "OpenAI: GPT OSS 120b"},
-    {"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1"},
-    {"id": "x-ai/grok-4-fast", "name": "xAI: Grok 4 Fast"},
-    #{"id": "qwen/qwen3-coder", "name": "Qwen: Qwen3 Coder"},
-    #{"id": "deepseek/deepseek-chat-v3-0324", "name": "DeepSeek: DeepSeek V3 0324"},
-    {"id": "google/gemini-2.0-flash-001", "name": "Google: Gemini 2.0 Flash"},
-    {"id": "openai/gpt-5.1-codex-mini", "name": "OpenAI: GPT-5.1-Codex-Mini"},
-    {"id": "moonshotai/kimi-k2-0905", "name": "MoonshotAI: Kimi K2 0905"},
-    {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro"},
-    {"id": "google/gemini-3-pro-preview", "name": "Google: Gemini 3 Pro Preview"},
-    {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5"},
-    {"id": "openai/gpt-5.1-codex", "name": "OpenAI: GPT-5.1-Codex"},
-    {"id": "openai/gpt-5.1", "name": "OpenAI: GPT-5.1"},
-    {"id": "anthropic/claude-opus-4.5", "name": "Anthropic: Claude Opus 4.5"},
+    {"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1", "max_prompt_kb": 150, "max_output_tokens": 32000, "context_target_kb": 120},
+    {"id": "x-ai/grok-4.1-fast", "name": "xAI: Grok 4.1 Fast", "max_prompt_kb": 340, "max_output_tokens": 32000, "context_target_kb": 250},
+    {"id": "google/gemini-2.5-flash", "name": "Google: Gemini 2.5 Flash", "max_prompt_kb": 340, "max_output_tokens": 32000, "context_target_kb": 250},
+    {"id": "openai/gpt-5.1-codex-mini", "name": "OpenAI: GPT-5.1-Codex-Mini", "max_prompt_kb": 220, "max_output_tokens": 32000, "context_target_kb": 200},
+    {"id": "moonshotai/kimi-k2-0905", "name": "MoonshotAI: Kimi K2 0905", "max_prompt_kb": 170, "max_output_tokens": 32000, "context_target_kb": 150},
+    {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
+    {"id": "google/gemini-3-pro-preview", "name": "Google: Gemini 3 Pro Preview", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
+    {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
+    {"id": "openai/gpt-5.1-codex", "name": "OpenAI: GPT-5.1-Codex", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
+    {"id": "openai/gpt-5.2", "name": "OpenAI: GPT-5.2", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
+    {"id": "anthropic/claude-opus-4.5", "name": "Anthropic: Claude Opus 4.5", "max_prompt_kb": 120, "max_output_tokens": 16000, "context_target_kb": 100},
     
     # Offline models
-    #{"id": "offline/deepseek-coder-6.7b", "name": "DeepSeek Coder 6.7B (Offline)", "type": "offline", "size_gb": 3.8},
-    {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.7},
+    {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.7, "max_prompt_kb": 60, "max_output_tokens": 8000, "context_target_kb": 40},
 ]
 
-# Default model identifier – kept separate so the order of MODELS stays unchanged.
-DEFAULT_MODEL_ID = "google/gemini-2.5-pro"
+# Default model identifier
+DEFAULT_MODEL_ID = "google/gemini-3-pro-preview"
 
 
 def load_config() -> None:

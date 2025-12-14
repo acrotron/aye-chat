@@ -345,8 +345,7 @@ jobs:
       - name: Create portable ZIP
         shell: pwsh
         run: |
-          $version = "${{ steps.version.outputs.VERSION }}"
-          Compress-Archive -Path "dist/aye-chat/*" -DestinationPath "aye-chat-$version-portable-win64.zip"
+          Compress-Archive -Path "dist/aye-chat/*" -DestinationPath "aye-chat-portable-win64.zip"
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4

@@ -1,0 +1,41 @@
+name: Test Nix Installation
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to test (default: dev)'
+        required: false
+        default: 'dev'
+  push:
+    branches:
+      - dev
+      
+jobs:
+  test-github-install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: nix run aye-chat directly from GitHub
+        run: |
+          nix run github:acrotron/aye-chat/${{ github.event.inputs.branch || 'dev' }} -- --version
+
+      - name: Install aye-chat through nix profile install from GitHub
+        run: |
+          nix profile install github:acrotron/aye-chat/${{ github.event.inputs.branch || 'dev' }}
+      - name: Test aye-chat execution
+        run: |
+          aye --version
+
+      - name: Remove installation
+        run: |
+          # List all installed packages
+          echo "Installed packages:"
+          nix profile list
+
+          nix profile remove aye-chat

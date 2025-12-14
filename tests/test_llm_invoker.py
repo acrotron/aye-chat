@@ -1,13 +1,16 @@
 from types import SimpleNamespace
 from unittest import TestCase
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock, call, PropertyMock
 import json
 import os
 from pathlib import Path
 
 import aye.controller.llm_invoker as llm_invoker
 from aye.model.models import LLMResponse, LLMSource, VectorIndexResult
-from aye.model.config import SYSTEM_PROMPT
+from aye.model.config import SYSTEM_PROMPT, DEFAULT_MAX_OUTPUT_TOKENS
+
+# Default hard limit used in llm_invoker for unknown models
+CONTEXT_HARD_LIMIT = 170 * 1024
 
 
 class TestIsDebug(TestCase):
@@ -62,6 +65,118 @@ class TestGetIntEnv(TestCase):
         with patch.dict(os.environ, {'TEST_VAR': '-100'}):
             result = llm_invoker._get_int_env('TEST_VAR', 10)
             self.assertEqual(result, -100)
+
+
+class TestGetModelConfig(TestCase):
+    """Tests for _get_model_config function."""
+    
+    @patch('aye.controller.llm_invoker.MODELS', [
+        {"id": "model-1", "name": "Model 1", "max_prompt_kb": 100},
+        {"id": "model-2", "name": "Model 2", "max_prompt_kb": 200}
+    ])
+    def test_get_model_config_found(self):
+        config = llm_invoker._get_model_config("model-1")
+        self.assertIsNotNone(config)
+        self.assertEqual(config["name"], "Model 1")
+        self.assertEqual(config["max_prompt_kb"], 100)
+    
+    @patch('aye.controller.llm_invoker.MODELS', [
+        {"id": "model-1", "name": "Model 1"}
+    ])
+    def test_get_model_config_not_found(self):
+        config = llm_invoker._get_model_config("nonexistent")
+        self.assertIsNone(config)
+    
+    @patch('aye.controller.llm_invoker.MODELS', [])
+    def test_get_model_config_empty_models(self):
+        config = llm_invoker._get_model_config("any-model")
+        self.assertIsNone(config)
+
+
+class TestGetContextTargetSize(TestCase):
+    """Tests for _get_context_target_size function."""
+    
+    @patch('aye.controller.llm_invoker.MODELS', [
+        {"id": "test-model", "context_target_kb": 50}
+    ])
+    def test_get_context_target_size_from_model_config(self):
+        with patch.dict(os.environ, {}, clear=True):
+            size = llm_invoker._get_context_target_size("test-model")
+            self.assertEqual(size, 50 * 1024)
+    
+    @patch('aye.controller.llm_invoker.MODELS', [
+        {"id": "test-model", "context_target_kb": 50}
+    ])
+    def test_get_context_target_size_env_override(self):
+        with patch.dict(os.environ, {'AYE_CONTEXT_TARGET': '102400'}):
+            size = llm_invoker._get_context_target_size("test-model")
+            self.assertEqual(size, 102400)
+    
+    @patch('aye.controller.llm_invoker.MODELS', [])
+    @patch('aye.controller.llm_invoker.DEFAULT_CONTEXT_TARGET_KB', 100)
+    def test_get_context_target_size_default_fallback(self):
+        with patch.dict(os.environ, {}, clear=True):
+            size = llm_invoker._get_context_target_size("unknown-model")
+            self.assertEqual(size, 100 * 1024)
+    
+    @patch('aye.controller.llm_invoker.MODELS', [
+        {"id": "test-model", "context_target_kb": 50}
+    ])
+    def test_get_context_target_size_invalid_env(self):
+        with patch.dict(os.environ, {'AYE_CONTEXT_TARGET': 'invalid'}):
+            size = llm_invoker._get_context_target_size("test-model")
+            self.assertEqual(size, 50 * 1024)
+
+
+class TestGetContextHardLimit(TestCase):
+    """Tests for _get_context_hard_limit function."""
+    
+    @patch('aye.controller.llm_invoker.MODELS', [
+        {"id": "test-model", "max_prompt_kb": 200}
+    ])
+    def test_get_context_hard_limit_from_model_config(self):
+        limit = llm_invoker._get_context_hard_limit("test-model")
+        self.assertEqual(limit, 200 * 1024)
+    
+    @patch('aye.controller.llm_invoker.MODELS', [])
+    def test_get_context_hard_limit_default_fallback(self):
+        limit = llm_invoker._get_context_hard_limit("unknown-model")
+        self.assertEqual(limit, 170 * 1024)
+
+
+class TestFilterGroundTruth(TestCase):
+    """Tests for _filter_ground_truth function."""
+    
+    def test_filter_ground_truth_no_ground_truth(self):
+        conf = SimpleNamespace(root=Path('.'))
+        files = {"file1.py": "content1", "file2.py": "content2"}
+        result = llm_invoker._filter_ground_truth(files, conf, verbose=False)
+        self.assertEqual(result, files)
+    
+    def test_filter_ground_truth_empty_ground_truth(self):
+        conf = SimpleNamespace(root=Path('.'), ground_truth="")
+        files = {"file1.py": "content1"}
+        result = llm_invoker._filter_ground_truth(files, conf, verbose=False)
+        self.assertEqual(result, files)
+    
+    def test_filter_ground_truth_matches_file(self):
+        conf = SimpleNamespace(root=Path('.'), ground_truth="ground truth content")
+        files = {
+            "file1.py": "other content",
+            "gt.txt": "ground truth content",
+            "file2.py": "more content"
+        }
+        result = llm_invoker._filter_ground_truth(files, conf, verbose=False)
+        self.assertEqual(result, {"file1.py": "other content", "file2.py": "more content"})
+        self.assertNotIn("gt.txt", result)
+    
+    @patch('aye.controller.llm_invoker.rprint')
+    def test_filter_ground_truth_verbose(self, mock_rprint):
+        conf = SimpleNamespace(root=Path('.'), ground_truth="ground truth content")
+        files = {"gt.txt": "ground truth content"}
+        llm_invoker._filter_ground_truth(files, conf, verbose=True)
+        mock_rprint.assert_called_once()
+        self.assertIn("Excluding ground truth", str(mock_rprint.call_args))
 
 
 class TestGetRagContextFiles(TestCase):
@@ -137,7 +252,45 @@ class TestGetRagContextFiles(TestCase):
         self.assertIn("other.py", result)
         self.assertEqual(len(result), 2)
     
-    def test_stops_at_context_target_size(self):
+    @patch('aye.controller.llm_invoker._get_context_target_size', return_value=500)
+    @patch('aye.controller.llm_invoker._get_context_hard_limit', return_value=2000)
+    def test_stops_at_context_target_size(self, mock_hard_limit, mock_target_size):
+        """Test that file collection stops when target size is exceeded."""
+        mock_index_manager = MagicMock()
+        chunks = [
+            VectorIndexResult(file_path="file1.py", score=0.9, content=""),
+            VectorIndexResult(file_path="file2.py", score=0.8, content=""),
+            VectorIndexResult(file_path="file3.py", score=0.7, content=""),
+        ]
+        mock_index_manager.query.return_value = chunks
+        self.conf.index_manager = mock_index_manager
+        
+        # file1.py has 600 bytes - after adding it, current_size (600) > target (500)
+        # so the loop should break before reading file2.py
+        file_contents = {
+            "file1.py": "a" * 600,
+            "file2.py": "b" * 100,
+            "file3.py": "c" * 100,
+        }
+        
+        def mock_read_text(self, encoding=None):
+            # Extract filename from the path
+            filename = str(self).split('/')[-1]
+            return file_contents.get(filename, "")
+        
+        with patch('pathlib.Path.is_file', return_value=True), \
+             patch('pathlib.Path.read_text', mock_read_text):
+            result = llm_invoker._get_rag_context_files("prompt", self.conf, verbose=False)
+        
+        # Only file1.py should be included because after adding it,
+        # current_size (600) > context_target_size (500), so loop breaks
+        self.assertEqual(len(result), 1)
+        self.assertIn("file1.py", result)
+    
+    @patch('aye.controller.llm_invoker._get_context_hard_limit', return_value=1000)
+    @patch('aye.controller.llm_invoker._get_context_target_size', return_value=2000)
+    def test_respects_context_hard_limit(self, mock_target, mock_hard_limit):
+        """Test that files exceeding hard limit are skipped."""
         mock_index_manager = MagicMock()
         chunks = [
             VectorIndexResult(file_path="file1.py", score=0.9, content=""),
@@ -146,24 +299,55 @@ class TestGetRagContextFiles(TestCase):
         mock_index_manager.query.return_value = chunks
         self.conf.index_manager = mock_index_manager
         
-        # First file fills up the context
-        large_content = "a" * (llm_invoker.CONTEXT_TARGET_SIZE + 100)
+        # file1.py is 600 bytes, file2.py is 600 bytes
+        # Together they would be 1200 > hard_limit (1000)
+        # So file2 should be skipped
+        file_contents = {
+            "file1.py": "a" * 600,
+            "file2.py": "b" * 600,
+        }
         
-        call_count = [0]
-        def mock_read_text(encoding=None):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return large_content
-            return "small content"
+        def mock_read_text(self, encoding=None):
+            filename = str(self).split('/')[-1]
+            return file_contents.get(filename, "")
         
         with patch('pathlib.Path.is_file', return_value=True), \
-             patch('pathlib.Path.read_text', side_effect=mock_read_text):
+             patch('pathlib.Path.read_text', mock_read_text):
             result = llm_invoker._get_rag_context_files("prompt", self.conf, verbose=False)
         
-        # Only first file should be included, second skipped due to target size
-        # TODO: right now iscalled 2 times, not 1. Figure it out
-        #self.assertEqual(len(result), 1)
-        #self.assertIn("file1.py", result)
+        # Only file1 should be included, file2 would exceed hard limit
+        self.assertEqual(len(result), 1)
+        self.assertIn("file1.py", result)
+    
+    @patch('aye.controller.llm_invoker._get_context_hard_limit', return_value=500)
+    @patch('aye.controller.llm_invoker._get_context_target_size', return_value=2000)
+    def test_skips_individual_large_files(self, mock_target, mock_hard_limit):
+        """Test that individual files larger than remaining space are skipped."""
+        mock_index_manager = MagicMock()
+        chunks = [
+            VectorIndexResult(file_path="large.py", score=0.9, content=""),
+            VectorIndexResult(file_path="small.py", score=0.8, content=""),
+        ]
+        mock_index_manager.query.return_value = chunks
+        self.conf.index_manager = mock_index_manager
+        
+        file_contents = {
+            "large.py": "a" * 600,  # Too large (600 > 500 hard limit)
+            "small.py": "b" * 100,  # Small enough
+        }
+        
+        def mock_read_text(self, encoding=None):
+            filename = str(self).split('/')[-1]
+            return file_contents.get(filename, "")
+        
+        with patch('pathlib.Path.is_file', return_value=True), \
+             patch('pathlib.Path.read_text', mock_read_text):
+            result = llm_invoker._get_rag_context_files("prompt", self.conf, verbose=False)
+        
+        # large.py should be skipped (too big), small.py should be included
+        self.assertEqual(len(result), 1)
+        self.assertIn("small.py", result)
+        self.assertNotIn("large.py", result)
 
 
 class TestDetermineSourceFiles(TestCase):
@@ -185,6 +369,16 @@ class TestDetermineSourceFiles(TestCase):
         self.assertEqual(result, explicit)
         self.assertFalse(use_all)
         self.assertEqual(prompt, "prompt")
+    
+    @patch('aye.controller.llm_invoker.rprint')
+    def test_home_directory_skips_scan(self, mock_rprint):
+        self.conf.root = Path.home()
+        result, use_all, prompt = llm_invoker._determine_source_files(
+            "prompt", self.conf, verbose=True, explicit_source_files=None
+        )
+        self.assertEqual(result, {})
+        self.assertFalse(use_all)
+        mock_rprint.assert_called_with("[cyan]In home directory: skipping file scan, using empty context.[/]")
     
     @patch('aye.controller.llm_invoker.collect_sources')
     def test_all_command_exact(self, mock_collect):
@@ -214,6 +408,37 @@ class TestDetermineSourceFiles(TestCase):
         self.assertEqual(prompt, "do something")
     
     @patch('aye.controller.llm_invoker.collect_sources')
+    @patch('aye.controller.llm_invoker.rprint')
+    def test_rag_disabled_uses_all_files(self, mock_rprint, mock_collect):
+        """Test that when use_rag=False, all files are included."""
+        self.conf.use_rag = False
+        mock_collect.return_value = {"file.py": "content"}
+        
+        result, use_all, prompt = llm_invoker._determine_source_files(
+            "prompt", self.conf, verbose=True, explicit_source_files=None
+        )
+        
+        self.assertTrue(use_all)
+        self.assertEqual(result, {"file.py": "content"})
+        mock_rprint.assert_called_with("[cyan]Small project mode: including all files.[/]")
+    
+    @patch('aye.controller.llm_invoker._get_rag_context_files')
+    @patch('aye.controller.llm_invoker.rprint')
+    def test_rag_enabled_uses_vector_search(self, mock_rprint, mock_rag):
+        """Test that when use_rag=True and index_manager exists, RAG is used."""
+        self.conf.use_rag = True
+        self.conf.index_manager = MagicMock()
+        mock_rag.return_value = {"relevant.py": "content"}
+        
+        result, use_all, prompt = llm_invoker._determine_source_files(
+            "prompt", self.conf, verbose=True, explicit_source_files=None
+        )
+        
+        self.assertFalse(use_all)
+        self.assertEqual(result, {"relevant.py": "content"})
+        mock_rprint.assert_called_with("[cyan]Using code lookup for context...[/]")
+    
+    @patch('aye.controller.llm_invoker.collect_sources')
     def test_all_as_prefix_not_command(self, mock_collect):
         """Test that /allfiles is not treated as /all command."""
         mock_collect.return_value = {"file.py": "content"}
@@ -236,7 +461,7 @@ class TestDetermineSourceFiles(TestCase):
     @patch('aye.controller.llm_invoker._get_rag_context_files')
     @patch('aye.controller.llm_invoker.collect_sources')
     def test_large_project_uses_rag(self, mock_collect, mock_rag):
-        large_content = "a" * (llm_invoker.CONTEXT_HARD_LIMIT + 1)
+        large_content = "a" * (CONTEXT_HARD_LIMIT + 1)
         mock_collect.return_value = {"large.py": large_content}
         mock_rag.return_value = {"relevant.py": "content"}
         
@@ -377,7 +602,8 @@ class TestLlmInvoker(TestCase):
                 "source_files": self.source_files,
                 "chat_id": None,
                 "root": self.conf.root,
-                "system_prompt": SYSTEM_PROMPT
+                "system_prompt": SYSTEM_PROMPT,
+                "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS
             }
         )
         self.assertEqual(response.source, LLMSource.LOCAL)
@@ -415,7 +641,8 @@ class TestLlmInvoker(TestCase):
             chat_id=123,
             source_files=self.source_files,
             model=self.conf.selected_model,
-            system_prompt=SYSTEM_PROMPT
+            system_prompt=SYSTEM_PROMPT,
+            max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS
         )
         self.assertEqual(response.source, LLMSource.API)
         self.assertEqual(response.summary, "api summary")
@@ -426,7 +653,7 @@ class TestLlmInvoker(TestCase):
     @patch('aye.controller.llm_invoker.thinking_spinner')
     def test_invoke_llm_large_project_uses_rag(self, mock_spinner, mock_rprint):
         """Test that large projects use RAG to select relevant files."""
-        large_content = "a" * (llm_invoker.CONTEXT_HARD_LIMIT + 1)
+        large_content = "a" * (CONTEXT_HARD_LIMIT + 1)
         
         # Mock _determine_source_files to simulate large project behavior
         mock_index_manager = MagicMock()
@@ -534,7 +761,8 @@ class TestLlmInvoker(TestCase):
             chat_id=-1,
             source_files=self.source_files,
             model=self.conf.selected_model,
-            system_prompt=SYSTEM_PROMPT
+            system_prompt=SYSTEM_PROMPT,
+            max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS
         )
 
         debug_prints = [call[0][0] for call in mock_print.call_args_list]
@@ -581,7 +809,7 @@ class TestLlmInvoker(TestCase):
         mock_index_manager.query.return_value = [mock_chunk]
         self.conf.index_manager = mock_index_manager
         
-        large_content = "a" * (llm_invoker.CONTEXT_HARD_LIMIT + 1)
+        large_content = "a" * (CONTEXT_HARD_LIMIT + 1)
         
         with patch('pathlib.Path.is_file', return_value=True), \
              patch('pathlib.Path.read_text', return_value=large_content):

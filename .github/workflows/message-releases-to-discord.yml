@@ -1,4 +1,4 @@
-name: Messge to Discord on Release
+name: Message to Discord on Release
 
 on:
   release:
