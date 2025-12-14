@@ -295,6 +295,6 @@ class TestModelApi(TestCase):
 
         # Test send_feedback error in debug
         with patch('httpx.Client') as mock_client, patch('aye.model.api._auth_headers'):
-            mock_client.return_value.__enter__.return_value.post.side_effect = Exception("send error")
+            mock_client.return_value.__enter__.return_value.post.side_effect = httpx.RequestError("send error")
             api.send_feedback("feedback")
             self.assertIn("[DEBUG] Error sending feedback: send error", str(mock_print.call_args_list[-1][0][0]))
