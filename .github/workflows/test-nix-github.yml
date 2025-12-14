@@ -1,4 +1,6 @@
 name: Test Nix Installation
+permissions:
+  contents: read
 
 on:
   workflow_dispatch:
