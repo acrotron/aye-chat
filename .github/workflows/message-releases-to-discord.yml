@@ -1,4 +1,6 @@
 name: Message to Discord on Release
+permissions:
+  contents: read
 
 on:
   release:

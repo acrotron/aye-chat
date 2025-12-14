@@ -6,7 +6,7 @@ from prompt_toolkit.completion import Completion
 
 import aye.plugins.completer
 
-from aye.plugins.completer import CompleterPlugin, CmdPathCompleter
+from aye.plugins.completer import CompleterPlugin, CmdPathCompleter, CompositeCompleter
 
 
 class TestCompleterPlugin(TestCase):
@@ -18,9 +18,17 @@ class TestCompleterPlugin(TestCase):
         params = {"commands": ["help", "exit"]}
         result = self.plugin.on_command("get_completer", params)
         self.assertIn("completer", result)
-        self.assertIsInstance(result["completer"], CmdPathCompleter)
-        # Check if the custom commands were passed
-        self.assertIn("help", result["completer"].commands)
+        self.assertIsInstance(result["completer"], CompositeCompleter)
+        
+        # Test that the completer actually completes the custom commands
+        completer = result["completer"]
+        doc = Document("hel", cursor_position=3)
+        event = MagicMock()
+        completions = list(completer.get_completions(doc, event))
+        
+        # Check if 'help' is in the completions
+        completion_texts = [c.text for c in completions]
+        self.assertTrue(any('help' in text for text in completion_texts))
 
     def test_on_command_other_command(self):
         result = self.plugin.on_command("other_command", {})
