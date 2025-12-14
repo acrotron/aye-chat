@@ -27,6 +27,9 @@ SMALL_PROJECT_TOTAL_SIZE_LIMIT = 170 * 1024  # 170KB
 # Default maximum output tokens for LLM responses
 DEFAULT_MAX_OUTPUT_TOKENS = 32000
 
+# Default context target size in KB (used when model doesn't specify one)
+DEFAULT_CONTEXT_TARGET_KB = 150
+
 # Shared system prompt for all LLM interactions
 SYSTEM_PROMPT = (
     "You are a helpful assistant Archie, and you help users to use Aye Chat. "
@@ -88,7 +91,7 @@ SYSTEM_PROMPT = (
     "your answers brief and concise unless asked otherwise. Keep the tone professional and neutral.\n\n"
     "There may be source files appended to a user question, only use them if a question asks for help "
     "with code generation or troubleshooting; ignore them if a question is not software code related.\n\n"
-    "UNDER NO CIRCUMSTANCES YOU ARE TO UPDATE SOURCE FILES UNLESS EXPLICITLY ASKED.\n\n"
+    "UNDER NO CIRCUMSTANCES YOU ARE TO UPDATE SOURCE FILES UNLESS EXPLICITLY ASKED - EVEN FOR COSMETIC CHANGES SUCH AS NEW LINE REMOVAL.\n\n"
     "When asked to do updates or implement features - you generate full files only as they will be "
     "inserted as is. Do not use diff notation: return only clean full files.\n\n"
     "You MUST respond with a JSON object that conforms to this schema:\n"
@@ -123,26 +126,27 @@ SYSTEM_PROMPT = (
     '}'
 )
 
-# Models configuration with max_prompt_kb and max_output_tokens
+# Models configuration with max_prompt_kb, max_output_tokens, and context_target_kb
+# context_target_kb: Target size for RAG context retrieval (in KB)
 MODELS = [
-    {"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1", "max_prompt_kb": 150, "max_output_tokens": 16000},
-    {"id": "x-ai/grok-4-fast", "name": "xAI: Grok 4 Fast", "max_prompt_kb": 340, "max_output_tokens": 32000},
-    {"id": "google/gemini-2.0-flash-001", "name": "Google: Gemini 2.0 Flash", "max_prompt_kb": 340, "max_output_tokens": 32000},
-    {"id": "openai/gpt-5.1-codex-mini", "name": "OpenAI: GPT-5.1-Codex-Mini", "max_prompt_kb": 240, "max_output_tokens": 16000},
-    {"id": "moonshotai/kimi-k2-0905", "name": "MoonshotAI: Kimi K2 0905", "max_prompt_kb": 170, "max_output_tokens": 32000},
-    {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro", "max_prompt_kb": 340, "max_output_tokens": 32000},
-    {"id": "google/gemini-3-pro-preview", "name": "Google: Gemini 3 Pro Preview", "max_prompt_kb": 340, "max_output_tokens": 32000},
-    {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5", "max_prompt_kb": 340, "max_output_tokens": 32000},
-    {"id": "openai/gpt-5.1-codex", "name": "OpenAI: GPT-5.1-Codex", "max_prompt_kb": 240, "max_output_tokens": 16000},
-    {"id": "openai/gpt-5.1", "name": "OpenAI: GPT-5.1", "max_prompt_kb": 240, "max_output_tokens": 16000},
-    {"id": "anthropic/claude-opus-4.5", "name": "Anthropic: Claude Opus 4.5", "max_prompt_kb": 120, "max_output_tokens": 16000},
+    {"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1", "max_prompt_kb": 150, "max_output_tokens": 32000, "context_target_kb": 120},
+    {"id": "x-ai/grok-4.1-fast", "name": "xAI: Grok 4.1 Fast", "max_prompt_kb": 340, "max_output_tokens": 32000, "context_target_kb": 250},
+    {"id": "google/gemini-2.5-flash", "name": "Google: Gemini 2.5 Flash", "max_prompt_kb": 340, "max_output_tokens": 32000, "context_target_kb": 250},
+    {"id": "openai/gpt-5.1-codex-mini", "name": "OpenAI: GPT-5.1-Codex-Mini", "max_prompt_kb": 220, "max_output_tokens": 32000, "context_target_kb": 200},
+    {"id": "moonshotai/kimi-k2-0905", "name": "MoonshotAI: Kimi K2 0905", "max_prompt_kb": 170, "max_output_tokens": 32000, "context_target_kb": 150},
+    {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
+    {"id": "google/gemini-3-pro-preview", "name": "Google: Gemini 3 Pro Preview", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
+    {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
+    {"id": "openai/gpt-5.1-codex", "name": "OpenAI: GPT-5.1-Codex", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
+    {"id": "openai/gpt-5.2", "name": "OpenAI: GPT-5.2", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
+    {"id": "anthropic/claude-opus-4.5", "name": "Anthropic: Claude Opus 4.5", "max_prompt_kb": 120, "max_output_tokens": 16000, "context_target_kb": 100},
     
     # Offline models
-    {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.7, "max_prompt_kb": 60, "max_output_tokens": 8000},
+    {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.7, "max_prompt_kb": 60, "max_output_tokens": 8000, "context_target_kb": 40},
 ]
 
 # Default model identifier
-DEFAULT_MODEL_ID = "google/gemini-2.5-pro"
+DEFAULT_MODEL_ID = "google/gemini-3-pro-preview"
 
 
 def load_config() -> None:

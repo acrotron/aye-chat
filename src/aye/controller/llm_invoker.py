@@ -12,7 +12,7 @@ from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
 from aye.model.offline_llm_manager import is_offline_model
 from aye.controller.util import is_truncated_json
-from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS
+from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB
 
 import os
 
@@ -36,11 +36,6 @@ def _get_int_env(name: str, default: int) -> int:
         return default
 
 
-# Context target size for RAG queries (in bytes)
-CONTEXT_TARGET_SIZE = _get_int_env(
-    "AYE_CONTEXT_TARGET", 150 * 1024
-)  # 150KB, ~35K tokens in English language
-
 RELEVANCE_THRESHOLD = -1.0  # Accept all results from vector search, even with negative scores.
 
 # Message shown when LLM response is truncated due to output token limits
@@ -62,6 +57,35 @@ def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
         if model["id"] == model_id:
             return model
     return None
+
+
+def _get_context_target_size(model_id: str) -> int:
+    """
+    Get the target context size for RAG queries based on model configuration.
+    
+    This can be overridden by the AYE_CONTEXT_TARGET environment variable.
+    
+    Args:
+        model_id: The model identifier
+        
+    Returns:
+        Context target size in bytes
+    """
+    # Check for environment variable override first
+    env_override = os.environ.get("AYE_CONTEXT_TARGET")
+    if env_override is not None:
+        try:
+            return int(env_override)
+        except ValueError:
+            pass  # Fall through to model-specific config
+    
+    # Get model-specific context target
+    model_config = _get_model_config(model_id)
+    if model_config and "context_target_kb" in model_config:
+        return model_config["context_target_kb"] * 1024  # Convert KB to bytes
+    
+    # Default fallback
+    return DEFAULT_CONTEXT_TARGET_KB * 1024
 
 
 def _get_context_hard_limit(model_id: str) -> int:
@@ -135,7 +159,11 @@ def _get_rag_context_files(
             seen_files.add(chunk.file_path)
 
     # Get context limits for the selected model
+    context_target_size = _get_context_target_size(conf.selected_model)
     context_hard_limit = _get_context_hard_limit(conf.selected_model)
+
+    if _is_debug():
+        rprint(f"[yellow]Context target: {context_target_size / 1024:.1f}KB, hard limit: {context_hard_limit / 1024:.1f}KB[/]")
 
     # --- Context Packing Logic ---
     # Track files with their sizes for potential trimming
@@ -143,7 +171,7 @@ def _get_rag_context_files(
     current_size = 0
     
     for file_path_str in unique_files_ranked:
-        if current_size > CONTEXT_TARGET_SIZE:
+        if current_size > context_target_size:
             break
         
         try:
@@ -293,10 +321,23 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
         # Check if this looks like a truncated response
         if is_truncated_json(assistant_resp_str):
             if _is_debug():
-                print(f"[DEBUG] Response appears to be truncated:")
+                print("[DEBUG] Response appears to be truncated, attempting to fix by appending '\"}]}':")
                 print(assistant_resp_str)
-            parsed = {"answer_summary": TRUNCATED_RESPONSE_MESSAGE, "source_files": []}
-            return parsed, chat_id
+            
+            # Attempt to fix by appending the closing structure
+            fixed_response = assistant_resp_str ### Commented out for now for testing ### + "\"}]}"
+            
+            try:
+                parsed = json.loads(fixed_response)
+                if _is_debug():
+                    print(f"[DEBUG] Successfully fixed and parsed truncated response")
+                return parsed, chat_id
+            except json.JSONDecodeError:
+                if _is_debug():
+                    print(f"[DEBUG] Fix attempt failed, falling back to truncation message")
+                # Fix didn't work, return truncation message
+                parsed = {"answer_summary": TRUNCATED_RESPONSE_MESSAGE, "source_files": []}
+                return parsed, chat_id
 
         if "error" in assistant_resp_str.lower():
             chat_title = resp.get('chat_title', 'Unknown')
