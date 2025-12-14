@@ -1,4 +1,6 @@
 name: Test Homebrew Installation
+permissions:
+  contents: read
 
 on:
   workflow_dispatch:
