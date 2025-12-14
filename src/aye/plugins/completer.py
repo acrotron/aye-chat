@@ -7,6 +7,32 @@ from .plugin_base import Plugin
 from rich import print as rprint
 
 
+class CompositeCompleter(Completer):
+    """
+    Composite completer that delegates to AtFileCompleter for '@' references
+    and CmdPathCompleter for everything else.
+    """
+    
+    def __init__(self, cmd_completer: Completer, at_completer: Completer):
+        self.cmd_completer = cmd_completer
+        self.at_completer = at_completer
+    
+    def get_completions(self, document: Document, complete_event):
+        text = document.text_before_cursor
+        
+        # Check if we're in an '@' file reference
+        if '@' in text:
+            at_pos = text.rfind('@')
+            # Valid file reference: @ at start or preceded by whitespace
+            if at_pos == 0 or (at_pos > 0 and text[at_pos - 1] in ' \t\n'):
+                # Delegate to at_completer
+                yield from self.at_completer.get_completions(document, complete_event)
+                return
+        
+        # Otherwise use cmd_completer
+        yield from self.cmd_completer.get_completions(document, complete_event)
+
+
 class CmdPathCompleter(Completer):
     """
     Completes:
@@ -138,7 +164,7 @@ class CmdPathCompleter(Completer):
 
 class CompleterPlugin(Plugin):
     name = "completer"
-    version = "1.0.1"  # Version bump for lazy loading fix
+    version = "1.0.2"  # Version bump for CompositeCompleter
     premium = "free"
 
     def init(self, cfg: Dict[str, Any]) -> None:
@@ -151,5 +177,23 @@ class CompleterPlugin(Plugin):
         """Handle completion requests through the plugin system."""
         if command_name == "get_completer":
             commands = params.get("commands", [])
-            return {"completer": CmdPathCompleter(commands)}
+            project_root = params.get("project_root")
+            
+            # Create the command/path completer
+            cmd_completer = CmdPathCompleter(commands)
+            
+            # Get the @file completer from plugin manager
+            # We need to access the plugin manager from params or a global registry
+            # For now, we'll create it directly with project_root
+            from .at_file_completer import AtFileCompleter
+            from pathlib import Path
+            
+            at_completer = AtFileCompleter(
+                project_root=Path(project_root) if project_root else None
+            )
+            
+            # Create composite completer
+            composite = CompositeCompleter(cmd_completer, at_completer)
+            
+            return {"completer": composite}
         return None

@@ -109,7 +109,10 @@ def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
     BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "completion", "exit", "quit", ":q", "help", "cd", "db"]
-    completer_response = conf.plugin_manager.handle_command("get_completer", {"commands": BUILTIN_COMMANDS})
+    completer_response = conf.plugin_manager.handle_command("get_completer", {
+        "commands": BUILTIN_COMMANDS,
+        "project_root": str(conf.root)
+    })
     completer = completer_response["completer"] if completer_response else None
 
     session = create_prompt_session(completer)
@@ -278,14 +281,38 @@ def chat_repl(conf: Any) -> None:
                             if "error" in shell_response:
                                 rprint(f"[red]Error:[/] {shell_response['error']}")
                     else:
+                        # Check for @file references before invoking LLM
+                        at_response = conf.plugin_manager.handle_command("parse_at_references", {
+                            "text": prompt,
+                            "project_root": str(conf.root)
+                        })
+                        
+                        explicit_files = None
+                        cleaned_prompt = prompt
+                        
+                        if at_response and not at_response.get("error"):
+                            explicit_files = at_response.get("file_contents", {})
+                            cleaned_prompt = at_response.get("cleaned_prompt", prompt)
+                            
+                            if conf.verbose and explicit_files:
+                                rprint(f"[cyan]Including {len(explicit_files)} file(s) from @ references: {', '.join(explicit_files.keys())}[/cyan]")
+                        
                         # This is the LLM path.
                         # DO NOT call prepare_sync() here - it blocks the main thread!
                         # The index is already being maintained in the background.
                         # RAG queries will use whatever index state is currently available.
 
-                        llm_response = invoke_llm(prompt=prompt, conf=conf, console=console, plugin_manager=conf.plugin_manager, chat_id=chat_id, verbose=conf.verbose)
+                        llm_response = invoke_llm(
+                            prompt=cleaned_prompt,
+                            conf=conf,
+                            console=console,
+                            plugin_manager=conf.plugin_manager,
+                            chat_id=chat_id,
+                            verbose=conf.verbose,
+                            explicit_source_files=explicit_files
+                        )
                         if llm_response:
-                            new_chat_id = process_llm_response(response=llm_response, conf=conf, console=console, prompt=prompt, chat_id_file=chat_id_file if llm_response.chat_id else None)
+                            new_chat_id = process_llm_response(response=llm_response, conf=conf, console=console, prompt=cleaned_prompt, chat_id_file=chat_id_file if llm_response.chat_id else None)
                             if new_chat_id is not None:
                                 chat_id = new_chat_id
                         else:
