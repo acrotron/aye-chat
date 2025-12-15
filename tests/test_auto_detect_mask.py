@@ -2,7 +2,6 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
-import pathspec
 
 from aye.plugins.auto_detect_mask import AutoDetectMaskPlugin
 
@@ -43,13 +42,6 @@ class TestAutoDetectMaskPlugin(TestCase):
         text_file = self.root / "main.py"
         self.assertTrue(self.plugin._is_binary(self.binary_file))
         self.assertFalse(self.plugin._is_binary(text_file))
-
-    def test_load_gitignore(self):
-        spec = self.plugin._load_gitignore(self.root)
-        self.assertIsInstance(spec, pathspec.PathSpec)
-        self.assertTrue(spec.match_file("style.css"))
-        self.assertTrue(spec.match_file("ignored/some_file.txt"))
-        self.assertFalse(spec.match_file("main.py"))
 
     def test_process_file(self):
         # Source file

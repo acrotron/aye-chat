@@ -25,12 +25,14 @@ from prompt_toolkit.completion import Completer, Completion
 from rich import print as rprint
 
 from .plugin_base import Plugin
+from aye.model.ignore_patterns import load_ignore_patterns
 
 
 class AtFileCompleter(Completer):
     """
     Completes file paths when user types '@' anywhere in the input.
     Supports relative paths and wildcards.
+    Respects .gitignore and .ayeignore patterns.
     """
 
     def __init__(self, project_root: Optional[Path] = None, file_cache: Optional[List[str]] = None):
@@ -39,25 +41,42 @@ class AtFileCompleter(Completer):
         self._cache_valid = file_cache is not None
 
     def _get_project_files(self) -> List[str]:
-        """Get list of files in project, using cache if available."""
+        """Get list of files in project, using cache if available.
+        
+        Respects .gitignore and .ayeignore patterns.
+        """
         if self._cache_valid and self._file_cache is not None:
             return self._file_cache
 
-        # Build file list - respect common ignore patterns
+        # Load ignore patterns using shared utility
+        ignore_spec = load_ignore_patterns(self.project_root)
+
+        # Build file list - respect ignore patterns
         files = []
-        ignore_dirs = {
-            '.git', '.aye', 'node_modules', '__pycache__', 'venv', 'env',
-            '.venv', '.env', 'dist', 'build', '.idea', '.vscode'
-        }
 
         try:
             for root, dirs, filenames in os.walk(self.project_root):
-                # Filter out ignored directories
-                dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith('.')]
+                # Filter out ignored directories before descending
+                rel_dir = Path(root).relative_to(self.project_root).as_posix()
+                
+                # Filter directories
+                dirs[:] = [
+                    d for d in dirs
+                    if not ignore_spec.match_file(os.path.join(rel_dir, d + "/"))
+                    and not d.startswith('.')  # Skip hidden dirs
+                ]
 
+                # Process files
                 for filename in filenames:
                     if filename.startswith('.'):
                         continue
+                    
+                    rel_file = os.path.join(rel_dir, filename)
+                    
+                    # Check if file matches ignore patterns
+                    if ignore_spec.match_file(rel_file):
+                        continue
+                    
                     filepath = Path(root) / filename
                     try:
                         rel_path = filepath.relative_to(self.project_root)
