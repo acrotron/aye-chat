@@ -19,15 +19,6 @@ brew install aye-chat
 
 Download and run [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/latest/download/aye-chat-setup.exe)
 
-**NixOS/Nix:**
-```bash
-# Run directly without installing
-nix run github:acrotron/aye-chat
-
-# Or install to your profile
-nix profile install github:acrotron/aye-chat
-```
-
 ![Aye Chat: The AI-powered terminal workspace](https://raw.githubusercontent.com/acrotron/aye-media/refs/heads/main/files/ai-shell.gif)
 
 ## What it does
@@ -172,6 +163,19 @@ The core experience is enhanced by plugins:
 
 </details>
                                                                                                                                                              
+<details>
+<summary>🐧 NixOS/Nix Installation</summary>
+
+```bash
+# Run directly without installing
+nix run github:acrotron/aye-chat
+
+# Or install to your profile
+nix profile install github:acrotron/aye-chat
+```
+
+</details>
+
 ## Contributing
 
 Aye Chat is open source! We welcome contributions.
