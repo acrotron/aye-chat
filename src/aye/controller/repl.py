@@ -10,6 +10,8 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
+from prompt_toolkit.filters import completion_is_selected, has_completions
 
 from rich.console import Console
 from rich import print as rprint
@@ -78,6 +80,56 @@ def collect_and_send_feedback(chat_id: int):
         rprint("\n[cyan]Goodbye![/cyan]")
 
 
+def create_key_bindings() -> KeyBindings:
+    """
+    Create custom key bindings for the prompt session.
+    
+    Key behaviors:
+    - Enter when completion menu is visible: Accept the selected completion
+    - Enter when no completion menu: Submit the input
+    - Tab: Cycle through completions (default behavior)
+    """
+    bindings = KeyBindings()
+    
+    @bindings.add(Keys.Enter, filter=has_completions)
+    def accept_completion_on_enter(event):
+        """
+        When completions are visible and Enter is pressed,
+        accept the current completion instead of submitting.
+        """
+        buffer = event.app.current_buffer
+        
+        # If a completion is selected, accept it
+        if buffer.complete_state:
+            buffer.complete_state = None
+            # Apply the completion
+            if buffer.complete_state is None:
+                # Get the current completion
+                completions = list(buffer.completer.get_completions(
+                    buffer.document, 
+                    type('obj', (object,), {'completion_requested': True})()
+                ))
+                if completions:
+                    # Apply the first completion
+                    completion = completions[0]
+                    buffer.insert_text(completion.text)
+                    buffer.complete_state = None
+        else:
+            # No completion state, just close the menu
+            buffer.cancel_completion()
+    
+    @bindings.add(Keys.Enter, filter=completion_is_selected)
+    def accept_selected_completion(event):
+        """
+        When a specific completion is selected (highlighted),
+        accept it on Enter.
+        """
+        event.app.current_buffer.complete_state = None
+        # The completion is already applied when selected
+    
+    return bindings
+
+
 def create_prompt_session(completer: Any, completion_style: str = "readline") -> PromptSession:
     """
     Create a PromptSession with multi-column completion display.
@@ -91,17 +143,24 @@ def create_prompt_session(completer: Any, completion_style: str = "readline") ->
     - 'readline': @ completions auto-trigger, others require TAB
     - 'multi': all completions auto-trigger
     
+    Custom key bindings ensure that Enter accepts a completion when the
+    menu is visible, rather than submitting the input.
+    
     Args:
         completer: The completer instance to use
         completion_style: 'readline' or 'multi' - controls auto-trigger behavior
     """
+    # Create custom key bindings for completion behavior
+    key_bindings = create_key_bindings()
+    
     # Always use MULTI_COLUMN for nice grid display of @ file completions
     # The DynamicAutoCompleteCompleter controls when completions appear
     return PromptSession(
         history=InMemoryHistory(),
         completer=completer,
         complete_style=CompleteStyle.MULTI_COLUMN,
-        complete_while_typing=True
+        complete_while_typing=True,
+        key_bindings=key_bindings
     )
 
 
