@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 from prompt_toolkit.document import Document
 
-from aye.plugins.at_file_completer import AtFileCompleter, AtFileCompleterPlugin
+from aye.plugins.at_file_completer import AtFileCompleter, AtFileCompleterPlugin, AtFileCompleterWrapper
 
 
 class TestAtFileCompleter(TestCase):
@@ -256,7 +256,7 @@ class TestAtFileCompleterPlugin(TestCase):
         
         self.assertIsNotNone(result)
         self.assertIn("completer", result)
-        self.assertIsInstance(result["completer"], AtFileCompleter)
+        self.assertIsInstance(result["completer"], AtFileCompleterWrapper)
 
     def test_get_at_file_completer_caches_instance(self):
         self.plugin.init({})

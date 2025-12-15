@@ -184,6 +184,25 @@ class AtFileCompleter(Completer):
             pass
 
 
+class AtFileCompleterWrapper(Completer):
+    """
+    Wrapper around AtFileCompleter that forces multi-column display for @ completions.
+    
+    This ensures that @ file completions always show in a multi-column grid,
+    regardless of whether the user has selected 'readline' or 'multi' completion mode.
+    """
+    
+    def __init__(self, at_completer: AtFileCompleter):
+        self.at_completer = at_completer
+    
+    def get_completions(self, document: Document, complete_event):
+        """Delegate to AtFileCompleter and yield completions."""
+        # Simply delegate to the underlying completer
+        # The multi-column display is handled by the prompt session configuration
+        # when this completer is active
+        yield from self.at_completer.get_completions(document, complete_event)
+
+
 class AtFileCompleterPlugin(Plugin):
     """Plugin for @file reference completion and expansion.
     
@@ -203,6 +222,7 @@ class AtFileCompleterPlugin(Plugin):
     def __init__(self):
         super().__init__()
         self._completer: Optional[AtFileCompleter] = None
+        self._wrapper: Optional[AtFileCompleterWrapper] = None
         self._project_root: Optional[Path] = None
 
     def init(self, cfg: Dict[str, Any]) -> None:
@@ -218,15 +238,16 @@ class AtFileCompleterPlugin(Plugin):
         if self.debug:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
 
-    def _get_completer(self, project_root: Optional[Path] = None) -> AtFileCompleter:
+    def _get_completer(self, project_root: Optional[Path] = None) -> AtFileCompleterWrapper:
         """Get or create the completer instance."""
         root = project_root or Path.cwd()
 
         if self._completer is None or self._project_root != root:
             self._project_root = root
             self._completer = AtFileCompleter(project_root=root)
+            self._wrapper = AtFileCompleterWrapper(self._completer)
 
-        return self._completer
+        return self._wrapper
 
     def _parse_at_references(self, text: str) -> Tuple[List[str], str]:
         """
@@ -300,12 +321,12 @@ class AtFileCompleterPlugin(Plugin):
         """Handle commands for the at-file completer plugin."""
 
         if command_name == "get_at_file_completer":
-            # Return a completer instance for use in prompt_toolkit
+            # Return a wrapper that forces multi-column display
             project_root = params.get("project_root")
             if project_root:
                 project_root = Path(project_root)
-            completer = self._get_completer(project_root)
-            return {"completer": completer}
+            wrapper = self._get_completer(project_root)
+            return {"completer": wrapper}
 
         if command_name == "invalidate_file_cache":
             # Invalidate the file cache (e.g., after file changes)

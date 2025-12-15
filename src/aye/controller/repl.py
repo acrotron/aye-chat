@@ -78,44 +78,49 @@ def collect_and_send_feedback(chat_id: int):
         rprint("\n[cyan]Goodbye![/cyan]")
 
 
-def create_prompt_session(completer: Any) -> PromptSession:
+def create_prompt_session(completer: Any, completion_style: str = "readline") -> PromptSession:
     """
-    Create a PromptSession with the configured completion style.
+    Create a PromptSession with multi-column completion display.
     
-    Reads 'completion_style' from user config:
-    - 'readline' (default): READLINE_LIKE style, complete_while_typing=False
-    - 'multi': MULTI_COLUMN style, complete_while_typing=True
+    We always use MULTI_COLUMN style to ensure @ file completions display
+    in a nice grid format. The 'completion_style' parameter controls whether
+    non-@ completions require TAB (readline behavior) or auto-trigger (multi).
+    
+    The DynamicAutoCompleteCompleter handles the logic of when to show
+    completions based on the completion_style setting:
+    - 'readline': @ completions auto-trigger, others require TAB
+    - 'multi': all completions auto-trigger
+    
+    Args:
+        completer: The completer instance to use
+        completion_style: 'readline' or 'multi' - controls auto-trigger behavior
     """
-    completion_style = get_user_config("completion_style", "readline").lower()
-    
-    if completion_style == "multi":
-        return PromptSession(
-            history=InMemoryHistory(),
-            completer=completer,
-            complete_style=CompleteStyle.MULTI_COLUMN,
-            complete_while_typing=True
-        )
-    else:
-        # Default to readline style
-        return PromptSession(
-            history=InMemoryHistory(),
-            completer=completer,
-            complete_style=CompleteStyle.READLINE_LIKE,
-            complete_while_typing=False
-        )
+    # Always use MULTI_COLUMN for nice grid display of @ file completions
+    # The DynamicAutoCompleteCompleter controls when completions appear
+    return PromptSession(
+        history=InMemoryHistory(),
+        completer=completer,
+        complete_style=CompleteStyle.MULTI_COLUMN,
+        complete_while_typing=True
+    )
 
 
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
     BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "completion", "exit", "quit", ":q", "help", "cd", "db"]
+    
+    # Get the completion style setting
+    completion_style = get_user_config("completion_style", "readline").lower()
+    
     completer_response = conf.plugin_manager.handle_command("get_completer", {
         "commands": BUILTIN_COMMANDS,
-        "project_root": str(conf.root)
+        "project_root": str(conf.root),
+        "completion_style": completion_style
     })
     completer = completer_response["completer"] if completer_response else None
 
-    session = create_prompt_session(completer)
+    session = create_prompt_session(completer, completion_style)
 
     print_startup_header(conf)
 
@@ -204,8 +209,15 @@ def chat_repl(conf: Any) -> None:
                 elif lowered_first == "completion":
                     new_style = handle_completion_command(tokens)
                     if new_style:
-                        # Recreate the session with the new completion style
-                        session = create_prompt_session(completer)
+                        # Recreate the completer with the new style setting
+                        completer_response = conf.plugin_manager.handle_command("get_completer", {
+                            "commands": BUILTIN_COMMANDS,
+                            "project_root": str(conf.root),
+                            "completion_style": new_style
+                        })
+                        completer = completer_response["completer"] if completer_response else None
+                        # Recreate the session with the new completer
+                        session = create_prompt_session(completer, new_style)
                         rprint(f"[green]Completion style is now active.[/]")
                 elif lowered_first == "diff":
                     args = tokens[1:]
