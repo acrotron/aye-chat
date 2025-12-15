@@ -12,10 +12,11 @@ updates:
       time: "05:30"
       timezone: US/Eastern
     open-pull-requests-limit: 99
-    target-branch: "main"
+    target-branch: "dev"
   - package-ecosystem: "pip" # See documentation for possible values
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
       time: "06:30"
       timezone: US/Eastern
+    target-branch: "dev"
