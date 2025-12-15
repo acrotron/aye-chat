@@ -104,7 +104,7 @@ jobs:
 
     steps:
       - name: Retrieve dev distributions
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: dev-dists
           path: dist/
