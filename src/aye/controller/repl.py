@@ -85,47 +85,46 @@ def create_key_bindings() -> KeyBindings:
     Create custom key bindings for the prompt session.
     
     Key behaviors:
-    - Enter when completion menu is visible: Accept the selected completion
+    - Enter when a completion is selected: Accept the selected completion
+    - Enter when completion menu is visible but nothing selected: Accept first completion
     - Enter when no completion menu: Submit the input
     - Tab: Cycle through completions (default behavior)
     """
     bindings = KeyBindings()
     
-    @bindings.add(Keys.Enter, filter=has_completions)
-    def accept_completion_on_enter(event):
-        """
-        When completions are visible and Enter is pressed,
-        accept the current completion instead of submitting.
-        """
-        buffer = event.app.current_buffer
-        
-        # If a completion is selected, accept it
-        if buffer.complete_state:
-            buffer.complete_state = None
-            # Apply the completion
-            if buffer.complete_state is None:
-                # Get the current completion
-                completions = list(buffer.completer.get_completions(
-                    buffer.document, 
-                    type('obj', (object,), {'completion_requested': True})()
-                ))
-                if completions:
-                    # Apply the first completion
-                    completion = completions[0]
-                    buffer.insert_text(completion.text)
-                    buffer.complete_state = None
-        else:
-            # No completion state, just close the menu
-            buffer.cancel_completion()
-    
     @bindings.add(Keys.Enter, filter=completion_is_selected)
     def accept_selected_completion(event):
         """
         When a specific completion is selected (highlighted),
-        accept it on Enter.
+        accept it on Enter instead of submitting the input.
         """
-        event.app.current_buffer.complete_state = None
-        # The completion is already applied when selected
+        buffer = event.app.current_buffer
+        complete_state = buffer.complete_state
+        
+        if complete_state and complete_state.current_completion:
+            # Apply the completion by inserting its text at the correct position
+            completion = complete_state.current_completion
+            buffer.apply_completion(completion)
+        
+        # Clear the completion state after applying
+        buffer.complete_state = None
+    
+    @bindings.add(Keys.Enter, filter=has_completions & ~completion_is_selected)
+    def accept_first_completion(event):
+        """
+        When completions are visible but none is explicitly selected,
+        accept the first completion on Enter.
+        """
+        buffer = event.app.current_buffer
+        complete_state = buffer.complete_state
+        
+        if complete_state and complete_state.completions:
+            # Get the first completion and apply it
+            first_completion = complete_state.completions[0]
+            buffer.apply_completion(first_completion)
+        
+        # Clear the completion state after applying
+        buffer.complete_state = None
     
     return bindings
 

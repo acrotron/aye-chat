@@ -7,12 +7,14 @@ Usage:
     - Type @ followed by a filename to get autocomplete suggestions
     - Multiple @references can be used in a single prompt
     - Supports relative paths: @src/utils.py
-    - Supports wildcards in file patterns: @src/*.py (when parsed)
+    - Supports wildcards in file patterns: @src/*.py, @*.py, @tests/test_*.py
 
 Examples:
     "I want to update @main.py with a driver function"
     "Refactor @src/utils.py and @src/helpers.py to use async"
     "Explain what @config.py does"
+    "Update all @*.py files with better logging"
+    "Fix tests in @tests/test_*.py"
 '''
 
 import os
@@ -323,10 +325,13 @@ class AtFileCompleterPlugin(Plugin):
     """
 
     name = "at_file_completer"
-    version = "1.0.0"  # Version bump for folder support
+    version = "1.1.0"  # Version bump for wildcard support
     premium = "free"
     debug = False
     verbose = False
+
+    # Regex pattern for @file references - includes wildcards (* and ?)
+    AT_REFERENCE_PATTERN = r'(?:^|\s)@([\w./\-_*?]+)'
 
     def __init__(self):
         super().__init__()
@@ -365,23 +370,23 @@ class AtFileCompleterPlugin(Plugin):
         Returns:
             Tuple of (list of file references, cleaned prompt text)
         """
-        # Pattern to match @filepath (supports paths with /, -, _, .)
-        # Must be preceded by whitespace or start of string
-        # Stops at whitespace or end of string
-        pattern = r'(?:^|\s)@([\w./\-_]+)'
-
-        references = re.findall(pattern, text)
+        references = re.findall(self.AT_REFERENCE_PATTERN, text)
 
         # Remove the @references from the text for the cleaned prompt
-        # Use a slightly different pattern that captures the whole @reference
-        cleaned = re.sub(r'(?:^|\s)@[\w./\-_]+', ' ', text)
+        cleaned = re.sub(r'(?:^|\s)@[\w./\-_*?]+', ' ', text)
         # Clean up extra whitespace
         cleaned = ' '.join(cleaned.split())
 
         return references, cleaned
 
     def _expand_file_patterns(self, patterns: List[str], project_root: Path) -> List[str]:
-        """Expand file patterns (including wildcards) to actual file paths."""
+        """Expand file patterns (including wildcards) to actual file paths.
+        
+        Supports:
+        - Direct file paths: src/main.py
+        - Wildcards: *.py, src/*.py, tests/test_*.py
+        - Question mark wildcards: file?.py
+        """
         expanded = []
 
         for pattern in patterns:
@@ -392,27 +397,30 @@ class AtFileCompleterPlugin(Plugin):
             # Remove trailing slash if present (it's a folder reference)
             pattern = pattern.rstrip('/')
 
-            # Check if it's a direct file path
-            direct_path = project_root / pattern
-            if direct_path.is_file():
-                expanded.append(pattern)
-                continue
+            # Check if pattern contains wildcards
+            has_wildcard = '*' in pattern or '?' in pattern
             
-            # Check if it's a directory - if so, skip it (we only expand files)
-            if direct_path.is_dir():
-                # Could optionally expand to all files in directory
-                # For now, skip directories in file expansion
-                continue
-
-            # Try glob expansion
-            matched = list(project_root.glob(pattern))
-            for match in matched:
-                if match.is_file():
-                    try:
-                        rel_path = match.relative_to(project_root)
-                        expanded.append(str(rel_path))
-                    except ValueError:
-                        expanded.append(pattern)
+            if not has_wildcard:
+                # Direct file path - check if it exists
+                direct_path = project_root / pattern
+                if direct_path.is_file():
+                    expanded.append(pattern)
+                    continue
+                
+                # Check if it's a directory - if so, skip it
+                if direct_path.is_dir():
+                    continue
+            else:
+                # Pattern contains wildcards - use glob expansion
+                matched = list(project_root.glob(pattern))
+                for match in matched:
+                    if match.is_file():
+                        try:
+                            rel_path = match.relative_to(project_root)
+                            expanded.append(str(rel_path))
+                        except ValueError:
+                            # If we can't make it relative, use the pattern as-is
+                            pass
 
         return expanded
 
@@ -462,7 +470,7 @@ class AtFileCompleterPlugin(Plugin):
             if not references:
                 return None  # No @references found
 
-            # Expand patterns to actual files
+            # Expand patterns to actual files (handles wildcards)
             expanded_files = self._expand_file_patterns(references, project_root)
 
             if not expanded_files:
@@ -491,8 +499,7 @@ class AtFileCompleterPlugin(Plugin):
         if command_name == "has_at_references":
             # Quick check if text contains @references
             text = params.get("text", "")
-            # Must be preceded by whitespace or start of string
-            has_refs = bool(re.search(r'(?:^|\s)@[\w./\-_]+', text))
+            has_refs = bool(re.search(self.AT_REFERENCE_PATTERN, text))
             return {"has_references": has_refs}
 
         return None

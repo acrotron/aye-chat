@@ -26,6 +26,13 @@ class TestAtFileCompleter(TestCase):
         (src_dir / "app.py").write_text("# app")
         (src_dir / "helpers.py").write_text("# helpers")
         
+        # Create tests directory with test files
+        tests_dir = self.project_root / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_main.py").write_text("# test main")
+        (tests_dir / "test_utils.py").write_text("# test utils")
+        (tests_dir / "conftest.py").write_text("# conftest")
+        
         # Create ignored directory (should be skipped)
         git_dir = self.project_root / ".git"
         git_dir.mkdir()
@@ -61,6 +68,8 @@ class TestAtFileCompleter(TestCase):
         # Use as_posix() to ensure cross-platform compatibility (forward slashes)
         self.assertIn(Path("src/app.py").as_posix(), files)
         self.assertIn(Path("src/helpers.py").as_posix(), files)
+        self.assertIn(Path("tests/test_main.py").as_posix(), files)
+        self.assertIn(Path("tests/test_utils.py").as_posix(), files)
         # .git should be ignored
         self.assertNotIn(".git/config", files)
 
@@ -224,10 +233,19 @@ class TestAtFileCompleterPlugin(TestCase):
         # Create test files
         (self.project_root / "main.py").write_text("print('hello')")
         (self.project_root / "utils.py").write_text("def helper(): pass")
+        (self.project_root / "config.py").write_text("# config")
         
         src_dir = self.project_root / "src"
         src_dir.mkdir()
         (src_dir / "app.py").write_text("# application code")
+        (src_dir / "module1.py").write_text("# module 1")
+        (src_dir / "module2.py").write_text("# module 2")
+        
+        tests_dir = self.project_root / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_main.py").write_text("# test main")
+        (tests_dir / "test_utils.py").write_text("# test utils")
+        (tests_dir / "conftest.py").write_text("# conftest")
         
         self.plugin = AtFileCompleterPlugin()
 
@@ -237,7 +255,7 @@ class TestAtFileCompleterPlugin(TestCase):
 
     def test_plugin_metadata(self):
         self.assertEqual(self.plugin.name, "at_file_completer")
-        self.assertEqual(self.plugin.version, "1.0.0")
+        self.assertEqual(self.plugin.version, "1.1.0")
         self.assertEqual(self.plugin.premium, "free")
 
     def test_plugin_init(self):
@@ -340,6 +358,26 @@ class TestAtFileCompleterPlugin(TestCase):
         
         self.assertFalse(result["has_references"])
 
+    def test_has_at_references_with_wildcard(self):
+        """Test that wildcards are recognized in @references."""
+        self.plugin.init({})
+        
+        result = self.plugin.on_command("has_at_references", {
+            "text": "update @*.py"
+        })
+        
+        self.assertTrue(result["has_references"])
+
+    def test_has_at_references_with_path_wildcard(self):
+        """Test that path wildcards are recognized."""
+        self.plugin.init({})
+        
+        result = self.plugin.on_command("has_at_references", {
+            "text": "fix @tests/test_*.py"
+        })
+        
+        self.assertTrue(result["has_references"])
+
     def test_parse_at_references_no_references(self):
         self.plugin.init({})
         
@@ -425,13 +463,8 @@ class TestAtFileCompleterPlugin(TestCase):
         self.assertIsNotNone(result)
         self.assertIn("main.py", result["references"])
 
-    def test_parse_at_references_wildcard_not_supported_in_at_syntax(self):
-        """Wildcards like @*.py are not supported in the @reference syntax.
-        
-        The regex pattern only matches word characters, dots, slashes, dashes, and underscores.
-        Asterisks are not included, so @*.py won't be recognized as a reference.
-        Use the 'with' command syntax for wildcards instead: 'with *.py: prompt'
-        """
+    def test_parse_at_references_wildcard_star_py(self):
+        """Test @*.py expands to all Python files in root."""
         self.plugin.init({})
         
         result = self.plugin.on_command("parse_at_references", {
@@ -439,9 +472,100 @@ class TestAtFileCompleterPlugin(TestCase):
             "project_root": str(self.project_root)
         })
         
-        # @*.py is not recognized as a valid reference due to the * character
-        # The regex pattern r'(?:^|\s)@([\w./\-_]+)' doesn't include *
-        self.assertIsNone(result)
+        self.assertIsNotNone(result)
+        self.assertIn("*.py", result["references"])
+        # Should expand to main.py, utils.py, config.py (root level .py files)
+        self.assertIn("main.py", result["expanded_files"])
+        self.assertIn("utils.py", result["expanded_files"])
+        self.assertIn("config.py", result["expanded_files"])
+        # Should have file contents
+        self.assertIn("main.py", result["file_contents"])
+        self.assertIn("utils.py", result["file_contents"])
+
+    def test_parse_at_references_wildcard_path_star_py(self):
+        """Test @src/*.py expands to all Python files in src/."""
+        self.plugin.init({})
+        
+        result = self.plugin.on_command("parse_at_references", {
+            "text": "refactor @src/*.py",
+            "project_root": str(self.project_root)
+        })
+        
+        self.assertIsNotNone(result)
+        self.assertIn("src/*.py", result["references"])
+        # Should expand to src/app.py, src/module1.py, src/module2.py
+        expanded = result["expanded_files"]
+        self.assertTrue(any("app.py" in f for f in expanded))
+        self.assertTrue(any("module1.py" in f for f in expanded))
+        self.assertTrue(any("module2.py" in f for f in expanded))
+
+    def test_parse_at_references_wildcard_test_star(self):
+        """Test @tests/test_*.py expands to test files."""
+        self.plugin.init({})
+        
+        result = self.plugin.on_command("parse_at_references", {
+            "text": "fix @tests/test_*.py",
+            "project_root": str(self.project_root)
+        })
+        
+        self.assertIsNotNone(result)
+        self.assertIn("tests/test_*.py", result["references"])
+        # Should expand to tests/test_main.py, tests/test_utils.py
+        # but NOT tests/conftest.py
+        expanded = result["expanded_files"]
+        self.assertTrue(any("test_main.py" in f for f in expanded))
+        self.assertTrue(any("test_utils.py" in f for f in expanded))
+        self.assertFalse(any("conftest.py" in f for f in expanded))
+
+    def test_parse_at_references_wildcard_no_matches(self):
+        """Test wildcard with no matches returns error."""
+        self.plugin.init({})
+        
+        result = self.plugin.on_command("parse_at_references", {
+            "text": "update @*.xyz",
+            "project_root": str(self.project_root)
+        })
+        
+        self.assertIn("error", result)
+        self.assertIn("*.xyz", result["references"])
+
+    def test_parse_at_references_mixed_wildcard_and_direct(self):
+        """Test mixing wildcards and direct file references."""
+        self.plugin.init({})
+        
+        result = self.plugin.on_command("parse_at_references", {
+            "text": "update @main.py and @src/*.py",
+            "project_root": str(self.project_root)
+        })
+        
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result["references"]), 2)
+        self.assertIn("main.py", result["references"])
+        self.assertIn("src/*.py", result["references"])
+        # Should have main.py plus src files
+        self.assertIn("main.py", result["expanded_files"])
+        self.assertTrue(any("app.py" in f for f in result["expanded_files"]))
+
+    def test_parse_at_references_question_mark_wildcard(self):
+        """Test ? wildcard for single character matching."""
+        self.plugin.init({})
+        
+        # Create files for testing ? wildcard
+        (self.project_root / "file1.py").write_text("# file1")
+        (self.project_root / "file2.py").write_text("# file2")
+        (self.project_root / "file10.py").write_text("# file10")
+        
+        result = self.plugin.on_command("parse_at_references", {
+            "text": "update @file?.py",
+            "project_root": str(self.project_root)
+        })
+        
+        self.assertIsNotNone(result)
+        # Should match file1.py and file2.py but NOT file10.py
+        expanded = result["expanded_files"]
+        self.assertIn("file1.py", expanded)
+        self.assertIn("file2.py", expanded)
+        self.assertNotIn("file10.py", expanded)
 
     def test_unknown_command_returns_none(self):
         self.plugin.init({})
