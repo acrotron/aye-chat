@@ -30,29 +30,38 @@ from aye.model.ignore_patterns import load_ignore_patterns
 
 class AtFileCompleter(Completer):
     """
-    Completes file paths when user types '@' anywhere in the input.
+    Completes file and folder paths when user types '@' anywhere in the input.
     Supports relative paths and wildcards.
     Respects .gitignore and .ayeignore patterns.
+    
+    Folders are shown before files in completion suggestions.
     """
 
     def __init__(self, project_root: Optional[Path] = None, file_cache: Optional[List[str]] = None):
         self.project_root = project_root or Path.cwd()
         self._file_cache: Optional[List[str]] = file_cache
+        # If file_cache is provided, also initialize folder_cache to empty list
+        # to ensure cache is considered valid
+        self._folder_cache: Optional[List[str]] = [] if file_cache is not None else None
         self._cache_valid = file_cache is not None
 
-    def _get_project_files(self) -> List[str]:
-        """Get list of files in project, using cache if available.
+    def _get_project_items(self) -> Tuple[List[str], List[str]]:
+        """Get list of files and folders in project, using cache if available.
         
         Respects .gitignore and .ayeignore patterns.
+        
+        Returns:
+            Tuple of (files_list, folders_list)
         """
-        if self._cache_valid and self._file_cache is not None:
-            return self._file_cache
+        if self._cache_valid and self._file_cache is not None and self._folder_cache is not None:
+            return self._file_cache, self._folder_cache
 
         # Load ignore patterns using shared utility
         ignore_spec = load_ignore_patterns(self.project_root)
 
-        # Build file list - respect ignore patterns
+        # Build file and folder lists - respect ignore patterns
         files = []
+        folders = set()  # Use set to avoid duplicates
 
         try:
             for root, dirs, filenames in os.walk(self.project_root):
@@ -60,18 +69,25 @@ class AtFileCompleter(Completer):
                 rel_dir = Path(root).relative_to(self.project_root).as_posix()
                 
                 # Filter directories
-                dirs[:] = [
-                    d for d in dirs
-                    if not ignore_spec.match_file(os.path.join(rel_dir, d + "/"))
-                    and not d.startswith('.')  # Skip hidden dirs
-                ]
+                filtered_dirs = []
+                for d in dirs:
+                    dir_rel_path = os.path.join(rel_dir, d + "/") if rel_dir != '.' else d + "/"
+                    if not ignore_spec.match_file(dir_rel_path) and not d.startswith('.'):
+                        filtered_dirs.append(d)
+                        # Add this directory to folders list
+                        if rel_dir == '.':
+                            folders.add(d)
+                        else:
+                            folders.add(os.path.join(rel_dir, d).replace('\\', '/'))
+                
+                dirs[:] = filtered_dirs
 
                 # Process files
                 for filename in filenames:
                     if filename.startswith('.'):
                         continue
                     
-                    rel_file = os.path.join(rel_dir, filename)
+                    rel_file = os.path.join(rel_dir, filename) if rel_dir != '.' else filename
                     
                     # Check if file matches ignore patterns
                     if ignore_spec.match_file(rel_file):
@@ -88,13 +104,20 @@ class AtFileCompleter(Completer):
             pass
 
         self._file_cache = sorted(files)
+        self._folder_cache = sorted(folders)
         self._cache_valid = True
-        return self._file_cache
+        return self._file_cache, self._folder_cache
+
+    def _get_project_files(self) -> List[str]:
+        """Get list of files in project (for backward compatibility)."""
+        files, _ = self._get_project_items()
+        return files
 
     def invalidate_cache(self):
         """Invalidate the file cache to force refresh."""
         self._cache_valid = False
         self._file_cache = None
+        self._folder_cache = None
 
     def get_completions(self, document: Document, complete_event):
         text = document.text_before_cursor
@@ -117,15 +140,47 @@ class AtFileCompleter(Completer):
         if ' ' in partial and not partial.endswith('/'):
             return
 
-        # Get all project files
-        all_files = self._get_project_files()
+        # Get all project files and folders
+        all_files, all_folders = self._get_project_items()
 
         partial_lower = partial.lower()
+        
+        # Determine the directory context for filtering
+        # If partial ends with '/', show contents of that directory
+        # If partial contains '/', filter to items in that path
+        dir_prefix = ''
+        name_partial = partial_lower
+        if '/' in partial:
+            last_slash = partial.rfind('/')
+            dir_prefix = partial[:last_slash + 1].lower()
+            name_partial = partial[last_slash + 1:].lower()
 
         if not partial:
-            # Empty partial: show top 20 alphabetical
-            all_files_sorted = sorted(all_files)
-            for filepath in all_files_sorted[:20]:
+            # Empty partial: show top folders first, then top files
+            folder_completions = []
+            file_completions = []
+            
+            # Add folders (top-level only when no partial)
+            for folder in all_folders:
+                if '/' not in folder:  # Top-level folders only
+                    folder_completions.append(folder)
+            
+            # Add files (top-level only when no partial)
+            for filepath in all_files:
+                if '/' not in filepath:  # Top-level files only
+                    file_completions.append(filepath)
+            
+            # Yield folders first (with trailing slash)
+            for folder in sorted(folder_completions)[:10]:
+                yield Completion(
+                    folder + '/',
+                    start_position=-len(partial),
+                    display=folder + '/',
+                    display_meta="folder"
+                )
+            
+            # Then yield files
+            for filepath in sorted(file_completions)[:10]:
                 yield Completion(
                     filepath,
                     start_position=-len(partial),
@@ -134,32 +189,86 @@ class AtFileCompleter(Completer):
                 )
             return
 
-        # First: exact matches (prefix, filename prefix, substring)
-        exact_matches = []
+        # Collect matching folders and files
+        matching_folders = []
+        matching_files = []
+        
+        for folder in all_folders:
+            folder_lower = folder.lower()
+            folder_name_lower = Path(folder).name.lower()
+            
+            # If we have a directory prefix, only show items in that directory
+            if dir_prefix:
+                if not folder_lower.startswith(dir_prefix):
+                    continue
+                # Get the part after the prefix
+                remainder = folder[len(dir_prefix):]
+                # Only show direct children (no more slashes)
+                if '/' in remainder:
+                    continue
+                # Match against the name partial
+                if name_partial and not remainder.lower().startswith(name_partial):
+                    continue
+            else:
+                # No directory prefix - match against full path or name
+                matches = (
+                    folder_lower.startswith(partial_lower) or
+                    folder_name_lower.startswith(partial_lower) or
+                    partial_lower in folder_lower
+                )
+                if not matches:
+                    continue
+            
+            matching_folders.append(folder)
+        
         for filepath in all_files:
             filepath_lower = filepath.lower()
             filename_lower = Path(filepath).name.lower()
+            
+            # If we have a directory prefix, only show items in that directory
+            if dir_prefix:
+                if not filepath_lower.startswith(dir_prefix):
+                    continue
+                # Get the part after the prefix
+                remainder = filepath[len(dir_prefix):]
+                # Only show direct children (no more slashes)
+                if '/' in remainder:
+                    continue
+                # Match against the name partial
+                if name_partial and not remainder.lower().startswith(name_partial):
+                    continue
+            else:
+                # No directory prefix - match against full path or name
+                matches = (
+                    filepath_lower.startswith(partial_lower) or
+                    filename_lower.startswith(partial_lower) or
+                    partial_lower in filepath_lower
+                )
+                if not matches:
+                    continue
+            
+            matching_files.append(filepath)
 
-            matches = (
-                filepath_lower.startswith(partial_lower) or
-                filename_lower.startswith(partial_lower) or
-                partial_lower in filepath_lower
-            )
-
-            if matches:
-                exact_matches.append(filepath)
-
-        if exact_matches:
-            for filepath in sorted(exact_matches):
+        # Yield folders first (sorted), then files (sorted)
+        if matching_folders or matching_files:
+            for folder in sorted(matching_folders):
+                yield Completion(
+                    folder + '/',
+                    start_position=-len(partial),
+                    display=folder + '/',
+                    display_meta="folder"
+                )
+            
+            for filepath in sorted(matching_files):
                 yield Completion(
                     filepath,
                     start_position=-len(partial),
                     display=filepath,
-                    display_meta="file (exact)"
+                    display_meta="file"
                 )
             return
 
-        # Fuzzy fallback on filenames (rapidfuzz)
+        # Fuzzy fallback on filenames (rapidfuzz) - only for files, not folders
         try:
             from rapidfuzz import process, fuzz
             file_names = [Path(fp).name for fp in all_files]
@@ -168,7 +277,7 @@ class AtFileCompleter(Completer):
                 scorer=fuzz.partial_ratio,
                 limit=8
             )
-            for match_name, score, _ in matches:  # ✅ Fixed: unpack all 3 values
+            for match_name, score, _ in matches:
                 if score >= 70:
                     full_paths = [fp for fp in all_files if Path(fp).name == match_name]
                     if full_paths:
@@ -214,7 +323,7 @@ class AtFileCompleterPlugin(Plugin):
     """
 
     name = "at_file_completer"
-    version = "1.0.0"
+    version = "1.0.0"  # Version bump for folder support
     premium = "free"
     debug = False
     verbose = False
@@ -279,11 +388,20 @@ class AtFileCompleterPlugin(Plugin):
             pattern = pattern.strip()
             if not pattern:
                 continue
+            
+            # Remove trailing slash if present (it's a folder reference)
+            pattern = pattern.rstrip('/')
 
             # Check if it's a direct file path
             direct_path = project_root / pattern
             if direct_path.is_file():
                 expanded.append(pattern)
+                continue
+            
+            # Check if it's a directory - if so, skip it (we only expand files)
+            if direct_path.is_dir():
+                # Could optionally expand to all files in directory
+                # For now, skip directories in file expansion
                 continue
 
             # Try glob expansion
