@@ -10,6 +10,8 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
+from prompt_toolkit.filters import completion_is_selected, has_completions
 
 from rich.console import Console
 from rich import print as rprint
@@ -78,44 +80,105 @@ def collect_and_send_feedback(chat_id: int):
         rprint("\n[cyan]Goodbye![/cyan]")
 
 
-def create_prompt_session(completer: Any) -> PromptSession:
+def create_key_bindings() -> KeyBindings:
     """
-    Create a PromptSession with the configured completion style.
+    Create custom key bindings for the prompt session.
     
-    Reads 'completion_style' from user config:
-    - 'readline' (default): READLINE_LIKE style, complete_while_typing=False
-    - 'multi': MULTI_COLUMN style, complete_while_typing=True
+    Key behaviors:
+    - Enter when a completion is selected: Accept the selected completion
+    - Enter when completion menu is visible but nothing selected: Accept first completion
+    - Enter when no completion menu: Submit the input
+    - Tab: Cycle through completions (default behavior)
     """
-    completion_style = get_user_config("completion_style", "readline").lower()
+    bindings = KeyBindings()
     
-    if completion_style == "multi":
-        return PromptSession(
-            history=InMemoryHistory(),
-            completer=completer,
-            complete_style=CompleteStyle.MULTI_COLUMN,
-            complete_while_typing=True
-        )
-    else:
-        # Default to readline style
-        return PromptSession(
-            history=InMemoryHistory(),
-            completer=completer,
-            complete_style=CompleteStyle.READLINE_LIKE,
-            complete_while_typing=False
-        )
+    @bindings.add(Keys.Enter, filter=completion_is_selected)
+    def accept_selected_completion(event):
+        """
+        When a specific completion is selected (highlighted),
+        accept it on Enter instead of submitting the input.
+        """
+        buffer = event.app.current_buffer
+        complete_state = buffer.complete_state
+        
+        if complete_state and complete_state.current_completion:
+            # Apply the completion by inserting its text at the correct position
+            completion = complete_state.current_completion
+            buffer.apply_completion(completion)
+        
+        # Clear the completion state after applying
+        buffer.complete_state = None
+    
+    @bindings.add(Keys.Enter, filter=has_completions & ~completion_is_selected)
+    def accept_first_completion(event):
+        """
+        When completions are visible but none is explicitly selected,
+        accept the first completion on Enter.
+        """
+        buffer = event.app.current_buffer
+        complete_state = buffer.complete_state
+        
+        if complete_state and complete_state.completions:
+            # Get the first completion and apply it
+            first_completion = complete_state.completions[0]
+            buffer.apply_completion(first_completion)
+        
+        # Clear the completion state after applying
+        buffer.complete_state = None
+    
+    return bindings
+
+
+def create_prompt_session(completer: Any, completion_style: str = "readline") -> PromptSession:
+    """
+    Create a PromptSession with multi-column completion display.
+    
+    We always use MULTI_COLUMN style to ensure @ file completions display
+    in a nice grid format. The 'completion_style' parameter controls whether
+    non-@ completions require TAB (readline behavior) or auto-trigger (multi).
+    
+    The DynamicAutoCompleteCompleter handles the logic of when to show
+    completions based on the completion_style setting:
+    - 'readline': @ completions auto-trigger, others require TAB
+    - 'multi': all completions auto-trigger
+    
+    Custom key bindings ensure that Enter accepts a completion when the
+    menu is visible, rather than submitting the input.
+    
+    Args:
+        completer: The completer instance to use
+        completion_style: 'readline' or 'multi' - controls auto-trigger behavior
+    """
+    # Create custom key bindings for completion behavior
+    key_bindings = create_key_bindings()
+    
+    # Always use MULTI_COLUMN for nice grid display of @ file completions
+    # The DynamicAutoCompleteCompleter controls when completions appear
+    return PromptSession(
+        history=InMemoryHistory(),
+        completer=completer,
+        complete_style=CompleteStyle.MULTI_COLUMN,
+        complete_while_typing=True,
+        key_bindings=key_bindings
+    )
 
 
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
     BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "completion", "exit", "quit", ":q", "help", "cd", "db"]
+    
+    # Get the completion style setting
+    completion_style = get_user_config("completion_style", "readline").lower()
+    
     completer_response = conf.plugin_manager.handle_command("get_completer", {
         "commands": BUILTIN_COMMANDS,
-        "project_root": str(conf.root)
+        "project_root": str(conf.root),
+        "completion_style": completion_style
     })
     completer = completer_response["completer"] if completer_response else None
 
-    session = create_prompt_session(completer)
+    session = create_prompt_session(completer, completion_style)
 
     print_startup_header(conf)
 
@@ -204,8 +267,15 @@ def chat_repl(conf: Any) -> None:
                 elif lowered_first == "completion":
                     new_style = handle_completion_command(tokens)
                     if new_style:
-                        # Recreate the session with the new completion style
-                        session = create_prompt_session(completer)
+                        # Recreate the completer with the new style setting
+                        completer_response = conf.plugin_manager.handle_command("get_completer", {
+                            "commands": BUILTIN_COMMANDS,
+                            "project_root": str(conf.root),
+                            "completion_style": new_style
+                        })
+                        completer = completer_response["completer"] if completer_response else None
+                        # Recreate the session with the new completer
+                        session = create_prompt_session(completer, new_style)
                         rprint(f"[green]Completion style is now active.[/]")
                 elif lowered_first == "diff":
                     args = tokens[1:]

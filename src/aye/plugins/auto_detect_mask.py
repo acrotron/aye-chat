@@ -4,12 +4,9 @@ from collections import Counter
 from typing import List, Tuple, Dict, Any, Optional
 import concurrent.futures
 from rich import print as rprint
-import platform
-
-import pathspec  # pip install pathspec
 
 from .plugin_base import Plugin
-from aye.model.config import DEFAULT_IGNORE_SET
+from aye.model.ignore_patterns import load_ignore_patterns
 
 # Predefined list of source code extensions to consider
 SOURCE_EXTENSIONS = {
@@ -33,56 +30,6 @@ class AutoDetectMaskPlugin(Plugin):
         if self.debug:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
         pass
-
-    def _load_gitignore(self, root: pathlib.Path) -> pathspec.PathSpec:
-        """
-        Load ignore patterns from .ayeignore and .gitignore files in the root
-        directory and all parent directories. This ensures that detection respects
-        the same ignore rules as file collection.
-        """
-        patterns = list(DEFAULT_IGNORE_SET)
-
-        # If running on Windows and the root is the home directory, add common
-        # problematic directory names to the ignore list to prevent hangs when
-        # scanning network-mapped folders (e.g., OneDrive).
-        try:
-            if platform.system() == "Windows" and root.resolve() == pathlib.Path.home().resolve():
-                windows_home_ignores = [
-                    "OneDrive",
-                    "Documents",
-                    "Pictures",
-                    "Videos",
-                    "Music",
-                    "Downloads",
-                    "AppData",
-                ]
-                patterns.extend(windows_home_ignores)
-        except Exception:
-            # Path.home() can fail; proceed without special ignores.
-            pass
-
-        current_path = root.resolve()
-
-        while True:
-            for ignore_name in (".gitignore", ".ayeignore"):
-                ignore_file = current_path / ignore_name
-                if ignore_file.is_file():
-                    try:
-                        with ignore_file.open("r", encoding="utf-8") as f:
-                            patterns.extend(
-                                line.rstrip() for line in f 
-                                if line.strip() and not line.strip().startswith("#")
-                            )
-                    except Exception:
-                        # Ignore files we can't read
-                        pass
-            
-            if current_path.parent == current_path:  # Reached filesystem root
-                break
-            
-            current_path = current_path.parent
-
-        return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
 
     def _is_binary(self, file_path: pathlib.Path, blocksize: int = 4096) -> bool:
         """
@@ -111,7 +58,6 @@ class AutoDetectMaskPlugin(Plugin):
     def _detect_top_extensions(
         self,
         root: pathlib.Path,
-        ignored: pathspec.PathSpec,
         max_exts: int = 5,
     ) -> Tuple[List[str], Counter]:
         """
@@ -128,6 +74,9 @@ class AutoDetectMaskPlugin(Plugin):
             sorted by frequency (most common first).
             counter  – the full Counter object (useful for debugging).
         """
+        # Load ignore patterns using shared utility
+        ignored = load_ignore_patterns(root)
+        
         file_paths: List[pathlib.Path] = []
 
         for dirpath, dirnames, filenames in os.walk(root):
@@ -205,11 +154,8 @@ class AutoDetectMaskPlugin(Plugin):
         if not root.is_dir():
             raise ValueError(f"'{project_root}' is not a directory")
 
-        # Load .gitignore and .ayeignore patterns (if any)
-        ignored = self._load_gitignore(root)
-
         # Find the most common extensions
-        top_exts, counter = self._detect_top_extensions(root, ignored, max_exts)
+        top_exts, counter = self._detect_top_extensions(root, max_exts)
 
         if not top_exts:
             # No eligible files – fall back to the user-provided default

@@ -6,7 +6,7 @@ from prompt_toolkit.completion import Completion
 
 import aye.plugins.completer
 
-from aye.plugins.completer import CompleterPlugin, CmdPathCompleter, CompositeCompleter
+from aye.plugins.completer import CompleterPlugin, CmdPathCompleter, CompositeCompleter, DynamicAutoCompleteCompleter
 
 
 class TestCompleterPlugin(TestCase):
@@ -18,7 +18,7 @@ class TestCompleterPlugin(TestCase):
         params = {"commands": ["help", "exit"]}
         result = self.plugin.on_command("get_completer", params)
         self.assertIn("completer", result)
-        self.assertIsInstance(result["completer"], CompositeCompleter)
+        self.assertIsInstance(result["completer"], DynamicAutoCompleteCompleter)
         
         # Test that the completer actually completes the custom commands
         completer = result["completer"]
