@@ -7,6 +7,60 @@ from .plugin_base import Plugin
 from rich import print as rprint
 
 
+class DynamicAutoCompleteCompleter(Completer):
+    """
+    A completer wrapper that enables auto-complete (complete-while-typing)
+    only for specific contexts like @ file references.
+    
+    Behavior depends on completion_style:
+    - 'readline': @ completions auto-trigger, other completions require TAB
+    - 'multi': all completions auto-trigger (complete while typing)
+    
+    This allows @ file completion to always show in multi-column format
+    while respecting the user's preference for other completions.
+    """
+    
+    def __init__(self, inner_completer: Completer, completion_style: str = "readline"):
+        self.inner_completer = inner_completer
+        self.completion_style = completion_style.lower()
+    
+    def _is_at_file_context(self, text: str) -> bool:
+        """Check if we're in an @ file reference context."""
+        if '@' not in text:
+            return False
+        
+        at_pos = text.rfind('@')
+        # Valid file reference: @ at start or preceded by whitespace
+        if at_pos == 0 or (at_pos > 0 and text[at_pos - 1] in ' \t\n'):
+            # Check that we haven't finished the reference (no space after partial)
+            partial = text[at_pos + 1:]
+            if ' ' not in partial or partial.endswith('/'):
+                return True
+        
+        return False
+    
+    def get_completions(self, document: Document, complete_event):
+        text = document.text_before_cursor
+        
+        # For @ file references, always yield completions (auto-complete)
+        # This ensures @ completions work the same in both modes
+        if self._is_at_file_context(text):
+            yield from self.inner_completer.get_completions(document, complete_event)
+            return
+        
+        # For other completions, behavior depends on completion_style:
+        # - 'multi': auto-complete (yield completions always)
+        # - 'readline': only yield completions when TAB is pressed
+        if self.completion_style == "multi":
+            # Multi mode: always show completions (auto-complete)
+            yield from self.inner_completer.get_completions(document, complete_event)
+        else:
+            # Readline mode: only show completions when TAB is pressed
+            # complete_event.completion_requested is True when user pressed TAB
+            if complete_event.completion_requested:
+                yield from self.inner_completer.get_completions(document, complete_event)
+
+
 class CompositeCompleter(Completer):
     """
     Composite completer that delegates to AtFileCompleter for '@' references
@@ -164,7 +218,7 @@ class CmdPathCompleter(Completer):
 
 class CompleterPlugin(Plugin):
     name = "completer"
-    version = "1.0.2"  # Version bump for CompositeCompleter
+    version = "1.0.6"  # Version bump for completion_style parameter
     premium = "free"
 
     def init(self, cfg: Dict[str, Any]) -> None:
@@ -178,13 +232,12 @@ class CompleterPlugin(Plugin):
         if command_name == "get_completer":
             commands = params.get("commands", [])
             project_root = params.get("project_root")
+            completion_style = params.get("completion_style", "readline")
             
             # Create the command/path completer
             cmd_completer = CmdPathCompleter(commands)
             
-            # Get the @file completer from plugin manager
-            # We need to access the plugin manager from params or a global registry
-            # For now, we'll create it directly with project_root
+            # Get the @file completer
             from .at_file_completer import AtFileCompleter
             from pathlib import Path
             
@@ -195,5 +248,9 @@ class CompleterPlugin(Plugin):
             # Create composite completer
             composite = CompositeCompleter(cmd_completer, at_completer)
             
-            return {"completer": composite}
+            # Wrap with dynamic auto-complete behavior
+            # Pass the completion_style so it knows when to auto-trigger
+            dynamic_completer = DynamicAutoCompleteCompleter(composite, completion_style)
+            
+            return {"completer": dynamic_completer}
         return None
