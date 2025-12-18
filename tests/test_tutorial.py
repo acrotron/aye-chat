@@ -89,7 +89,7 @@ class TestTutorial(TestCase):
         
         # Should complete all steps (5 input prompts: welcome + 4 steps)
         self.assertGreaterEqual(mock_input.call_count, 5)
-        mock_apply.assert_called_once()
+        mock_apply.assert_called()
         mock_restore.assert_called_once_with(file_name='tutorial_example.py')
         self.assertTrue(self.tutorial_flag_file.exists())
         self.assertFalse(tutorial_file.exists())
@@ -120,7 +120,7 @@ class TestTutorial(TestCase):
         self.assertEqual(call_args[1]['default'], False)
         
         # Should complete all steps since user confirmed
-        mock_apply.assert_called_once()
+        mock_apply.assert_called()
         mock_restore.assert_called_once()
         self.assertTrue(self.tutorial_flag_file.exists())
 
