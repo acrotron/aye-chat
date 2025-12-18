@@ -83,7 +83,7 @@ def collect_and_send_feedback(chat_id: int):
 def create_key_bindings() -> KeyBindings:
     """
     Create custom key bindings for the prompt session.
-    
+
     Key behaviors:
     - Enter when a completion is selected: Accept the selected completion
     - Enter when completion menu is visible but nothing selected: Accept first completion
@@ -91,7 +91,7 @@ def create_key_bindings() -> KeyBindings:
     - Tab: Cycle through completions (default behavior)
     """
     bindings = KeyBindings()
-    
+
     @bindings.add(Keys.Enter, filter=completion_is_selected)
     def accept_selected_completion(event):
         """
@@ -100,15 +100,15 @@ def create_key_bindings() -> KeyBindings:
         """
         buffer = event.app.current_buffer
         complete_state = buffer.complete_state
-        
+
         if complete_state and complete_state.current_completion:
             # Apply the completion by inserting its text at the correct position
             completion = complete_state.current_completion
             buffer.apply_completion(completion)
-        
+
         # Clear the completion state after applying
         buffer.complete_state = None
-    
+
     @bindings.add(Keys.Enter, filter=has_completions & ~completion_is_selected)
     def accept_first_completion(event):
         """
@@ -117,41 +117,41 @@ def create_key_bindings() -> KeyBindings:
         """
         buffer = event.app.current_buffer
         complete_state = buffer.complete_state
-        
+
         if complete_state and complete_state.completions:
             # Get the first completion and apply it
             first_completion = complete_state.completions[0]
             buffer.apply_completion(first_completion)
-        
+
         # Clear the completion state after applying
         buffer.complete_state = None
-    
+
     return bindings
 
 
 def create_prompt_session(completer: Any, completion_style: str = "readline") -> PromptSession:
     """
     Create a PromptSession with multi-column completion display.
-    
+
     We always use MULTI_COLUMN style to ensure @ file completions display
     in a nice grid format. The 'completion_style' parameter controls whether
     non-@ completions require TAB (readline behavior) or auto-trigger (multi).
-    
+
     The DynamicAutoCompleteCompleter handles the logic of when to show
     completions based on the completion_style setting:
     - 'readline': @ completions auto-trigger, others require TAB
     - 'multi': all completions auto-trigger
-    
+
     Custom key bindings ensure that Enter accepts a completion when the
     menu is visible, rather than submitting the input.
-    
+
     Args:
         completer: The completer instance to use
         completion_style: 'readline' or 'multi' - controls auto-trigger behavior
     """
     # Create custom key bindings for completion behavior
     key_bindings = create_key_bindings()
-    
+
     # Always use MULTI_COLUMN for nice grid display of @ file completions
     # The DynamicAutoCompleteCompleter controls when completions appear
     return PromptSession(
@@ -167,10 +167,10 @@ def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
     BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "completion", "exit", "quit", ":q", "help", "cd", "db"]
-    
+
     # Get the completion style setting
     completion_style = get_user_config("completion_style", "readline").lower()
-    
+
     completer_response = conf.plugin_manager.handle_command("get_completer", {
         "commands": BUILTIN_COMMANDS,
         "project_root": str(conf.root),
@@ -190,11 +190,16 @@ def chat_repl(conf: Any) -> None:
         thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
         thread.start()
 
-    if conf.verbose or is_first_run:
+    # Only auto-print help in verbose mode.
+    # First run (tutorial) should not spam the help screen.
+    if conf.verbose:
         print_help_message()
         rprint("")
+
+    # Keep first-run behavior of showing model prompt, but without forcing help.
+    if conf.verbose or is_first_run:
         handle_model_command(None, MODELS, conf, ['model'])
-    
+
     console = Console()
     chat_id_file = Path(".aye/chat_id.tmp")
     chat_id_file.parent.mkdir(parents=True, exist_ok=True)
@@ -356,17 +361,17 @@ def chat_repl(conf: Any) -> None:
                             "text": prompt,
                             "project_root": str(conf.root)
                         })
-                        
+
                         explicit_files = None
                         cleaned_prompt = prompt
-                        
+
                         if at_response and not at_response.get("error"):
                             explicit_files = at_response.get("file_contents", {})
                             cleaned_prompt = at_response.get("cleaned_prompt", prompt)
-                            
+
                             if conf.verbose and explicit_files:
                                 rprint(f"[cyan]Including {len(explicit_files)} file(s) from @ references: {', '.join(explicit_files.keys())}[/cyan]")
-                        
+
                         # This is the LLM path.
                         # DO NOT call prepare_sync() here - it blocks the main thread!
                         # The index is already being maintained in the background.
