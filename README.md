@@ -19,9 +19,10 @@ brew install aye-chat
 
 Download and run [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/latest/download/aye-chat-setup.exe)
 
-![Aye Chat: The AI-powered terminal workspace](https://raw.githubusercontent.com/acrotron/aye-media/refs/heads/main/files/ai-shell.gif)
+---
 
 ## What it does
+![Aye Chat: The AI-powered terminal workspace](https://raw.githubusercontent.com/acrotron/aye-media/refs/heads/main/files/ai-shell.gif)
 
 ```bash
 $ aye chat
@@ -45,49 +46,25 @@ $ aye chat
 **No copy-pasting. No context switching. AI edits your files directly.**
 
 ## Why developers love it
+                                                                                 
+#### Instant undo with Aye Chat's `Restore`
+Aye Chat's `restore` command provides an instant and reliable safety net for any changes made by the AI. Developers can forge ahead and experiment knowing that application restore is just one simple command away.  
 
+**Restore offers fine-grained control:**
+- `restore <ordinal>`:  Lets users revert to a specific historical snapshot (e.g., `001`). This is useful for stepping back through multiple AI interactions.
+- `restore <ordinal> <file>`:  Allows restoring a *specific file* from a particular snapshot. This is incredibly powerful for selectively reverting changes without affecting other files that might have been correctly updated.
+
+**Restore works best when used alongside other commands:**
+- `history`: to view available snapshots
+- `diff`: to compare current files with previous versions
+
+These commands provide a comprehensive system for reviewing, managing, and reverting code changes, keeping you in control. 
+
+#### Other Great Features:
 - **Zero config** - Automatically reads your project files (respects .gitignore)
-- **Instant undo** - `restore` command reverts any AI changes immediately  
 - **Real shell** - Run `git`, `pytest`, even `vim` without leaving the chat
 - **100% local backups** - Your code is safe, changes stored in `.aye/`
-- **No prefixes** - Just type. Commands run, everything else goes to AI
-
-## Quick examples
-
-```bash
-# In your project directory:
-aye chat
-
-> refactor this to use dependency injection
-> pytest
-> fix what broke  
-> git commit -m "refactored DI"
-```
-
-## Get started
-
-1. **Install**: `pip install ayechat`
-2. **Start chatting**: `aye chat` in any project folder
-
-## Get started - Windows Installer                                                                                                            
-For Windows users, the recommended way to install Aye Chat is with the official installer. It provides a standalone
-application that requires no manual setup.
-
-#### Installation
-
-1.  Download the latest [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/latest/download/aye-chat-setup.exe) from the GitHub Releases page.
-2.  Run the downloaded installer.
-3.  During setup, it is highly recommended to keep the following options enabled:
-    - `Add the application directory to your PATH`
-    - `Add 'Open Aye Chat here' to folder context menu`
-
-#### Usage
-
-After installation, you can launch Aye Chat by:
-
-- Typing `aye` in any terminal.
-- Right-clicking a project folder and selecting **Open Aye Chat here**.                                                                                    
-
+- **No prefixes** - Just type. Commands run, everything else goes to AI  
 ---
 
 <details>
@@ -95,17 +72,22 @@ After installation, you can launch Aye Chat by:
 
 ## Core Commands
 
-### Authentication
+### Usage
 
-**Does not require authentication**
+After installation, you can launch Aye Chat by:
 
-### Starting a Session
+- Typing `aye` in any terminal.
+- Right-clicking a project folder and selecting **Open Aye Chat here**. (For Windows Installer Only)
 
 ```bash
 aye chat                          # Start chat with auto-detected files
 aye chat --root ./src             # Specify a different project root
 aye chat --include "*.js,*.css"   # Manually specify which files to include
 ```
+
+### Authentication
+
+**Does not require authentication**
 
 ### In-Chat Commands
 
@@ -123,12 +105,14 @@ Your input is handled in this order:
 
 **Reviewing & Undoing AI Changes**
 - `restore`, `undo` - Instantly undo the last set of changes made by AI
+- `restore <ordinal>` - Restore to a specific snapshot (e.g., `restore 001`)
+- `restore <ordinal> <file>` - Restore a specific file from a snapshot
 - `history` - Show the history of changes made by AI
 - `diff <file>` - Compare current version against last change
 
 **Shell Commands**
 - Run any command: `ls -la`, `git status`, `docker ps`
-- Interactive programs work: `vim`, `nano`, `less`, `top`
+- Interactive programs work: `vim`, `nano`, `less`, `top`, `helix`
 
 </details>
 
@@ -162,7 +146,24 @@ The core experience is enhanced by plugins:
 - Model provider plugins
 
 </details>
-                                                                                                                                                             
+
+
+<details>
+<summary>📥 Installing with Windows Installer</summary>                                                                                                            
+
+For Windows users, the recommended way to install Aye Chat is with the official installer. It provides a standalone application that requires no manual setup.
+
+#### Installation
+
+1.  Download the latest [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/latest/download/aye-chat-setup.exe) from the GitHub Releases page.
+2.  Run the downloaded installer.
+3.  During setup, it is highly recommended to keep the following options enabled:
+    - `Add the application directory to your PATH`
+    - `Add 'Open Aye Chat here' to folder context menu`
+
+</details>
+
+
 <details>
 <summary>🐧 NixOS/Nix Installation</summary>
 
