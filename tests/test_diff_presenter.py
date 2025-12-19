@@ -1,7 +1,9 @@
-from unittest import TestCase
-from unittest.mock import patch, MagicMock
+from __future__ import annotations
+
 import tempfile
 from pathlib import Path
+from unittest import TestCase
+from unittest.mock import MagicMock, patch
 
 import aye.presenter.diff_presenter as diff_presenter
 
@@ -84,6 +86,15 @@ class TestDiffPresenter(TestCase):
         self.assertIn("+++ ", mock_console.print.call_args[0][0])
 
     @patch("aye.presenter.diff_presenter.rprint")
+    def test_python_diff_files_both_missing_no_diff(self, mock_rprint):
+        missing1 = self.dir / "m1.txt"
+        missing2 = self.dir / "m2.txt"
+
+        diff_presenter._python_diff_files(missing1, missing2)
+
+        mock_rprint.assert_called_once_with("[green]No differences found.[/]")
+
+    @patch("aye.presenter.diff_presenter.rprint")
     def test_python_diff_files_error(self, mock_rprint):
         with patch("pathlib.Path.read_text", side_effect=IOError("read error")):
             diff_presenter._python_diff_files(self.file1, self.file2)
@@ -118,101 +129,6 @@ class TestDiffPresenter(TestCase):
 
         mock_rprint.assert_called_with("[red]Error running Python diff:[/] diff error")
 
-    @patch("aye.presenter.diff_presenter._python_diff_content")
-    @patch("aye.model.snapshot.get_backend")
-    def test_show_diff_stash_ref_success(self, mock_get_backend, mock_diff_content):
-        # Patch GitStashBackend to a dummy base class so isinstance() is satisfied
-        DummyGitStashBackend = type("GitStashBackend", (), {})
-        with patch(
-            "aye.model.snapshot.git_backend.GitStashBackend",
-            new=DummyGitStashBackend,
-        ):
-
-            class Backend(DummyGitStashBackend):
-                def get_file_content_from_snapshot(self, file_path, stash_ref):
-                    return "old content\n"
-
-            mock_get_backend.return_value = Backend()
-
-            current_file = self.dir / "test.py"
-            current_file.write_text("new content\n")
-
-            diff_presenter.show_diff(str(current_file), "stash@{0}:test.py", is_stash_ref=True)
-
-            backend = mock_get_backend.return_value
-            self.assertEqual(backend.get_file_content_from_snapshot("test.py", "stash@{0}"), "old content\n")
-
-            mock_diff_content.assert_called_once()
-            args = mock_diff_content.call_args[0]
-            self.assertEqual(args[0], "new content\n")
-            self.assertEqual(args[1], "old content\n")
-            self.assertEqual(args[2], str(current_file))
-            self.assertEqual(args[3], "stash@{0}:test.py")
-
-    @patch("aye.presenter.diff_presenter.rprint")
-    @patch("aye.model.snapshot.get_backend")
-    def test_show_diff_stash_ref_wrong_backend(self, mock_get_backend, mock_rprint):
-        # Ensure isinstance() fails by using a dummy GitStashBackend and returning a non-instance
-        DummyGitStashBackend = type("GitStashBackend", (), {})
-        with patch(
-            "aye.model.snapshot.git_backend.GitStashBackend",
-            new=DummyGitStashBackend,
-        ):
-            mock_get_backend.return_value = object()
-
-            diff_presenter.show_diff("file.py", "stash@{0}:file.py", is_stash_ref=True)
-
-        mock_rprint.assert_called_once_with("[red]Error: Stash references only work with git backend[/]")
-
-    @patch("aye.presenter.diff_presenter.rprint")
-    @patch("aye.model.snapshot.get_backend")
-    def test_show_diff_stash_ref_file_not_in_stash(self, mock_get_backend, mock_rprint):
-        DummyGitStashBackend = type("GitStashBackend", (), {})
-        with patch(
-            "aye.model.snapshot.git_backend.GitStashBackend",
-            new=DummyGitStashBackend,
-        ):
-
-            class Backend(DummyGitStashBackend):
-                def get_file_content_from_snapshot(self, file_path, stash_ref):
-                    return None
-
-            mock_get_backend.return_value = Backend()
-
-            diff_presenter.show_diff("file.py", "stash@{0}:file.py", is_stash_ref=True)
-
-        mock_rprint.assert_called_once_with("[red]Error: Could not extract file from stash@{0}[/]")
-
-    @patch("aye.presenter.diff_presenter.rprint")
-    @patch("aye.model.snapshot.get_backend")
-    def test_show_diff_stash_ref_current_file_missing(self, mock_get_backend, mock_rprint):
-        DummyGitStashBackend = type("GitStashBackend", (), {})
-        with patch(
-            "aye.model.snapshot.git_backend.GitStashBackend",
-            new=DummyGitStashBackend,
-        ):
-
-            class Backend(DummyGitStashBackend):
-                def get_file_content_from_snapshot(self, file_path, stash_ref):
-                    return "content"
-
-            mock_get_backend.return_value = Backend()
-
-            missing_file = self.dir / "missing.py"
-            diff_presenter.show_diff(str(missing_file), "stash@{0}:missing.py", is_stash_ref=True)
-
-        mock_rprint.assert_called_once()
-        self.assertIn("does not exist", mock_rprint.call_args[0][0])
-
-    @patch("aye.presenter.diff_presenter.rprint")
-    @patch("aye.model.snapshot.get_backend")
-    def test_show_diff_stash_ref_exception(self, mock_get_backend, mock_rprint):
-        mock_get_backend.side_effect = Exception("backend error")
-
-        diff_presenter.show_diff("file.py", "stash@{0}:file.py", is_stash_ref=True)
-
-        mock_rprint.assert_called_once_with("[red]Error processing stash diff:[/] backend error")
-
     @patch("subprocess.run")
     @patch("aye.presenter.diff_presenter._diff_console")
     def test_show_diff_with_path_objects(self, mock_console, mock_run):
@@ -239,3 +155,168 @@ class TestDiffPresenter(TestCase):
         self.assertNotIn("\x1b[", output)
         self.assertIn("--- file", output)
         self.assertIn("+++ file", output)
+
+    # -------------------------------------------------------------------------
+    # Git snapshot reference (GitRefBackend) coverage
+    # -------------------------------------------------------------------------
+
+    @patch("aye.presenter.diff_presenter.rprint")
+    def test_show_diff_git_snapshot_wrong_backend(self, mock_rprint):
+        class DummyGitRefBackend:  # used only for isinstance check
+            pass
+
+        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
+            "aye.model.snapshot.get_backend", return_value=object()
+        ):
+            diff_presenter.show_diff(self.file1, "refs/aye/snapshots/001:path.txt", is_stash_ref=True)
+
+        mock_rprint.assert_called_once_with("[red]Error: Git snapshot references only work with GitRefBackend[/]")
+
+    @patch("aye.presenter.diff_presenter._python_diff_content")
+    @patch("aye.presenter.diff_presenter.rprint")
+    def test_show_diff_git_snapshot_current_vs_snapshot_success(self, mock_rprint, mock_py_diff):
+        class DummyGitRefBackend:
+            def __init__(self):
+                self.get_file_content_from_snapshot = MagicMock(return_value="snap-content\n")
+
+        backend = DummyGitRefBackend()
+
+        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
+            "aye.model.snapshot.get_backend", return_value=backend
+        ):
+            diff_presenter.show_diff(self.file1, "refs/aye/snapshots/001:file1.txt", is_stash_ref=True)
+
+        mock_rprint.assert_not_called()
+        backend.get_file_content_from_snapshot.assert_called_once_with("file1.txt", "refs/aye/snapshots/001")
+        mock_py_diff.assert_called_once()
+
+        # Ensure labels match the implementation
+        args = mock_py_diff.call_args[0]
+        self.assertEqual(args[0], self.file1.read_text(encoding="utf-8"))  # current content
+        self.assertEqual(args[1], "snap-content\n")
+        self.assertEqual(args[2], str(self.file1))
+        self.assertEqual(args[3], "refs/aye/snapshots/001:file1.txt")
+
+    @patch("aye.presenter.diff_presenter._python_diff_content")
+    @patch("aye.presenter.diff_presenter.rprint")
+    def test_show_diff_git_snapshot_current_file_missing(self, mock_rprint, mock_py_diff):
+        class DummyGitRefBackend:
+            def __init__(self):
+                self.get_file_content_from_snapshot = MagicMock(return_value="snap")
+
+        backend = DummyGitRefBackend()
+        missing_current = self.dir / "does_not_exist.txt"
+
+        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
+            "aye.model.snapshot.get_backend", return_value=backend
+        ):
+            diff_presenter.show_diff(missing_current, "refs/aye/snapshots/001:file.txt", is_stash_ref=True)
+
+        mock_py_diff.assert_not_called()
+        mock_rprint.assert_called_once()
+        self.assertIn("does not exist", mock_rprint.call_args[0][0])
+
+    @patch("aye.presenter.diff_presenter._python_diff_content")
+    @patch("aye.presenter.diff_presenter.rprint")
+    def test_show_diff_git_snapshot_snapshot_content_missing(self, mock_rprint, mock_py_diff):
+        class DummyGitRefBackend:
+            def __init__(self):
+                self.get_file_content_from_snapshot = MagicMock(return_value=None)
+
+        backend = DummyGitRefBackend()
+
+        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
+            "aye.model.snapshot.get_backend", return_value=backend
+        ):
+            diff_presenter.show_diff(self.file1, "refs/aye/snapshots/001:missing.txt", is_stash_ref=True)
+
+        mock_py_diff.assert_not_called()
+        mock_rprint.assert_called_once_with("[red]Error: Could not extract file from refs/aye/snapshots/001[/]")
+
+    @patch("aye.presenter.diff_presenter._python_diff_content")
+    @patch("aye.presenter.diff_presenter.rprint")
+    def test_show_diff_git_snapshot_two_snapshot_success(self, mock_rprint, mock_py_diff):
+        class DummyGitRefBackend:
+            def __init__(self):
+                self.get_file_content_from_snapshot = MagicMock(side_effect=["left\n", "right\n"])
+
+        backend = DummyGitRefBackend()
+
+        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
+            "aye.model.snapshot.get_backend", return_value=backend
+        ):
+            diff_presenter.show_diff(
+                self.file1,
+                "refs/aye/snapshots/001:a.txt|refs/aye/snapshots/002:b.txt",
+                is_stash_ref=True,
+            )
+
+        mock_rprint.assert_not_called()
+        self.assertEqual(
+            backend.get_file_content_from_snapshot.mock_calls,
+            [
+                # args are (repo_rel_path, refname)
+                # left
+                (("a.txt", "refs/aye/snapshots/001"),),
+                # right
+                (("b.txt", "refs/aye/snapshots/002"),),
+            ],
+        )
+        mock_py_diff.assert_called_once_with(
+            "left\n",
+            "right\n",
+            "refs/aye/snapshots/001:a.txt",
+            "refs/aye/snapshots/002:b.txt",
+        )
+
+    @patch("aye.presenter.diff_presenter._python_diff_content")
+    @patch("aye.presenter.diff_presenter.rprint")
+    def test_show_diff_git_snapshot_two_snapshot_left_missing(self, mock_rprint, mock_py_diff):
+        class DummyGitRefBackend:
+            def __init__(self):
+                self.get_file_content_from_snapshot = MagicMock(side_effect=[None, "right\n"])
+
+        backend = DummyGitRefBackend()
+
+        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
+            "aye.model.snapshot.get_backend", return_value=backend
+        ):
+            diff_presenter.show_diff(
+                self.file1,
+                "refs/aye/snapshots/001:a.txt|refs/aye/snapshots/002:b.txt",
+                is_stash_ref=True,
+            )
+
+        mock_py_diff.assert_not_called()
+        mock_rprint.assert_called_once_with("[red]Error: Could not extract file from refs/aye/snapshots/001[/]")
+
+    @patch("aye.presenter.diff_presenter.rprint")
+    def test_show_diff_git_snapshot_exception_handled(self, mock_rprint):
+        class DummyGitRefBackend:
+            def __init__(self):
+                self.get_file_content_from_snapshot = MagicMock(side_effect=RuntimeError("boom"))
+
+        backend = DummyGitRefBackend()
+
+        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
+            "aye.model.snapshot.get_backend", return_value=backend
+        ):
+            diff_presenter.show_diff(self.file1, "refs/aye/snapshots/001:file1.txt", is_stash_ref=True)
+
+        mock_rprint.assert_called_once()
+        self.assertIn("Error processing git snapshot diff", mock_rprint.call_args[0][0])
+        self.assertIn("boom", mock_rprint.call_args[0][0])
+
+    @patch("aye.presenter.diff_presenter.rprint")
+    def test_show_diff_git_snapshot_malformed_ref_string_handled(self, mock_rprint):
+        class DummyGitRefBackend:
+            pass
+
+        # Missing ':' triggers ValueError in _extract; should be caught by outer try
+        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
+            "aye.model.snapshot.get_backend", return_value=DummyGitRefBackend()
+        ):
+            diff_presenter.show_diff(self.file1, "not-a-ref-with-colon", is_stash_ref=True)
+
+        mock_rprint.assert_called_once()
+        self.assertIn("Error processing git snapshot diff", mock_rprint.call_args[0][0])

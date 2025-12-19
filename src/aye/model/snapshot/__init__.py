@@ -1,7 +1,10 @@
 """Snapshot module - provides file versioning with automatic backend selection.
 
-When in a git repository, uses git stash for snapshots.
+When in a git repository, uses a private git-ref/commit backend for snapshots.
 Otherwise, falls back to file-based snapshots in .aye/snapshots.
+
+Note:
+- Git stash snapshots (GitStashBackend) are intentionally NOT used.
 """
 
 import subprocess
@@ -10,34 +13,34 @@ from typing import Dict, List, Optional, Tuple, Union
 
 from .base import SnapshotBackend
 from .file_backend import FileBasedBackend, SNAP_ROOT, LATEST_SNAP_DIR
-from .git_backend import GitStashBackend
+from .git_ref_backend import GitRefBackend
 
 __all__ = [
     # Classes
-    'SnapshotBackend',
-    'FileBasedBackend',
-    'GitStashBackend',
+    "SnapshotBackend",
+    "FileBasedBackend",
+    "GitRefBackend",
     # Constants
-    'SNAP_ROOT',
-    'LATEST_SNAP_DIR',
+    "SNAP_ROOT",
+    "LATEST_SNAP_DIR",
     # Public API
-    'create_snapshot',
-    'list_snapshots',
-    'restore_snapshot',
-    'apply_updates',
-    'list_all_snapshots',
-    'delete_snapshot',
-    'prune_snapshots',
-    'cleanup_snapshots',
+    "create_snapshot",
+    "list_snapshots",
+    "restore_snapshot",
+    "apply_updates",
+    "list_all_snapshots",
+    "delete_snapshot",
+    "prune_snapshots",
+    "cleanup_snapshots",
     # Utilities
-    'get_backend',
-    'reset_backend',
+    "get_backend",
+    "reset_backend",
     # Legacy helpers (for backward compatibility)
-    '_get_next_ordinal',
-    '_get_latest_snapshot_dir',
-    '_truncate_prompt',
-    '_list_all_snapshots_with_metadata',
-    '_is_git_repository',
+    "_get_next_ordinal",
+    "_get_latest_snapshot_dir",
+    "_truncate_prompt",
+    "_list_all_snapshots_with_metadata",
+    "_is_git_repository",
 ]
 
 # ------------------------------------------------------------------
@@ -57,7 +60,7 @@ def _is_git_repository() -> Optional[Path]:
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         return Path(result.stdout.strip())
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -70,11 +73,10 @@ def get_backend() -> SnapshotBackend:
 
     if _backend is None:
         git_root = _is_git_repository()
-        #if git_root:
-        #    _backend = GitStashBackend(git_root)
-        #else:
-        #    _backend = FileBasedBackend()
-        _backend = FileBasedBackend()
+        if git_root:
+            _backend = GitRefBackend(git_root)
+        else:
+            _backend = FileBasedBackend()
 
     return _backend
 
@@ -109,7 +111,9 @@ def apply_updates(updated_files: List[Dict[str, str]], prompt: Optional[str] = N
     2. Write the new contents supplied by the LLM.
     Returns the batch timestamp (useful for UI feedback).
     """
-    file_paths: List[Path] = [Path(item["file_name"]) for item in updated_files if "file_name" in item and "file_content" in item]
+    file_paths: List[Path] = [
+        Path(item["file_name"]) for item in updated_files if "file_name" in item and "file_content" in item
+    ]
     batch_ts = create_snapshot(file_paths, prompt)
     for item in updated_files:
         fp = Path(item["file_name"])
@@ -142,11 +146,11 @@ def cleanup_snapshots(older_than_days: int = 30) -> int:
 # Legacy helper functions (for backward compatibility with tests)
 # ------------------------------------------------------------------
 def _get_next_ordinal() -> int:
-    """Get the next ordinal number - delegates to file-based backend."""
+    """Get the next ordinal number - delegates to the active backend."""
     backend = get_backend()
     if isinstance(backend, FileBasedBackend):
         return backend._get_next_ordinal()
-    elif isinstance(backend, GitStashBackend):
+    if isinstance(backend, GitRefBackend):
         return backend._get_next_ordinal()
     return 1
 
@@ -178,7 +182,7 @@ def _get_latest_snapshot_dir() -> Optional[Path]:
 def _truncate_prompt(prompt: Optional[str], max_length: int = 32) -> str:
     """Truncate a prompt to max_length characters."""
     backend = get_backend()
-    if hasattr(backend, '_truncate_prompt'):
+    if hasattr(backend, "_truncate_prompt"):
         return backend._truncate_prompt(prompt, max_length)
     if not prompt:
         return "no prompt".ljust(max_length)
@@ -195,7 +199,7 @@ def _list_all_snapshots_with_metadata() -> List[str]:
     backend = get_backend()
     if isinstance(backend, FileBasedBackend):
         return backend._list_all_snapshots_with_metadata()
-    # For GitStashBackend, delegate to list_snapshots
+    # For other backends, delegate to list_snapshots
     return backend.list_snapshots()
 
 
