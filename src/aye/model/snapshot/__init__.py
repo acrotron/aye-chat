@@ -72,11 +72,14 @@ def get_backend() -> SnapshotBackend:
     global _backend
 
     if _backend is None:
-        git_root = _is_git_repository()
-        if git_root:
-            _backend = GitRefBackend(git_root)
-        else:
-            _backend = FileBasedBackend()
+        #git_root = _is_git_repository()
+        #if git_root:
+        #    _backend = GitRefBackend(git_root)
+        #else:
+        #    _backend = FileBasedBackend()
+
+        # disabling GitRefBackend for now: it's not finished yet.
+        _backend = FileBasedBackend()
 
     return _backend
 
