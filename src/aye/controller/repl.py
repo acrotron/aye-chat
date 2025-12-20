@@ -15,10 +15,12 @@ from prompt_toolkit.filters import completion_is_selected, has_completions
 
 from rich.console import Console
 from rich import print as rprint
+from rich.prompt import Confirm
 
 from aye.model.api import send_feedback
 from aye.model.auth import get_user_config, set_user_config
 from aye.model.config import MODELS, DEFAULT_MODEL_ID
+from aye.model import telemetry
 from aye.presenter.repl_ui import (
     print_welcome_message,
     print_help_message,
@@ -43,6 +45,48 @@ DEBUG = False
 plugin_manager = None # HACK: for broken test patch to work
 
 
+_TELEMETRY_OPT_IN_KEY = "telemetry_opt_in"
+
+# Telemetry prefixes (product decision)
+_AYE_PREFIX = "aye:"
+_CMD_PREFIX = "cmd:"
+
+
+def _prompt_for_telemetry_consent_if_needed() -> bool:
+    """Ask once for telemetry consent and persist the decision.
+
+    Returns:
+        True if telemetry is enabled, False otherwise.
+    """
+    current = get_user_config(_TELEMETRY_OPT_IN_KEY)
+    if isinstance(current, str) and current.lower() in {"on", "off"}:
+        return current.lower() == "on"
+
+    rprint("\n[bold cyan]Help improve Aye Chat?[/bold cyan]\n")
+    rprint("We'd like to collect [bold]very anonymized[/bold] usage telemetry:")
+    rprint("  - only the command name you run (first token)")
+    rprint("  - plus '<args>' if it had arguments")
+    rprint("  - and 'LLM' when you send something to the AI")
+    rprint("")
+    rprint("Examples of what would be collected:")
+    rprint("  - cmd:git <args>")
+    rprint("  - aye:restore")
+    rprint("  - aye:diff <args>")
+    rprint("  - LLM")
+    rprint("  - LLM <with>")
+    rprint("  - LLM @")
+    rprint("")
+    rprint("[bright_black]We never collect command arguments, prompt text, filenames, or file contents in telemetry.[/bright_black]")
+
+    try:
+        allow = Confirm.ask("\nAllow anonymized telemetry?", default=False)
+    except (EOFError, KeyboardInterrupt):
+        allow = False
+
+    set_user_config(_TELEMETRY_OPT_IN_KEY, "on" if allow else "off")
+    return bool(allow)
+
+
 def print_startup_header(conf: Any):
     """Prints the session context, current model, and welcome message."""
     try:
@@ -58,7 +102,11 @@ def print_startup_header(conf: Any):
 
 
 def collect_and_send_feedback(chat_id: int):
-    """Prompts user for feedback and sends it before exiting."""
+    """Prompts user for feedback and sends it before exiting.
+
+    Updated requirement: only send feedback (and include telemetry) if the user
+    entered feedback text. If feedback is empty, do not send anything.
+    """
     feedback_session = PromptSession(history=InMemoryHistory())
     bindings = KeyBindings()
 
@@ -66,21 +114,31 @@ def collect_and_send_feedback(chat_id: int):
     def _(event):
         event.app.exit(result=event.app.current_buffer.text)
 
+    feedback_text: str = ""
     try:
         rprint("\n[bold cyan]Before you go, would you mind sharing some comments about your experience?")
         rprint("[bold cyan]Include your email if you are ok with us contacting you with some questions.")
         rprint("[bold cyan](Start typing. Press Enter for a new line. Press Ctrl+C to finish.)")
         feedback = feedback_session.prompt("> ", multiline=True, key_bindings=bindings)
-
         if feedback and feedback.strip():
-            send_feedback(feedback.strip(), chat_id=chat_id)
-            rprint("[cyan]Thank you for your feedback! Goodbye.[/cyan]")
-        else:
-            rprint("[cyan]Goodbye![/cyan]")
+            feedback_text = feedback.strip()
     except (EOFError, KeyboardInterrupt):
-        rprint("\n[cyan]Goodbye![/cyan]")
+        # No feedback entered
+        feedback_text = ""
     except Exception:
-        rprint("\n[cyan]Goodbye![/cyan]")
+        feedback_text = ""
+
+    if not feedback_text:
+        rprint("[cyan]Goodbye![/cyan]")
+        return
+
+    telemetry_payload = telemetry.build_payload(top_n=20) if telemetry.is_enabled() else None
+
+    send_feedback(feedback_text, chat_id=chat_id, telemetry=telemetry_payload)
+    if telemetry_payload is not None:
+        telemetry.reset()
+
+    rprint("[cyan]Thank you for your feedback! Goodbye.[/cyan]")
 
 
 
@@ -188,6 +246,9 @@ def chat_repl(conf: Any) -> None:
 
     print_startup_header(conf)
 
+    # Telemetry consent prompt (once) + in-memory enable/disable
+    telemetry.set_enabled(_prompt_for_telemetry_consent_if_needed())
+
     # Start background indexing if needed (only for large projects with index_manager)
     index_manager = getattr(conf, 'index_manager', None)
     if index_manager and index_manager.has_work():
@@ -230,6 +291,7 @@ def chat_repl(conf: Any) -> None:
 
                 # Handle 'with' command before tokenizing. It has its own flow.
                 if prompt.strip().lower().startswith("with ") and ":" in prompt:
+                    telemetry.record_llm_prompt("LLM <with>")
                     new_chat_id = handle_with_command(prompt, conf, console, chat_id, chat_id_file)
                     if new_chat_id is not None:
                         chat_id = new_chat_id
@@ -267,15 +329,20 @@ def chat_repl(conf: Any) -> None:
 
             try:
                 if lowered_first in {"exit", "quit", ":q"}:
+                    telemetry.record_command(lowered_first, has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     break
                 elif lowered_first == "model":
+                    telemetry.record_command("model", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_model_command(session, MODELS, conf, tokens)
                 elif lowered_first == "verbose":
+                    telemetry.record_command("verbose", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_verbose_command(tokens)
                     conf.verbose = get_user_config("verbose", "off").lower() == "on"
                 elif lowered_first == "debug":
+                    telemetry.record_command("debug", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_debug_command(tokens)
                 elif lowered_first == "completion":
+                    telemetry.record_command("completion", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     new_style = handle_completion_command(tokens)
                     if new_style:
                         # Recreate the completer with the new style setting
@@ -289,6 +356,7 @@ def chat_repl(conf: Any) -> None:
                         session = create_prompt_session(completer, new_style)
                         rprint(f"[green]Completion style is now active.[/]")
                 elif lowered_first == "diff":
+                    telemetry.record_command("diff", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     args = tokens[1:]
                     if not args:
                         rprint("[red]Error:[/] No file specified for diff.")
@@ -296,9 +364,11 @@ def chat_repl(conf: Any) -> None:
                     path1, path2, is_stash = commands.get_diff_paths(args[0], args[1] if len(args) > 1 else None, args[2] if len(args) > 2 else None)
                     diff_presenter.show_diff(path1, path2, is_stash_ref=is_stash)
                 elif lowered_first == "history":
+                    telemetry.record_command("history", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     history_list = commands.get_snapshot_history()
                     cli_ui.print_snapshot_history(history_list)
                 elif lowered_first in {"restore", "undo"}:
+                    telemetry.record_command(lowered_first, has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     args = tokens[1:] if len(tokens) > 1 else []
                     ordinal = args[0] if args else None
                     file_name = args[1] if len(args) > 1 else None
@@ -309,19 +379,24 @@ def chat_repl(conf: Any) -> None:
                     # NOTE: tutorial restore does NOT hit this code path.
                     set_user_config("has_used_restore", "on")
                 elif lowered_first == "keep":
+                    telemetry.record_command("keep", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     keep_count = int(tokens[1]) if len(tokens) > 1 and tokens[1].isdigit() else 10
                     deleted = commands.prune_snapshots(keep_count)
                     cli_ui.print_prune_feedback(deleted, keep_count)
                 elif lowered_first == "new":
+                    telemetry.record_command("new", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     chat_id_file.unlink(missing_ok=True)
                     chat_id = -1
                     conf.plugin_manager.handle_command("new_chat", {"root": conf.root})
                     console.print("[green]✅ New chat session started.[/]")
                 elif lowered_first == "help":
+                    telemetry.record_command("help", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     print_help_message()
                 elif lowered_first == "cd":
+                    telemetry.record_command("cd", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_cd_command(tokens, conf)
                 elif lowered_first == "db":
+                    telemetry.record_command("db", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     if index_manager and hasattr(index_manager, 'collection') and index_manager.collection:
                         collection = index_manager.collection
                         count = collection.count()
@@ -358,6 +433,7 @@ def chat_repl(conf: Any) -> None:
                     # Try shell command execution first
                     shell_response = conf.plugin_manager.handle_command("execute_shell_command", {"command": original_first, "args": tokens[1:]})
                     if shell_response is not None:
+                        telemetry.record_command(original_first, has_args=len(tokens) > 1, prefix=_CMD_PREFIX)
                         if "stdout" in shell_response or "stderr" in shell_response:
                             if shell_response.get("stdout", "").strip():
                                 rprint(shell_response["stdout"])
@@ -374,15 +450,22 @@ def chat_repl(conf: Any) -> None:
 
                         explicit_files = None
                         cleaned_prompt = prompt
+                        used_at = False
 
                         if at_response and not at_response.get("error"):
                             explicit_files = at_response.get("file_contents", {})
                             cleaned_prompt = at_response.get("cleaned_prompt", prompt)
+                            used_at = bool(explicit_files)
 
                             if conf.verbose and explicit_files:
                                 rprint(f"[cyan]Including {len(explicit_files)} file(s) from @ references: {', '.join(explicit_files.keys())}[/cyan]")
 
                         # This is the LLM path.
+                        if used_at:
+                            telemetry.record_llm_prompt("LLM @")
+                        else:
+                            telemetry.record_llm_prompt("LLM")
+
                         # DO NOT call prepare_sync() here - it blocks the main thread!
                         # The index is already being maintained in the background.
                         # RAG queries will use whatever index state is currently available.

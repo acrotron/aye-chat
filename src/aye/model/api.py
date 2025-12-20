@@ -19,6 +19,7 @@ if api_url:
 BASE_URL = api_url if api_url else "https://api.ayechat.ai"
 TIMEOUT = 900.0
 
+
 def _is_debug():
     return get_user_config("debug", "off").lower() == "on"
 
@@ -65,19 +66,35 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
     return payload
 
 
-def cli_invoke(chat_id=-1, message="", source_files={},
-               model: Optional[str] = None,
-               system_prompt: Optional[str] = None,
-               max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
-               dry_run: bool = False,
-               poll_interval=2.0, poll_timeout=TIMEOUT):
-    payload = {"chat_id": chat_id, "message": message, "source_files": source_files, "dry_run": dry_run}
+def cli_invoke(
+    chat_id=-1,
+    message="",
+    source_files={},
+    model: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+    dry_run: bool = False,
+    telemetry: Optional[Dict[str, Any]] = None,
+    poll_interval=2.0,
+    poll_timeout=TIMEOUT,
+):
+    payload: Dict[str, Any] = {
+        "chat_id": chat_id,
+        "message": message,
+        "source_files": source_files,
+        "dry_run": dry_run,
+    }
     if model:
         payload["model"] = model
     if system_prompt:
         payload["system_prompt"] = system_prompt
     if max_output_tokens is not None:
         payload["max_output_tokens"] = max_output_tokens
+
+    # Piggyback telemetry to avoid extra HTTP calls.
+    if telemetry is not None:
+        payload["telemetry"] = telemetry
+
     url = f"{BASE_URL}/invoke_cli"
 
     if _is_debug():
@@ -87,18 +104,16 @@ def cli_invoke(chat_id=-1, message="", source_files={},
 
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
-        if _is_debug(): print(f"[DEBUG] Initial response status: {resp.status_code}")
+        if _is_debug():
+            print(f"[DEBUG] Initial response status: {resp.status_code}")
         data = _check_response(resp)
-        if _is_debug(): print(f"[DEBUG] Initial response data: {data}")
-
-    # If server already returned the final payload, just return it
-    # (previous logic kept for compatibility)
-    # if resp.status_code != 202 or "response_url" not in data:
-    #     return data
+        if _is_debug():
+            print(f"[DEBUG] Initial response data: {data}")
 
     # Otherwise poll the presigned GET URL until the object exists, then download+return it
     response_url = data["response_url"]
-    if _is_debug(): print(f"[DEBUG] Polling response URL: {response_url}")
+    if _is_debug():
+        print(f"[DEBUG] Polling response URL: {response_url}")
     deadline = time.time() + poll_timeout
     last_status = None
     poll_count = 0
@@ -106,20 +121,25 @@ def cli_invoke(chat_id=-1, message="", source_files={},
     while time.time() < deadline:
         try:
             poll_count += 1
-            if _is_debug(): print(f"[DEBUG] Poll attempt {poll_count}, status: {last_status}")
+            if _is_debug():
+                print(f"[DEBUG] Poll attempt {poll_count}, status: {last_status}")
             r = httpx.get(response_url, timeout=TIMEOUT)  # default verify=True
             last_status = r.status_code
-            if _is_debug(): print(f"[DEBUG] Poll response status: {r.status_code}")
+            if _is_debug():
+                print(f"[DEBUG] Poll response status: {r.status_code}")
             if r.status_code == 200:
-                if _is_debug(): print(f"[DEBUG] Response body length: {len(r.text)} bytes")
-                if _is_debug(): print(f"[DEBUG] Response body preview: {r.text[:200]}")
+                if _is_debug():
+                    print(f"[DEBUG] Response body length: {len(r.text)} bytes")
+                    print(f"[DEBUG] Response body preview: {r.text[:200]}")
                 try:
                     result = r.json()
-                    if _is_debug(): print(f"[DEBUG] Successfully parsed JSON response")
+                    if _is_debug():
+                        print(f"[DEBUG] Successfully parsed JSON response")
                     return result
                 except json.JSONDecodeError as e:
-                    if _is_debug(): print(f"[DEBUG] JSON decode error: {e}")
-                    if _is_debug(): print(f"[DEBUG] Full response text: {r.text}")
+                    if _is_debug():
+                        print(f"[DEBUG] JSON decode error: {e}")
+                        print(f"[DEBUG] Full response text: {r.text}")
                     raise
             if r.status_code in (403, 404):
                 time.sleep(poll_interval)
@@ -127,7 +147,8 @@ def cli_invoke(chat_id=-1, message="", source_files={},
             r.raise_for_status()  # other non‑2xx errors are unexpected
         except httpx.RequestError as e:
             # transient network issue; retry
-            if _is_debug(): print(f"[DEBUG] Network error: {e}")
+            if _is_debug():
+                print(f"[DEBUG] Network error: {e}")
             time.sleep(poll_interval)
             continue
 
@@ -146,7 +167,8 @@ def fetch_plugin_manifest(dry_run: bool = False):
 
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
-        if _is_debug(): print(f"[DEBUG] Response status: {resp.status_code}")
+        if _is_debug():
+            print(f"[DEBUG] Response status: {resp.status_code}")
         _check_response(resp)  # will raise on error and print the message
         return resp.json()
 
@@ -162,7 +184,8 @@ def fetch_server_time(dry_run: bool = False) -> int:
 
     with httpx.Client(timeout=TIMEOUT, verify=True) as client:
         resp = client.get(url, params=params)
-        if _is_debug(): print(f"[DEBUG] Response status: {resp.status_code}")
+        if _is_debug():
+            print(f"[DEBUG] Response status: {resp.status_code}")
         if not resp.ok:
             # Use the same helper for consistency but avoid raising for 200‑like cases
             try:
@@ -175,12 +198,19 @@ def fetch_server_time(dry_run: bool = False) -> int:
             payload = _check_response(resp)
             return payload['timestamp']
 
-def send_feedback(feedback_text: str, chat_id: int = 0):
+
+def send_feedback(feedback_text: str, chat_id: int = 0, telemetry: Optional[Dict[str, Any]] = None):
     """Send user feedback to the feedback endpoint.
     Includes the current chat ID (or 0 if not available).
+
+    Telemetry is piggybacked here as well (if provided), so we can send telemetry
+    on exit without introducing extra network calls.
     """
     url = f"{BASE_URL}/feedback"
-    payload = {"feedback": feedback_text, "chat_id": chat_id}
+    payload: Dict[str, Any] = {"feedback": feedback_text, "chat_id": chat_id}
+
+    if telemetry is not None:
+        payload["telemetry"] = telemetry
 
     if _is_debug():
         print(f"[DEBUG] Sending request to {url}")
@@ -191,8 +221,10 @@ def send_feedback(feedback_text: str, chat_id: int = 0):
         with httpx.Client(timeout=10.0, verify=True) as client:
             # Fire-and-forget call. Errors are ignored to not block exit.
             resp = client.post(url, json=payload, headers=_auth_headers())
-            if _is_debug(): print(f"[DEBUG] Response status: {resp.status_code}")
+            if _is_debug():
+                print(f"[DEBUG] Response status: {resp.status_code}")
     except Exception as e:
         # Silently ignore all errors, but log in debug mode.
-        if _is_debug(): print(f"[DEBUG] Error sending feedback: {e}")
+        if _is_debug():
+            print(f"[DEBUG] Error sending feedback: {e}")
         pass

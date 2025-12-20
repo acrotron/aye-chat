@@ -26,6 +26,10 @@ class TestRepl(TestCase):
         self.conf = SimpleNamespace(root=Path.cwd(), file_mask="*.py")
         self.session = MagicMock()
 
+        # Telemetry is global, in-memory state. Reset between tests to avoid leakage.
+        repl.telemetry.reset()
+        repl.telemetry.set_enabled(False)
+
     @patch('os.chdir')
     @patch('aye.controller.command_handlers.rprint')
     def test_handle_cd_command_success(self, mock_rprint, mock_chdir):
@@ -146,11 +150,12 @@ class TestRepl(TestCase):
     def test_collect_and_send_feedback(self, mock_session_cls, mock_send_feedback):
         mock_session_cls.return_value.prompt.return_value = "Great tool!"
         repl.collect_and_send_feedback(chat_id=123)
-        mock_send_feedback.assert_called_once_with("Great tool!", chat_id=123)
+        mock_send_feedback.assert_called_once_with("Great tool!", chat_id=123, telemetry=None)
 
     @patch('aye.controller.repl.send_feedback')
     @patch('aye.controller.repl.PromptSession')
     def test_collect_and_send_feedback_empty(self, mock_session_cls, mock_send_feedback):
+        # Telemetry disabled in setUp, so empty feedback should not send.
         mock_session_cls.return_value.prompt.return_value = "  \n  "
         repl.collect_and_send_feedback(chat_id=123)
         mock_send_feedback.assert_not_called()
@@ -158,21 +163,23 @@ class TestRepl(TestCase):
     @patch('aye.controller.repl.send_feedback')
     @patch('aye.controller.repl.PromptSession')
     def test_collect_and_send_feedback_ctrl_c(self, mock_session_cls, mock_send_feedback):
+        # Telemetry disabled in setUp, so Ctrl+C with no feedback should not send.
         mock_session_cls.return_value.prompt.side_effect = KeyboardInterrupt
         repl.collect_and_send_feedback(chat_id=123)
         mock_send_feedback.assert_not_called()
 
     @patch('aye.controller.repl.send_feedback', side_effect=Exception("API down"))
-    @patch('aye.controller.repl.rprint')
     @patch('aye.controller.repl.PromptSession')
-    def test_collect_and_send_feedback_api_error(self, mock_session_cls, mock_rprint, mock_send_feedback):
+    def test_collect_and_send_feedback_api_error(self, mock_session_cls, mock_send_feedback):
+        # New implementation does not swallow send_feedback exceptions.
         mock_session_cls.return_value.prompt.return_value = "feedback"
-        repl.collect_and_send_feedback(chat_id=123)
-        mock_rprint.assert_any_call("\n[cyan]Goodbye![/cyan]")
+        with self.assertRaises(Exception):
+            repl.collect_and_send_feedback(chat_id=123)
 
     def test_chat_repl_main_loop_commands(self):
         with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
              patch('aye.controller.repl.run_first_time_tutorial_if_needed'), \
+             patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
              patch('aye.controller.repl.get_user_config', return_value="on"), \
              patch('aye.controller.repl.print_startup_header'), \
              patch('aye.controller.repl.Path') as mock_path, \
@@ -292,6 +299,7 @@ def test_create_prompt_session_uses_multicolumn_and_key_bindings():
 def test_chat_repl_starts_background_indexing_when_has_work():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.threading.Thread') as mock_thread_cls, \
@@ -333,6 +341,7 @@ def test_chat_repl_starts_background_indexing_when_has_work():
 def test_chat_repl_shell_command_outputs_error_info():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -375,6 +384,7 @@ def test_chat_repl_shell_command_outputs_error_info():
 def test_chat_repl_db_command_with_collection_sample():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -426,6 +436,7 @@ def test_chat_repl_db_command_with_collection_sample():
 def test_chat_repl_handles_tokenization_error():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -463,6 +474,7 @@ def test_chat_repl_handles_tokenization_error():
 def test_chat_repl_handles_exception_and_calls_error_handler():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -504,6 +516,7 @@ def test_chat_repl_handles_exception_and_calls_error_handler():
 def test_chat_repl_invalid_chat_id_file_is_cleaned():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -538,6 +551,7 @@ def test_chat_repl_invalid_chat_id_file_is_cleaned():
 
 def test_chat_repl_with_command_updates_chat_id_and_feedback_receives_it():
     with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -574,6 +588,7 @@ def test_chat_repl_with_command_updates_chat_id_and_feedback_receives_it():
 
 def test_chat_repl_completion_command_recreates_completer_and_session():
     with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -621,6 +636,7 @@ def test_chat_repl_completion_command_recreates_completer_and_session():
 
 def test_chat_repl_model_number_shortcut_calls_model_handler():
     with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -657,6 +673,7 @@ def test_chat_repl_model_number_shortcut_calls_model_handler():
 
 def test_chat_repl_slash_prefixed_shell_command_executes_normalized_command():
     with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -699,6 +716,7 @@ def test_chat_repl_slash_prefixed_shell_command_executes_normalized_command():
 
 def test_chat_repl_reads_valid_chat_id_file_passes_to_llm_and_updates_chat_id():
     with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -754,6 +772,7 @@ def test_chat_repl_reads_valid_chat_id_file_passes_to_llm_and_updates_chat_id():
 
 def test_chat_repl_db_command_no_index_manager_rag_disabled_prints_small_project_mode():
     with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -787,6 +806,7 @@ def test_chat_repl_db_command_no_index_manager_rag_disabled_prints_small_project
 
 def test_chat_repl_always_shuts_down_index_manager_in_finally():
     with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -823,6 +843,7 @@ def test_chat_repl_always_shuts_down_index_manager_in_finally():
 
 def test_chat_repl_when_indexing_and_verbose_prefixes_prompt_with_progress():
     with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \

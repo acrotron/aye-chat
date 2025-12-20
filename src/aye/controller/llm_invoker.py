@@ -13,6 +13,7 @@ from aye.model.auth import get_user_config
 from aye.model.offline_llm_manager import is_offline_model
 from aye.controller.util import is_truncated_json
 from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB
+from aye.model import telemetry
 
 import os
 
@@ -62,12 +63,12 @@ def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
 def _get_context_target_size(model_id: str) -> int:
     """
     Get the target context size for RAG queries based on model configuration.
-    
+
     This can be overridden by the AYE_CONTEXT_TARGET environment variable.
-    
+
     Args:
         model_id: The model identifier
-        
+
     Returns:
         Context target size in bytes
     """
@@ -78,12 +79,12 @@ def _get_context_target_size(model_id: str) -> int:
             return int(env_override)
         except ValueError:
             pass  # Fall through to model-specific config
-    
+
     # Get model-specific context target
     model_config = _get_model_config(model_id)
     if model_config and "context_target_kb" in model_config:
         return model_config["context_target_kb"] * 1024  # Convert KB to bytes
-    
+
     # Default fallback
     return DEFAULT_CONTEXT_TARGET_KB * 1024
 
@@ -104,22 +105,22 @@ def _filter_ground_truth(files: Dict[str, str], conf: Any, verbose: bool) -> Dic
         return files
 
     gt_content_stripped = conf.ground_truth.strip()
-    
+
     # Filter out files that match the ground truth content
     files_to_remove = [
-        path for path, content in files.items() 
+        path for path, content in files.items()
         if content.strip() == gt_content_stripped
     ]
-    
+
     if not files_to_remove:
         return files
-        
+
     filtered_files = files.copy()
     for path in files_to_remove:
         if verbose:
             rprint(f"[yellow]Excluding ground truth file from context: {path}[/]")
         del filtered_files[path]
-            
+
     return filtered_files
 
 
@@ -169,33 +170,33 @@ def _get_rag_context_files(
     # Track files with their sizes for potential trimming
     files_with_sizes: List[Tuple[str, str, int]] = []  # (path, content, size)
     current_size = 0
-    
+
     for file_path_str in unique_files_ranked:
         if current_size > context_target_size:
             break
-        
+
         try:
             full_path = conf.root / file_path_str
             if not full_path.is_file():
                 continue
-            
+
             content = full_path.read_text(encoding="utf-8")
             file_size = len(content.encode('utf-8'))
-            
+
             # Skip individual files that are too large
             if current_size + file_size > context_hard_limit:
                 if verbose:
                     rprint(f"[yellow]Skipping large file {file_path_str} ({file_size / 1024:.1f}KB) to stay within payload limits.[/]")
                 continue
-            
+
             files_with_sizes.append((file_path_str, content, file_size))
             current_size += file_size
-            
+
         except Exception as e:
             if verbose:
                 rprint(f"[red]Could not read file {file_path_str}: {e}[/red]")
             continue
-    
+
     # Final safety check: ensure total size is under context_hard_limit
     # This handles edge cases where we accumulated files close to TARGET but over HARD_LIMIT
     while current_size > context_hard_limit and files_with_sizes:
@@ -204,11 +205,11 @@ def _get_rag_context_files(
         current_size -= removed_size
         if verbose:
             rprint(f"[yellow]Trimmed {removed_path} ({removed_size / 1024:.1f}KB) to stay within hard limit.[/]")
-    
+
     # Build the final source_files dict
     for file_path_str, content, _ in files_with_sizes:
         source_files[file_path_str] = content
-            
+
     return source_files
 
 
@@ -255,7 +256,7 @@ def _determine_source_files(
     # Fallback: collect all sources and check size
     all_project_files = collect_sources(root_dir=str(conf.root), file_mask=conf.file_mask)
     all_project_files = _filter_ground_truth(all_project_files, conf, verbose)
-    
+
     total_size = sum(len(content.encode('utf-8')) for content in all_project_files.values())
     context_hard_limit = _get_context_hard_limit(conf.selected_model)
 
@@ -317,16 +318,16 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
         if _is_debug():
             print(f"[DEBUG] Failed to parse assistant_response as JSON: {e}. Checking for truncation.")
             print(f"[DEBUG] LLM response: {resp}")
-        
+
         # Check if this looks like a truncated response
         if is_truncated_json(assistant_resp_str):
             if _is_debug():
                 print("[DEBUG] Response appears to be truncated, attempting to fix by appending '\"}]}':")
                 print(assistant_resp_str)
-            
+
             # Attempt to fix by appending the closing structure
             fixed_response = assistant_resp_str ### Commented out for now for testing ### + "\"}]}"
-            
+
             try:
                 parsed = json.loads(fixed_response)
                 if _is_debug():
@@ -344,7 +345,7 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
             raise Exception(f"Server error in chat '{chat_title}': {assistant_resp_str}") from e
 
         parsed = {"answer_summary": assistant_resp_str, "source_files": []}
-        
+
     return parsed, chat_id
 
 
@@ -364,16 +365,16 @@ def invoke_llm(
     source_files, use_all_files, prompt = _determine_source_files(
         prompt, conf, verbose, explicit_source_files
     )
-   
+
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
-    
+
     # Get the system prompt to use (custom or default)
     system_prompt = conf.ground_truth if hasattr(conf, 'ground_truth') and conf.ground_truth else SYSTEM_PROMPT
-    
+
     # Get max output tokens for the selected model
     model_config = _get_model_config(conf.selected_model)
     max_output_tokens = model_config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS) if model_config else DEFAULT_MAX_OUTPUT_TOKENS
-    
+
     # Progressive messages for the spinner
     spinner_messages = [
         "Building prompt...",
@@ -382,7 +383,7 @@ def invoke_llm(
         "Still waiting...",
         "This is taking longer than usual..."
     ]
-    
+
     with thinking_spinner(console, messages=spinner_messages, interval=15.0):
         # 1. Try local/offline model plugins first
         local_response = plugin_manager.handle_command("local_model_invoke", {
@@ -402,26 +403,33 @@ def invoke_llm(
                 chat_id=None,
                 source=LLMSource.LOCAL
             )
-        
-        # 2. Fall back to API for non-plugin models (e.g. official OpenAI, Anthropic)
+
+        # 2. Fall back to API for non-plugin models (Aye backend invoke_cli)
         if _is_debug():
             print(f"[DEBUG] Processing chat message with chat_id={chat_id or -1}, model={conf.selected_model}")
-        
+
+        telemetry_payload = telemetry.build_payload(top_n=20) if telemetry.is_enabled() else None
+
         api_resp = cli_invoke(
             message=prompt,
             chat_id=chat_id or -1,
             source_files=source_files,
             model=conf.selected_model,
             system_prompt=system_prompt,
-            max_output_tokens=max_output_tokens
+            max_output_tokens=max_output_tokens,
+            telemetry=telemetry_payload
         )
-        
+
+        # Reset counts only after a successful send.
+        if telemetry_payload is not None:
+            telemetry.reset()
+
         if _is_debug():
             print(f"[DEBUG] Chat message processed, response keys: {api_resp.keys() if api_resp else 'None'}")
 
     # 3. Parse API response
     assistant_resp, new_chat_id = _parse_api_response(api_resp)
-    
+
     return LLMResponse(
         summary=assistant_resp.get("answer_summary", ""),
         updated_files=assistant_resp.get("source_files", []),
