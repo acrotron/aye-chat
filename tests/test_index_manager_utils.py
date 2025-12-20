@@ -33,7 +33,9 @@ def test_daemon_thread_pool_executor_creates_daemon_threads():
 
 def test_set_low_priority_calls_os_nice_when_available(monkeypatch):
     nice = MagicMock()
-    monkeypatch.setattr(utils.os, "nice", nice, raising=True)
+    # On Windows, os.nice does not exist. Use raising=False so we can
+    # simulate the attribute being available on this platform.
+    monkeypatch.setattr(utils.os, "nice", nice, raising=False)
 
     utils.set_low_priority()
 
@@ -44,7 +46,9 @@ def test_set_low_priority_swallows_oserror(monkeypatch):
     def raising_nice(_):
         raise OSError("no permission")
 
-    monkeypatch.setattr(utils.os, "nice", raising_nice, raising=True)
+    # On Windows, os.nice does not exist. Use raising=False so we can
+    # simulate the attribute being available on this platform.
+    monkeypatch.setattr(utils.os, "nice", raising_nice, raising=False)
 
     # Should not raise.
     utils.set_low_priority()
@@ -52,7 +56,9 @@ def test_set_low_priority_swallows_oserror(monkeypatch):
 
 def test_set_discovery_thread_low_priority_calls_os_nice_when_available(monkeypatch):
     nice = MagicMock()
-    monkeypatch.setattr(utils.os, "nice", nice, raising=True)
+    # On Windows, os.nice does not exist. Use raising=False so we can
+    # simulate the attribute being available on this platform.
+    monkeypatch.setattr(utils.os, "nice", nice, raising=False)
 
     utils.set_discovery_thread_low_priority()
 
@@ -63,7 +69,9 @@ def test_set_discovery_thread_low_priority_swallows_oserror(monkeypatch):
     def raising_nice(_):
         raise OSError("no permission")
 
-    monkeypatch.setattr(utils.os, "nice", raising_nice, raising=True)
+    # On Windows, os.nice does not exist. Use raising=False so we can
+    # simulate the attribute being available on this platform.
+    monkeypatch.setattr(utils.os, "nice", raising_nice, raising=False)
 
     # Should not raise.
     utils.set_discovery_thread_low_priority()

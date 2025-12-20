@@ -62,8 +62,13 @@ def get_snapshot_content(file: Path, ts: str) -> Optional[str]:
         # Match by full batch_id or by ordinal prefix
         if batch_id == ts or batch_id == normalized or batch_id.startswith(f"{normalized}_"):
             if isinstance(backend, GitRefBackend):
+                # On Windows, Path.resolve() can normalize drive casing / prefixes.
+                # relative_to() is strict, so normalize both sides.
+                git_root = Path(backend.git_root).resolve()
+                file_resolved = file.resolve()
+
                 try:
-                    rel_path = file.resolve().relative_to(backend.git_root).as_posix()
+                    rel_path = file_resolved.relative_to(git_root).as_posix()
                 except ValueError:
                     # File is outside git root; GitRefBackend may store it under __aye__/external
                     # but that requires manifest lookup. For now, treat as unsupported.
@@ -117,8 +122,13 @@ def get_diff_paths(file_name: str, snap_id1: Optional[str] = None, snap_id2: Opt
 
     # Git ref backend
     if isinstance(backend, GitRefBackend):
+        # On Windows, Path.resolve() can normalize drive casing / prefixes.
+        # relative_to() is strict, so normalize both sides.
+        git_root = Path(backend.git_root).resolve()
+        file_resolved = file_path.resolve()
+
         try:
-            rel_path = file_path.resolve().relative_to(backend.git_root).as_posix()
+            rel_path = file_resolved.relative_to(git_root).as_posix()
         except ValueError:
             raise ValueError("Diff is not supported for files outside the git repository when using GitRefBackend")
 

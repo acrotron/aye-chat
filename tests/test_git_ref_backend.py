@@ -312,9 +312,9 @@ class TestGitRefBackendListSnapshots(unittest.TestCase):
 
         def _read_manifest(commit: str) -> Optional[Dict[str, Any]]:
             if commit == "c1":
-                return {"files": [{"path": "dir/x.txt", "original": str(self.root / "dir" / "x.txt")}]}
+                return {"files": [{"path": "dir/x.txt", "original": str(self.root / "dir" / "x.txt")}]}  # noqa: E501
             if commit == "c2":
-                return {"files": [{"path": "dir/x.txt", "original": str(self.root / "dir" / "x.txt")}]}
+                return {"files": [{"path": "dir/x.txt", "original": str(self.root / "dir" / "x.txt")}]}  # noqa: E501
             return None
 
         self.backend._read_manifest = MagicMock(side_effect=_read_manifest)
@@ -917,7 +917,13 @@ class TestGitRefBackendAdditionalCoverage(unittest.TestCase):
         self.assertEqual(self.backend._file_mode_str(f), "100644")
 
         os.chmod(f, 0o755)
-        self.assertEqual(self.backend._file_mode_str(f), "100755")
+
+        # Windows doesn't reliably expose POSIX executable bits via chmod/stat.
+        # On POSIX, this must become 100755.
+        if os.name == "nt":
+            self.assertEqual(self.backend._file_mode_str(f), "100644")
+        else:
+            self.assertEqual(self.backend._file_mode_str(f), "100755")
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlink not supported")
     def test_file_mode_str_and_blob_bytes_for_symlink(self):

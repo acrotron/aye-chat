@@ -460,10 +460,16 @@ class GitRefBackend(SnapshotBackend):
                 # File did not exist at snapshot time -> delete if it exists now
                 try:
                     if original_path.exists() or original_path.is_symlink():
-                        original_path.unlink()
+                        # On Windows, attempting to unlink a directory raises PermissionError
+                        # (not IsADirectoryError). Detect directory upfront so we can emit the
+                        # intended warning consistently across platforms.
+                        if original_path.is_dir() and not original_path.is_symlink():
+                            print(f"Warning: expected file but found directory  {original_path}")
+                        else:
+                            original_path.unlink()
                 except IsADirectoryError:
                     # If it's a directory now, skip with warning
-                    print(f"Warning: expected file but found directory – {original_path}")
+                    print(f"Warning: expected file but found directory  {original_path}")
                 except Exception as e:
                     print(f"Warning: failed to delete {original_path}: {e}")
                 continue
