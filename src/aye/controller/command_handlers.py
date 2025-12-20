@@ -30,7 +30,7 @@ def handle_cd_command(tokens: list[str], conf: Any) -> bool:
         return False
 
 
-def handle_model_command(session: PromptSession, models: list, conf: Any, tokens: list):
+def handle_model_command(session: Optional[PromptSession], models: list, conf: Any, tokens: list):
     """Handle the 'model' command for model selection."""
     if len(tokens) > 1:
         try:
