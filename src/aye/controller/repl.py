@@ -42,6 +42,7 @@ from aye.controller.command_handlers import (
 DEBUG = False
 plugin_manager = None # HACK: for broken test patch to work
 
+
 def print_startup_header(conf: Any):
     """Prints the session context, current model, and welcome message."""
     try:
@@ -55,10 +56,12 @@ def print_startup_header(conf: Any):
     rprint(f"[bold cyan]Current model: {current_model_name}[/]")
     print_welcome_message()
 
+
 def collect_and_send_feedback(chat_id: int):
     """Prompts user for feedback and sends it before exiting."""
     feedback_session = PromptSession(history=InMemoryHistory())
     bindings = KeyBindings()
+
     @bindings.add('c-c')
     def _(event):
         event.app.exit(result=event.app.current_buffer.text)
@@ -78,6 +81,7 @@ def collect_and_send_feedback(chat_id: int):
         rprint("\n[cyan]Goodbye![/cyan]")
     except Exception:
         rprint("\n[cyan]Goodbye![/cyan]")
+
 
 
 def create_key_bindings() -> KeyBindings:
@@ -129,6 +133,7 @@ def create_key_bindings() -> KeyBindings:
     return bindings
 
 
+
 def create_prompt_session(completer: Any, completion_style: str = "readline") -> PromptSession:
     """
     Create a PromptSession with multi-column completion display.
@@ -161,6 +166,7 @@ def create_prompt_session(completer: Any, completion_style: str = "readline") ->
         complete_while_typing=True,
         key_bindings=key_bindings
     )
+
 
 
 def chat_repl(conf: Any) -> None:
@@ -298,6 +304,10 @@ def chat_repl(conf: Any) -> None:
                     file_name = args[1] if len(args) > 1 else None
                     commands.restore_from_snapshot(ordinal, file_name)
                     cli_ui.print_restore_feedback(ordinal, file_name)
+
+                    # Persist a global flag so we stop showing the restore breadcrumb tip.
+                    # NOTE: tutorial restore does NOT hit this code path.
+                    set_user_config("has_used_restore", "on")
                 elif lowered_first == "keep":
                     keep_count = int(tokens[1]) if len(tokens) > 1 and tokens[1].isdigit() else 10
                     deleted = commands.prune_snapshots(keep_count)
