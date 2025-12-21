@@ -176,31 +176,41 @@ class TestDiffPresenter(TestCase):
 
 
 class TestReplUi(TestCase):
-    @patch('aye.presenter.repl_ui.rprint')
-    def test_print_welcome_message(self, mock_rprint):
+    @patch('aye.presenter.repl_ui.console.print')
+    def test_print_welcome_message(self, mock_console_print):
         repl_ui.print_welcome_message()
-        mock_rprint.assert_called_once_with("[bold cyan]Aye Chat – type `help` for available commands, `exit` or Ctrl+D to quit[/]")
+        mock_console_print.assert_called_once()
+        args, kwargs = mock_console_print.call_args
+        self.assertIn("Aye Chat", args[0])
+        self.assertEqual(kwargs.get('style'), "ui.welcome")
 
-    @patch('aye.presenter.repl_ui.rprint')
-    @patch('builtins.print')
-    def test_print_help_message(self, mock_print, mock_rprint):
+    @patch('aye.presenter.repl_ui.console.print')
+    def test_print_help_message(self, mock_console_print):
         repl_ui.print_help_message()
-        self.assertGreater(mock_rprint.call_count, 0)
-        self.assertGreater(mock_print.call_count, 0)
+        self.assertEqual(mock_console_print.call_count, 14)
 
     def test_print_prompt(self):
         self.assertEqual(repl_ui.print_prompt(), "(ツ» ")
 
-    @patch('aye.presenter.repl_ui.rprint')
-    def test_print_assistant_response(self, mock_rprint):
+    @patch('aye.presenter.repl_ui.console.print')
+    def test_print_assistant_response(self, mock_print):
         repl_ui.print_assistant_response("summary text")
-        self.assertEqual(mock_rprint.call_count, 3)
+        # Should be called for the grid and the newline
+        self.assertEqual(mock_print.call_count, 4)
 
     @patch('rich.console.Console.print')
     def test_print_no_files_changed(self, mock_print):
+        # Test with a console that has no theme
         console = Console()
+        # Ensure it doesn't look like it has a theme for the test logic
+        # (Rich consoles always have a default theme, but our code checks getattr(..., "theme", None))
+        # actually Console().theme is always set. 
+        # But repl_ui code checks: getattr(console_arg, "theme", None)
+        # So we just pass a real console.
+        
         repl_ui.print_no_files_changed(console)
         mock_print.assert_called_once()
+        # Our code uses padding, so we check the string representation of the call args
         self.assertIn("No files were changed", str(mock_print.call_args))
 
     @patch('rich.console.Console.print')
@@ -208,13 +218,14 @@ class TestReplUi(TestCase):
         console = Console()
         repl_ui.print_files_updated(console, ["file1.py", "file2.py"])
         mock_print.assert_called_once()
-        self.assertIn("Files updated:[/] file1.py,file2.py", str(mock_print.call_args))
+        self.assertIn("Files updated", str(mock_print.call_args))
+        self.assertIn("file1.py,file2.py", str(mock_print.call_args))
 
-    @patch('aye.presenter.repl_ui.rprint')
-    def test_print_error(self, mock_rprint):
+    @patch('aye.presenter.repl_ui.console.print')
+    def test_print_error(self, mock_console_print):
         exc = ValueError("test error")
         repl_ui.print_error(exc)
-        mock_rprint.assert_called_once_with(f"[red]Error:[/] {exc}")
+        mock_console_print.assert_called_once_with(f"[ui.error]Error:[/] {exc}")
 
 
 class TestUiUtils(TestCase):
