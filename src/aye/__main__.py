@@ -7,6 +7,7 @@ from aye.presenter import cli_ui
 from aye.presenter.diff_presenter import show_diff
 from aye.model.config import load_config
 from aye.model.version_checker import check_version_and_print_warning
+from aye.model.auth import set_user_config
 
 # Load configuration at startup
 load_config()
@@ -107,6 +108,10 @@ def restore(ordinal: str = typer.Argument(None, help="Snapshot ID to restore (de
     try:
         commands.restore_from_snapshot(ordinal, file_name)
         cli_ui.print_restore_feedback(ordinal, file_name)
+
+        # Persist a global flag so we stop showing the restore breadcrumb tip.
+        # NOTE: tutorial restore does NOT hit this code path.
+        set_user_config("has_used_restore", "on")
     except Exception as exc:
         cli_ui.print_generic_message(f"Error: {exc}", is_error=True)
 
