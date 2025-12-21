@@ -79,7 +79,7 @@ def _prompt_for_telemetry_consent_if_needed() -> bool:
     rprint("[bright_black]We never collect command arguments, prompt text, filenames, or file contents in telemetry.[/bright_black]")
 
     try:
-        allow = Confirm.ask("\nAllow anonymized telemetry?", default=False)
+        allow = Confirm.ask("\nAllow anonymized telemetry?", default=True)
     except (EOFError, KeyboardInterrupt):
         allow = False
 
