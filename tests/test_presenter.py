@@ -115,64 +115,47 @@ class TestDiffPresenter(TestCase):
     def tearDown(self):
         self.tmpdir.cleanup()
 
-    @patch('subprocess.run')
     @patch('aye.presenter.diff_presenter._diff_console')
-    def test_show_diff_with_system_diff(self, mock_console, mock_run):
-        stdout_content = "--- file2.txt\n+++ file1.txt\n...diff output..."
-        mock_run.return_value = MagicMock(stdout=stdout_content)
+    def test_show_diff(self, mock_console):
         diff_presenter.show_diff(self.file1, self.file2)
-        mock_run.assert_called_once_with(
-            ["diff", "--color=always", "-u", str(self.file2), str(self.file1)],
-            capture_output=True,
-            text=True
-        )
-        mock_console.print.assert_called_once()
+        # Should call print multiple times for header, chunks, changes
+        self.assertTrue(mock_console.print.called)
+        
+        # Collect all calls to print to verify output
+        calls_args = [str(args[0]) for args, _ in mock_console.print.call_args_list]
+        combined_output = "\n".join(calls_args)
+        
+        self.assertIn("---", combined_output)
+        self.assertIn("+++", combined_output)
+        # Content should be there (part of Syntax object or string)
+        # Since we pass Syntax objects, string matching exact content might be tricky depending on how str(Syntax) behaves in test.
+        # But we can check if it was called.
 
-    @patch('subprocess.run')
-    @patch('aye.presenter.diff_presenter.rprint')
-    def test_show_diff_no_differences(self, mock_rprint, mock_run):
-        mock_run.return_value = MagicMock(stdout="  ")
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_show_diff_no_differences(self, mock_console):
         diff_presenter.show_diff(self.file1, self.file1)
-        mock_rprint.assert_called_once_with("[green]No differences found.[/]")
-
-    @patch('subprocess.run')
-    @patch('aye.presenter.diff_presenter._python_diff_files')
-    def test_show_diff_system_diff_not_found(self, mock_python_diff, mock_run):
-        mock_run.side_effect = FileNotFoundError
-        diff_presenter.show_diff(self.file1, self.file2)
-        mock_python_diff.assert_called_once_with(self.file1, self.file2)
-
-    @patch('subprocess.run')
-    @patch('aye.presenter.diff_presenter.rprint')
-    def test_show_diff_system_diff_other_error(self, mock_rprint, mock_run):
-        mock_run.side_effect = Exception("some error")
-        diff_presenter.show_diff(self.file1, self.file2)
-        mock_rprint.assert_called_once_with("[red]Error running diff:[/] some error")
-
-    @patch('aye.presenter.diff_presenter._diff_console')
-    def test_python_diff_files_with_diff(self, mock_console):
-        diff_presenter._python_diff_files(self.file1, self.file2)
         mock_console.print.assert_called_once()
-        self.assertIn("--- ", mock_console.print.call_args[0][0])
-        self.assertIn("+++ ", mock_console.print.call_args[0][0])
-
-    @patch('aye.presenter.diff_presenter.rprint')
-    def test_python_diff_files_no_diff(self, mock_rprint):
-        diff_presenter._python_diff_files(self.file1, self.file1)
-        mock_rprint.assert_called_once_with("[green]No differences found.[/]")
+        self.assertIn("No differences found", str(mock_console.print.call_args[0][0]))
+        self.assertEqual(mock_console.print.call_args[1].get('style'), "diff.warning")
 
     @patch('aye.presenter.diff_presenter._diff_console')
     def test_python_diff_files_one_missing(self, mock_console):
         missing_file = self.dir / "missing.txt"
+        # file1 exists, missing_file does not.
         diff_presenter._python_diff_files(self.file1, missing_file)
-        mock_console.print.assert_called_once()
-        self.assertIn("+++ ", mock_console.print.call_args[0][0]) # All lines are additions
+        
+        self.assertTrue(mock_console.print.called)
+        
+        # Verify that we are printing Tables (grids) for the content
+        from rich.table import Table
+        printed_tables = [args[0] for args, _ in mock_console.print.call_args_list if len(args) > 0 and isinstance(args[0], Table)]
+        self.assertTrue(len(printed_tables) > 0, "Should have printed at least one Table grid for diff content")
 
-    @patch('aye.presenter.diff_presenter.rprint')
-    def test_python_diff_files_error(self, mock_rprint):
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_python_diff_files_error(self, mock_console):
         with patch('pathlib.Path.read_text', side_effect=IOError("read error")):
             diff_presenter._python_diff_files(self.file1, self.file2)
-            mock_rprint.assert_called_with("[red]Error running Python diff:[/] read error")
+            mock_console.print.assert_called_with("Error running Python diff: read error", style="diff.error")
 
 
 class TestReplUi(TestCase):
