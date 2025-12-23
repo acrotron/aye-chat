@@ -13,94 +13,94 @@ from rich.spinner import Spinner
 
 class TestCliUi(TestCase):
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_auth_status_real_token(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_auth_status_real_token(self, mock_print):
         cli_ui.print_auth_status("real_token_1234567890abc")
-        self.assertEqual(mock_rprint.call_count, 2)
-        mock_rprint.assert_any_call("[green]Authenticated[/] - Token is saved")
-        mock_rprint.assert_any_call("  Token: real_token_1...")
+        self.assertEqual(mock_print.call_count, 2)
+        mock_print.assert_any_call("[ui.success]Authenticated[/] - [ui.help.text]Token is saved[/]")
+        mock_print.assert_any_call("  [ui.help.text]Token: real_token_1...[/]")
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_auth_status_demo_token(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_auth_status_demo_token(self, mock_print):
         cli_ui.print_auth_status("aye_demo_12345")
-        self.assertEqual(mock_rprint.call_count, 2)
-        mock_rprint.assert_any_call("[yellow]Demo Mode[/] - Using demo token")
-        mock_rprint.assert_any_call("  Run 'aye auth login' to authenticate with a real token")
+        self.assertEqual(mock_print.call_count, 2)
+        mock_print.assert_any_call("[ui.warning]Demo Mode[/] - [ui.help.text]Using demo token[/]")
+        mock_print.assert_any_call("  [ui.help.text]Run 'aye auth login' to authenticate with a real token[/]")
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_auth_status_no_token(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_auth_status_no_token(self, mock_print):
         cli_ui.print_auth_status(None)
-        self.assertEqual(mock_rprint.call_count, 2)
-        mock_rprint.assert_any_call("[red]Not Authenticated[/] - No token saved")
-        mock_rprint.assert_any_call("  Run 'aye auth login' to authenticate")
+        self.assertEqual(mock_print.call_count, 2)
+        mock_print.assert_any_call("[ui.error]Not Authenticated[/] - [ui.help.text]No token saved[/]")
+        mock_print.assert_any_call("  [ui.help.text]Run 'aye auth login' to authenticate[/]")
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_snapshot_history_with_snapshots(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_snapshot_history_with_snapshots(self, mock_print):
         cli_ui.print_snapshot_history(["snap1", "snap2"])
-        self.assertEqual(mock_rprint.call_count, 3)
-        mock_rprint.assert_any_call("[bold]Snapshot History:[/]")
-        mock_rprint.assert_any_call("  snap1")
+        self.assertEqual(mock_print.call_count, 3)
+        mock_print.assert_any_call("[ui.help.header]Snapshot History:[/]")
+        mock_print.assert_any_call("  [ui.help.text]snap1[/]")
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_snapshot_history_no_snapshots(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_snapshot_history_no_snapshots(self, mock_print):
         cli_ui.print_snapshot_history([])
-        mock_rprint.assert_called_once_with("[yellow]No snapshots found.[/]")
+        mock_print.assert_called_once_with("[ui.warning]No snapshots found.[/]")
 
-    @patch('builtins.print')
+    @patch('aye.presenter.cli_ui.console.print')
     def test_print_snapshot_content_found(self, mock_print):
         cli_ui.print_snapshot_content("file content")
         mock_print.assert_called_once_with("file content")
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_snapshot_content_not_found(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_snapshot_content_not_found(self, mock_print):
         cli_ui.print_snapshot_content(None)
-        mock_rprint.assert_called_once_with("Snapshot not found.", err=True)
+        mock_print.assert_called_once_with("Snapshot not found.", style="ui.error")
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_restore_feedback(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_restore_feedback(self, mock_print):
         cli_ui.print_restore_feedback("001", "file.txt")
-        mock_rprint.assert_called_with("✅ File 'file.txt' restored to 001")
+        mock_print.assert_called_with("[ui.success]✅ File 'file.txt' restored to 001[/]")
         cli_ui.print_restore_feedback("001", None)
-        mock_rprint.assert_called_with("✅ All files restored to 001")
+        mock_print.assert_called_with("[ui.success]✅ All files restored to 001[/]")
         cli_ui.print_restore_feedback(None, "file.txt")
-        mock_rprint.assert_called_with("✅ File 'file.txt' restored to latest snapshot")
+        mock_print.assert_called_with("[ui.success]✅ File 'file.txt' restored to latest snapshot[/]")
         cli_ui.print_restore_feedback(None, None)
-        mock_rprint.assert_called_with("✅ All files restored to latest snapshot")
+        mock_print.assert_called_with("[ui.success]✅ All files restored to latest snapshot[/]")
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_prune_feedback(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_prune_feedback(self, mock_print):
         cli_ui.print_prune_feedback(5, 10)
-        mock_rprint.assert_called_with("✅ 5 snapshots deleted. 10 most recent snapshots kept.")
+        mock_print.assert_called_with("[ui.success]✅ 5 snapshots deleted. 10 most recent snapshots kept.[/]")
         cli_ui.print_prune_feedback(0, 10)
-        mock_rprint.assert_called_with("✅ No snapshots deleted. You have fewer than the specified keep count.")
+        mock_print.assert_called_with("[ui.success]✅ No snapshots deleted. You have fewer than the specified keep count.[/]")
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_cleanup_feedback(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_cleanup_feedback(self, mock_print):
         cli_ui.print_cleanup_feedback(3, 30)
-        mock_rprint.assert_called_with("✅ 3 snapshots older than 30 days deleted.")
+        mock_print.assert_called_with("[ui.success]✅ 3 snapshots older than 30 days deleted.[/]")
         cli_ui.print_cleanup_feedback(0, 30)
-        mock_rprint.assert_called_with("✅ No snapshots older than 30 days found.")
+        mock_print.assert_called_with("[ui.success]✅ No snapshots older than 30 days found.[/]")
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_config_list(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_config_list(self, mock_print):
         cli_ui.print_config_list({"key": "value"})
-        mock_rprint.assert_any_call("  key: value")
+        mock_print.assert_any_call("  [ui.help.command]key[/]: [ui.help.text]value[/]")
         cli_ui.print_config_list({})
-        mock_rprint.assert_called_with("[yellow]No configuration values set.[/]")
+        mock_print.assert_called_with("[ui.warning]No configuration values set.[/]")
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_config_value(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_config_value(self, mock_print):
         cli_ui.print_config_value("key", "value")
-        mock_rprint.assert_called_with("key: value")
+        mock_print.assert_called_with("[ui.help.command]key[/]: [ui.help.text]value[/]")
         cli_ui.print_config_value("key", None)
-        mock_rprint.assert_called_with("[yellow]Configuration key 'key' not found.[/]")
+        mock_print.assert_called_with("[ui.warning]Configuration key 'key' not found.[/]")
 
-    @patch('aye.presenter.cli_ui.rprint')
-    def test_print_generic_message(self, mock_rprint):
+    @patch('aye.presenter.cli_ui.console.print')
+    def test_print_generic_message(self, mock_print):
         cli_ui.print_generic_message("Success")
-        mock_rprint.assert_called_with("[green]Success[/]")
+        mock_print.assert_called_with("[ui.success]Success[/]")
         cli_ui.print_generic_message("Failure", is_error=True)
-        mock_rprint.assert_called_with("[red]Failure[/]")
+        mock_print.assert_called_with("[ui.error]Failure[/]")
 
 
 class TestDiffPresenter(TestCase):

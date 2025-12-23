@@ -27,6 +27,8 @@ diff_theme = Theme({
     "diff.text": "steel_blue",
     "diff.warning": "bold khaki1",
     "diff.error": "bold indian_red1",
+    "diff.added": "bold sea_green2",
+    "diff.removed": "bold indian_red1",
 })
 
 # Create a global console instance for diff output.
@@ -158,11 +160,11 @@ def _print_diff_with_syntax(
         # leading space.
         elif line.startswith(" "):
             code = line_content[1:]
-            _print_line("", code, Style(), lexer_name)
+            _print_line("  ", code, Style(), lexer_name)
 
         # Fallback for any unexpected lines.
         else:
-            _print_line("", line_content, Style(), lexer_name)
+            _print_line("  ", line_content, Style(), lexer_name)
 
     if not has_diff:
         _diff_console.print("No differences found.", style="diff.warning")
