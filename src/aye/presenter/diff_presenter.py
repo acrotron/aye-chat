@@ -170,6 +170,7 @@ def _print_diff_with_syntax(
         _diff_console.print("No differences found.", style="diff.warning")
 
 
+
 def _python_diff_files(file1: Path, file2: Path) -> None:
     """Show diff between two files using Python's difflib.
 
@@ -196,7 +197,7 @@ def _python_diff_files(file1: Path, file2: Path) -> None:
             content2,  # from file (snapshot)
             content1,  # to file (current)
             fromfile=str(file2),
-            tofile=str(file1)
+            tofile=str(file1),
         )
 
         # Pass the current file path as the lexer hint.
@@ -204,6 +205,7 @@ def _python_diff_files(file1: Path, file2: Path) -> None:
     except Exception as e:
         # Presenter behavior: print errors rather than raising.
         _diff_console.print(f"Error running Python diff: {e}", style="diff.error")
+
 
 
 def _python_diff_content(content1: str, content2: str, label1: str, label2: str) -> None:
@@ -225,12 +227,13 @@ def _python_diff_content(content1: str, content2: str, label1: str, label2: str)
             lines2,  # from (snapshot)
             lines1,  # to (current)
             fromfile=label2,
-            tofile=label1
+            tofile=label1,
         )
 
         _print_diff_with_syntax(diff, label1)
     except Exception as e:
         _diff_console.print(f"Error running Python diff: {e}", style="diff.error")
+
 
 
 def show_diff(file1: Union[Path, str], file2: Union[Path, str], is_stash_ref: bool = False) -> None:
@@ -249,26 +252,51 @@ def show_diff(file1: Union[Path, str], file2: Union[Path, str], is_stash_ref: bo
 
     # Handle stash references
     if is_stash_ref:
-        # file2 is in format 'stash@{N}:path/to/file'
-        # file1 is the current file path
         try:
             # Lazy imports: only needed when stash diffing is requested.
             from aye.model.snapshot import get_backend
-            from aye.model.snapshot.git_backend import GitStashBackend
+            from aye.model.snapshot.git_ref_backend import GitRefBackend
 
             backend = get_backend()
-            if not isinstance(backend, GitStashBackend):
-                _diff_console.print("Error: Stash references only work with git backend", style="diff.error")
+            if not isinstance(backend, GitRefBackend):
+                _diff_console.print("Error: Git snapshot references only work with GitRefBackend", style="diff.error")
                 return
 
-            # Parse stash reference.
-            # Split on the first ':' so the remainder remains the file path.
-            stash_ref, file_path = str(file2).split(':', 1)
+            def _extract(ref_with_path: str) -> tuple[str, str]:
+                refname, repo_rel_path = ref_with_path.split(":", 1)
+                return refname, repo_rel_path
 
-            # Ask the backend to extract the file content from the stash snapshot.
-            stash_content = backend.get_file_content_from_snapshot(file_path, stash_ref)
+            # Two-snapshot diff: "ref1:path|ref2:path"
+            file2_str = str(file2)
+            if "|" in file2_str:
+                left, right = file2_str.split("|", 1)
+                ref_l, path_l = _extract(left)
+                ref_r, path_r = _extract(right)
+
+                content_l = backend.get_file_content_from_snapshot(path_l, ref_l)
+                content_r = backend.get_file_content_from_snapshot(path_r, ref_r)
+
+                if content_l is None:
+                    _diff_console.print(f"Error: Could not extract file from {ref_l}", style="diff.error")
+                    return
+                if content_r is None:
+                    _diff_console.print(f"Error: Could not extract file from {ref_r}", style="diff.error")
+                    return
+
+                _python_diff_content(
+                    content_l,
+                    content_r,
+                    f"{ref_l}:{path_l}",
+                    f"{ref_r}:{path_r}",
+                )
+                return
+
+            # Current-vs-snapshot diff
+            refname, repo_rel_path = _extract(file2_str)
+
+            snap_content = backend.get_file_content_from_snapshot(repo_rel_path, refname)
             if stash_content is None:
-                _diff_console.print(f"Error: Could not extract file from {stash_ref}", style="diff.error")
+                _diff_console.print(f"Error: Could not extract file from {refname}", style="diff.error")
                 return
 
             # Read current file content from disk.
@@ -282,9 +310,9 @@ def show_diff(file1: Union[Path, str], file2: Union[Path, str], is_stash_ref: bo
             # Diff the contents.
             _python_diff_content(
                 current_content,
-                stash_content,
+                snap_content,
                 str(file1),
-                f"{stash_ref}:{file_path}"
+                f"{refname}:{repo_rel_path}",
             )
             return
 
@@ -297,4 +325,19 @@ def show_diff(file1: Union[Path, str], file2: Union[Path, str], is_stash_ref: bo
     file1_path = Path(file1) if not isinstance(file1, Path) else file1
     file2_path = Path(file2) if not isinstance(file2, Path) else file2
 
-    _python_diff_files(file1_path, file2_path)
+    try:
+        result = subprocess.run(
+            ["diff", "--color=always", "-u", str(file2_path), str(file1_path)],
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout.strip():
+            clean_output = ANSI_RE.sub("", result.stdout)
+            _diff_console.print(clean_output)
+        else:
+            _diff_console.print("No differences found.")
+    except FileNotFoundError:
+        # Fallback to Python's difflib if system diff is not available
+        _python_diff_files(file1_path, file2_path)
+    except Exception as e:
+        _diff_console.print(f"Error running diff: {e}", style="diff.error")

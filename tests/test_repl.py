@@ -4,6 +4,9 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch, MagicMock, call
 
+from prompt_toolkit.filters import completion_is_selected
+from prompt_toolkit.keys import Keys
+
 import aye.controller.repl as repl
 from aye.model.config import MODELS
 
@@ -23,14 +26,18 @@ class TestRepl(TestCase):
         self.conf = SimpleNamespace(root=Path.cwd(), file_mask="*.py")
         self.session = MagicMock()
 
+        # Telemetry is global, in-memory state. Reset between tests to avoid leakage.
+        repl.telemetry.reset()
+        repl.telemetry.set_enabled(False)
+
     @patch('os.chdir')
     @patch('aye.controller.command_handlers.rprint')
     def test_handle_cd_command_success(self, mock_rprint, mock_chdir):
         target_dir = '/tmp'
-        
+
         with patch('pathlib.Path.cwd', return_value=Path(target_dir)):
             result = repl.handle_cd_command(['cd', target_dir], self.conf)
-        
+
         self.assertTrue(result)
         mock_chdir.assert_called_once_with(target_dir)
         self.assertEqual(self.conf.root, Path(target_dir))
@@ -59,9 +66,9 @@ class TestRepl(TestCase):
         self.conf.plugin_manager = MagicMock()
         self.conf.plugin_manager.handle_command.return_value = None
         self.session.prompt.return_value = "2"
-        
+
         repl.handle_model_command(self.session, MODELS, self.conf, ['model'])
-        
+
         self.session.prompt.assert_called_once()
         self.assertEqual(self.conf.selected_model, MODELS[1]['id'])
         mock_set_config.assert_called_once_with("selected_model", MODELS[1]['id'])
@@ -73,9 +80,9 @@ class TestRepl(TestCase):
         self.conf.selected_model = MODELS[0]['id']
         self.conf.plugin_manager = MagicMock()
         self.conf.plugin_manager.handle_command.return_value = None
-        
+
         repl.handle_model_command(self.session, MODELS, self.conf, ['model', '3'])
-        
+
         self.session.prompt.assert_not_called()
         self.assertEqual(self.conf.selected_model, MODELS[2]['id'])
         mock_set_config.assert_called_once_with("selected_model", MODELS[2]['id'])
@@ -87,7 +94,7 @@ class TestRepl(TestCase):
         self.conf.selected_model = MODELS[0]['id']
         self.conf.plugin_manager = MagicMock()
         self.conf.plugin_manager.handle_command.return_value = None
-        
+
         repl.handle_model_command(self.session, MODELS, self.conf, ['model', '99'])
         mock_set_config.assert_not_called()
         mock_rprint.assert_any_call("[red]Invalid model number.[/]")
@@ -143,11 +150,12 @@ class TestRepl(TestCase):
     def test_collect_and_send_feedback(self, mock_session_cls, mock_send_feedback):
         mock_session_cls.return_value.prompt.return_value = "Great tool!"
         repl.collect_and_send_feedback(chat_id=123)
-        mock_send_feedback.assert_called_once_with("Great tool!", chat_id=123)
+        mock_send_feedback.assert_called_once_with("Great tool!", chat_id=123, telemetry=None)
 
     @patch('aye.controller.repl.send_feedback')
     @patch('aye.controller.repl.PromptSession')
     def test_collect_and_send_feedback_empty(self, mock_session_cls, mock_send_feedback):
+        # Telemetry disabled in setUp, so empty feedback should not send.
         mock_session_cls.return_value.prompt.return_value = "  \n  "
         repl.collect_and_send_feedback(chat_id=123)
         mock_send_feedback.assert_not_called()
@@ -155,21 +163,23 @@ class TestRepl(TestCase):
     @patch('aye.controller.repl.send_feedback')
     @patch('aye.controller.repl.PromptSession')
     def test_collect_and_send_feedback_ctrl_c(self, mock_session_cls, mock_send_feedback):
+        # Telemetry disabled in setUp, so Ctrl+C with no feedback should not send.
         mock_session_cls.return_value.prompt.side_effect = KeyboardInterrupt
         repl.collect_and_send_feedback(chat_id=123)
         mock_send_feedback.assert_not_called()
 
     @patch('aye.controller.repl.send_feedback', side_effect=Exception("API down"))
-    @patch('aye.controller.repl.rprint')
     @patch('aye.controller.repl.PromptSession')
-    def test_collect_and_send_feedback_api_error(self, mock_session_cls, mock_rprint, mock_send_feedback):
+    def test_collect_and_send_feedback_api_error(self, mock_session_cls, mock_send_feedback):
+        # New implementation does not swallow send_feedback exceptions.
         mock_session_cls.return_value.prompt.return_value = "feedback"
-        repl.collect_and_send_feedback(chat_id=123)
-        mock_rprint.assert_any_call("\n[cyan]Goodbye![/cyan]")
+        with self.assertRaises(Exception):
+            repl.collect_and_send_feedback(chat_id=123)
 
     def test_chat_repl_main_loop_commands(self):
         with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
              patch('aye.controller.repl.run_first_time_tutorial_if_needed'), \
+             patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
              patch('aye.controller.repl.get_user_config', return_value="on"), \
              patch('aye.controller.repl.print_startup_header'), \
              patch('aye.controller.repl.Path') as mock_path, \
@@ -260,9 +270,36 @@ class TestRepl(TestCase):
             mock_process.assert_called_once()
 
 
+def test_create_key_bindings_registers_two_enter_bindings():
+    bindings = repl.create_key_bindings()
+    enter_bindings = bindings.get_bindings_for_keys((Keys.Enter,))
+
+    # Two Enter bindings are expected:
+    # - completion_is_selected
+    # - has_completions & ~completion_is_selected
+    assert len(enter_bindings) == 2
+    assert any(b.filter == completion_is_selected for b in enter_bindings)
+    assert any(b.filter != completion_is_selected for b in enter_bindings)
+
+
+def test_create_prompt_session_uses_multicolumn_and_key_bindings():
+    completer = MagicMock()
+
+    with patch('aye.controller.repl.PromptSession') as mock_session_cls:
+        repl.create_prompt_session(completer=completer, completion_style='readline')
+
+        assert mock_session_cls.call_count == 1
+        kwargs = mock_session_cls.call_args.kwargs
+        assert kwargs['completer'] is completer
+        assert kwargs['complete_style'] == repl.CompleteStyle.MULTI_COLUMN
+        assert kwargs['complete_while_typing'] is True
+        assert kwargs['key_bindings'] is not None
+
+
 def test_chat_repl_starts_background_indexing_when_has_work():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.threading.Thread') as mock_thread_cls, \
@@ -304,6 +341,7 @@ def test_chat_repl_starts_background_indexing_when_has_work():
 def test_chat_repl_shell_command_outputs_error_info():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -346,6 +384,7 @@ def test_chat_repl_shell_command_outputs_error_info():
 def test_chat_repl_db_command_with_collection_sample():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -382,7 +421,8 @@ def test_chat_repl_db_command_with_collection_sample():
             plugin_manager=plugin_manager,
             index_manager=index_manager,
             verbose=False,
-            selected_model='model'
+            selected_model='model',
+            use_rag=True,
         )
 
         repl.chat_repl(conf)
@@ -396,6 +436,7 @@ def test_chat_repl_db_command_with_collection_sample():
 def test_chat_repl_handles_tokenization_error():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -433,6 +474,7 @@ def test_chat_repl_handles_tokenization_error():
 def test_chat_repl_handles_exception_and_calls_error_handler():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -474,6 +516,7 @@ def test_chat_repl_handles_exception_and_calls_error_handler():
 def test_chat_repl_invalid_chat_id_file_is_cleaned():
     with patch('aye.controller.repl.PromptSession') as mock_session_cls, \
          patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
          patch('aye.controller.repl.print_startup_header'), \
          patch('aye.controller.repl.print_prompt', return_value='> '), \
          patch('aye.controller.repl.Path') as mock_path, \
@@ -504,3 +547,336 @@ def test_chat_repl_invalid_chat_id_file_is_cleaned():
         repl.chat_repl(conf)
 
         chat_id_file.unlink.assert_called_once_with(missing_ok=True)
+
+
+def test_chat_repl_with_command_updates_chat_id_and_feedback_receives_it():
+    with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.create_prompt_session') as mock_create_session, \
+         patch('aye.controller.repl.Console') as mock_console_cls, \
+         patch('aye.controller.repl.handle_with_command', return_value=42) as mock_with, \
+         patch('aye.controller.repl.collect_and_send_feedback') as mock_feedback:
+
+        session = MagicMock()
+        session.prompt.side_effect = ['with foo: bar', 'exit']
+        mock_create_session.return_value = session
+
+        _setup_mock_chat_id_path(mock_path, exists=False)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask='*.py',
+            plugin_manager=plugin_manager,
+            index_manager=None,
+            verbose=False,
+            selected_model='model',
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        assert mock_with.call_count == 1
+        # collect_and_send_feedback(max(0, chat_id)) should see 42
+        mock_feedback.assert_called_once_with(42)
+
+
+def test_chat_repl_completion_command_recreates_completer_and_session():
+    with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.handle_completion_command', return_value='multi') as mock_completion, \
+         patch('aye.controller.repl.create_prompt_session') as mock_create_session, \
+         patch('aye.controller.repl.rprint') as mock_rprint, \
+         patch('aye.controller.repl.collect_and_send_feedback'):
+
+        session = MagicMock()
+        session.prompt.side_effect = ['completion multi', 'exit']
+        mock_create_session.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+
+        def plugin_side_effect(command, params):
+            if command == 'get_completer':
+                return {"completer": None}
+            return None
+
+        plugin_manager.handle_command.side_effect = plugin_side_effect
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask='*.py',
+            plugin_manager=plugin_manager,
+            index_manager=None,
+            verbose=False,
+            selected_model='model',
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        # One session created at startup, one recreated after completion command
+        assert mock_create_session.call_count == 2
+        assert mock_completion.call_count == 1
+        assert any("Completion style is now active" in str(c.args[0]) for c in mock_rprint.call_args_list)
+
+        # get_completer should be called twice (startup + after completion style change)
+        get_completer_calls = [c for c in plugin_manager.handle_command.call_args_list if c.args and c.args[0] == 'get_completer']
+        assert len(get_completer_calls) == 2
+
+
+def test_chat_repl_model_number_shortcut_calls_model_handler():
+    with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.handle_model_command') as mock_model_cmd, \
+         patch('aye.controller.repl.collect_and_send_feedback'):
+
+        # Use real create_prompt_session path via patched PromptSession
+        with patch('aye.controller.repl.PromptSession') as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ['2', 'exit']
+            mock_session_cls.return_value = session
+
+            _setup_mock_chat_id_path(mock_path)
+
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask='*.py',
+                plugin_manager=plugin_manager,
+                index_manager=None,
+                verbose=False,
+                selected_model='model',
+                use_rag=True,
+            )
+
+            repl.chat_repl(conf)
+
+        mock_model_cmd.assert_called_once()
+        args = mock_model_cmd.call_args.args
+        assert args[3] == ['model', '2']
+
+
+def test_chat_repl_slash_prefixed_shell_command_executes_normalized_command():
+    with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.rprint') as mock_rprint, \
+         patch('aye.controller.repl.collect_and_send_feedback'):
+
+        with patch('aye.controller.repl.PromptSession') as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ['/ls -l', 'exit']
+            mock_session_cls.return_value = session
+
+            _setup_mock_chat_id_path(mock_path)
+
+            def plugin_side_effect(command, params):
+                if command == 'get_completer':
+                    return {"completer": None}
+                if command == 'execute_shell_command':
+                    assert params['command'] == 'ls'
+                    assert params['args'] == ['-l']
+                    return {"stdout": "ok"}
+                return None
+
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = plugin_side_effect
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask='*.py',
+                plugin_manager=plugin_manager,
+                index_manager=None,
+                verbose=False,
+                selected_model='model',
+                use_rag=True,
+            )
+
+            repl.chat_repl(conf)
+
+        mock_rprint.assert_any_call('ok')
+
+
+def test_chat_repl_reads_valid_chat_id_file_passes_to_llm_and_updates_chat_id():
+    with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.invoke_llm') as mock_invoke, \
+         patch('aye.controller.repl.process_llm_response', return_value=9) as mock_process, \
+         patch('aye.controller.repl.collect_and_send_feedback') as mock_feedback:
+
+        with patch('aye.controller.repl.PromptSession') as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ['hello', 'exit']
+            mock_session_cls.return_value = session
+
+            chat_id_file = _setup_mock_chat_id_path(mock_path, exists=True, contents='7')
+
+            def plugin_side_effect(command, params):
+                if command == 'get_completer':
+                    return {"completer": None}
+                if command == 'execute_shell_command':
+                    return None
+                if command == 'parse_at_references':
+                    return None
+                return None
+
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = plugin_side_effect
+
+            # LLM response object with chat_id; process_llm_response should receive chat_id_file
+            mock_invoke.return_value = SimpleNamespace(chat_id=9)
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask='*.py',
+                plugin_manager=plugin_manager,
+                index_manager=None,
+                verbose=False,
+                selected_model='model',
+                use_rag=True,
+            )
+
+            repl.chat_repl(conf)
+
+        # First LLM invocation should receive chat_id from file
+        assert mock_invoke.call_count == 1
+        assert mock_invoke.call_args.kwargs['chat_id'] == 7
+
+        # process_llm_response should have been passed a chat_id_file (since llm_response.chat_id truthy)
+        assert mock_process.call_count == 1
+        assert mock_process.call_args.kwargs['chat_id_file'] is chat_id_file
+
+        # Final feedback should be called with updated chat_id (9)
+        mock_feedback.assert_called_once_with(9)
+
+
+def test_chat_repl_db_command_no_index_manager_rag_disabled_prints_small_project_mode():
+    with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.rprint') as mock_rprint, \
+         patch('aye.controller.repl.collect_and_send_feedback'):
+
+        with patch('aye.controller.repl.PromptSession') as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ['db', 'exit']
+            mock_session_cls.return_value = session
+
+            _setup_mock_chat_id_path(mock_path)
+
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask='*.py',
+                plugin_manager=plugin_manager,
+                index_manager=None,
+                verbose=False,
+                selected_model='model',
+                use_rag=False,
+            )
+
+            repl.chat_repl(conf)
+
+        mock_rprint.assert_any_call('[yellow]Small project mode: RAG indexing is disabled.[/yellow]')
+
+
+def test_chat_repl_always_shuts_down_index_manager_in_finally():
+    with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.collect_and_send_feedback'):
+
+        with patch('aye.controller.repl.PromptSession') as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ['exit']
+            mock_session_cls.return_value = session
+
+            _setup_mock_chat_id_path(mock_path)
+
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+            index_manager = MagicMock()
+            index_manager.has_work.return_value = False
+            index_manager.is_indexing.return_value = False
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask='*.py',
+                plugin_manager=plugin_manager,
+                index_manager=index_manager,
+                verbose=False,
+                selected_model='model',
+                use_rag=True,
+            )
+
+            repl.chat_repl(conf)
+
+        index_manager.shutdown.assert_called_once()
+
+
+def test_chat_repl_when_indexing_and_verbose_prefixes_prompt_with_progress():
+    with patch('aye.controller.repl.run_first_time_tutorial_if_needed', return_value=False), \
+         patch('aye.controller.repl._prompt_for_telemetry_consent_if_needed', return_value=False), \
+         patch('aye.controller.repl.print_startup_header'), \
+         patch('aye.controller.repl.print_prompt', return_value='> '), \
+         patch('aye.controller.repl.Path') as mock_path, \
+         patch('aye.controller.repl.handle_model_command'), \
+         patch('aye.controller.repl.print_help_message'), \
+         patch('aye.controller.repl.collect_and_send_feedback'):
+
+        with patch('aye.controller.repl.PromptSession') as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ['exit']
+            mock_session_cls.return_value = session
+
+            _setup_mock_chat_id_path(mock_path)
+
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+            index_manager = MagicMock()
+            index_manager.has_work.return_value = False
+            index_manager.is_indexing.return_value = True
+            index_manager.get_progress_display.return_value = '1/3'
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask='*.py',
+                plugin_manager=plugin_manager,
+                index_manager=index_manager,
+                verbose=True,
+                selected_model='model',
+                use_rag=True,
+            )
+
+            repl.chat_repl(conf)
+
+        # The prompt should be overridden when indexing and verbose
+        assert session.prompt.call_args.args[0] == '(ツ (1/3) » '
