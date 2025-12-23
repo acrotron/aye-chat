@@ -324,20 +324,21 @@ def show_diff(file1: Union[Path, str], file2: Union[Path, str], is_stash_ref: bo
     # Normalize to Path objects so downstream helpers can rely on Path APIs.
     file1_path = Path(file1) if not isinstance(file1, Path) else file1
     file2_path = Path(file2) if not isinstance(file2, Path) else file2
+    _python_diff_files(file1_path, file2_path)
 
-    try:
-        result = subprocess.run(
-            ["diff", "--color=always", "-u", str(file2_path), str(file1_path)],
-            capture_output=True,
-            text=True,
-        )
-        if result.stdout.strip():
-            clean_output = ANSI_RE.sub("", result.stdout)
-            _diff_console.print(clean_output)
-        else:
-            _diff_console.print("No differences found.")
-    except FileNotFoundError:
-        # Fallback to Python's difflib if system diff is not available
-        _python_diff_files(file1_path, file2_path)
-    except Exception as e:
-        _diff_console.print(f"Error running diff: {e}", style="diff.error")
+#    try:
+#        result = subprocess.run(
+#            ["diff", "--color=always", "-u", str(file2_path), str(file1_path)],
+#            capture_output=True,
+#            text=True,
+#        )
+#        if result.stdout.strip():
+#            clean_output = ANSI_RE.sub("", result.stdout)
+#            _diff_console.print(clean_output)
+#        else:
+#            _diff_console.print("No differences found.")
+#    except FileNotFoundError:
+#        # Fallback to Python's difflib if system diff is not available
+#        _python_diff_files(file1_path, file2_path)
+#    except Exception as e:
+#        _diff_console.print(f"Error running diff: {e}", style="diff.error")
