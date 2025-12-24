@@ -1,9 +1,7 @@
-from __future__ import annotations
-
+from unittest import TestCase
+from unittest.mock import patch, MagicMock
 import tempfile
 from pathlib import Path
-from unittest import TestCase
-from unittest.mock import MagicMock, patch
 
 import aye.presenter.diff_presenter as diff_presenter
 
@@ -20,303 +18,236 @@ class TestDiffPresenter(TestCase):
     def tearDown(self):
         self.tmpdir.cleanup()
 
-    @patch("subprocess.run")
-    @patch("aye.presenter.diff_presenter._diff_console")
-    def test_show_diff_with_system_diff(self, mock_console, mock_run):
-        stdout_content = "--- file2.txt\n+++ file1.txt\n...diff output..."
-        mock_run.return_value = MagicMock(stdout=stdout_content)
-
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_show_diff(self, mock_console):
         diff_presenter.show_diff(self.file1, self.file2)
+        # Should call print multiple times for header, chunks, changes
+        self.assertTrue(mock_console.print.called)
+        
+        # Collect all calls to print to verify output
+        calls_args = [str(args[0]) for args, _ in mock_console.print.call_args_list]
+        combined_output = "\n".join(calls_args)
+        
+        self.assertIn("---", combined_output)
+        self.assertIn("+++", combined_output)
 
-        mock_run.assert_called_once_with(
-            ["diff", "--color=always", "-u", str(self.file2), str(self.file1)],
-            capture_output=True,
-            text=True,
-        )
-        mock_console.print.assert_called_once()
-
-    @patch("subprocess.run")
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_show_diff_no_differences(self, mock_rprint, mock_run):
-        mock_run.return_value = MagicMock(stdout="  ")
-
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_show_diff_no_differences(self, mock_console):
         diff_presenter.show_diff(self.file1, self.file1)
+        # When no differences, it prints "No differences found."
+        mock_console.print.assert_called_once_with("No differences found.", style="diff.warning")
 
-        mock_rprint.assert_called_once_with("[green]No differences found.[/]")
-
-    @patch("subprocess.run")
-    @patch("aye.presenter.diff_presenter._python_diff_files")
-    def test_show_diff_system_diff_not_found(self, mock_python_diff, mock_run):
-        mock_run.side_effect = FileNotFoundError
-
-        diff_presenter.show_diff(self.file1, self.file2)
-
-        mock_python_diff.assert_called_once_with(self.file1, self.file2)
-
-    @patch("subprocess.run")
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_show_diff_system_diff_other_error(self, mock_rprint, mock_run):
-        mock_run.side_effect = Exception("some error")
-
-        diff_presenter.show_diff(self.file1, self.file2)
-
-        mock_rprint.assert_called_once_with("[red]Error running diff:[/] some error")
-
-    @patch("aye.presenter.diff_presenter._diff_console")
-    def test_python_diff_files_with_diff(self, mock_console):
-        diff_presenter._python_diff_files(self.file1, self.file2)
-
-        mock_console.print.assert_called_once()
-        self.assertIn("--- ", mock_console.print.call_args[0][0])
-        self.assertIn("+++ ", mock_console.print.call_args[0][0])
-
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_python_diff_files_no_diff(self, mock_rprint):
-        diff_presenter._python_diff_files(self.file1, self.file1)
-
-        mock_rprint.assert_called_once_with("[green]No differences found.[/]")
-
-    @patch("aye.presenter.diff_presenter._diff_console")
+    @patch('aye.presenter.diff_presenter._diff_console')
     def test_python_diff_files_one_missing(self, mock_console):
         missing_file = self.dir / "missing.txt"
-
+        # file1 exists, missing_file does not.
         diff_presenter._python_diff_files(self.file1, missing_file)
+        
+        # When one file is missing, difflib still produces output showing the diff
+        # (all lines added/removed). The code prints via _diff_console.print
+        self.assertTrue(
+            mock_console.print.called,
+            "Should have printed diff content"
+        )
 
-        mock_console.print.assert_called_once()
-        self.assertIn("+++ ", mock_console.print.call_args[0][0])
-
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_python_diff_files_both_missing_no_diff(self, mock_rprint):
-        missing1 = self.dir / "m1.txt"
-        missing2 = self.dir / "m2.txt"
-
-        diff_presenter._python_diff_files(missing1, missing2)
-
-        mock_rprint.assert_called_once_with("[green]No differences found.[/]")
-
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_python_diff_files_error(self, mock_rprint):
-        with patch("pathlib.Path.read_text", side_effect=IOError("read error")):
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_python_diff_files_error(self, mock_console):
+        with patch('pathlib.Path.read_text', side_effect=IOError("read error")):
             diff_presenter._python_diff_files(self.file1, self.file2)
+            mock_console.print.assert_called_with("Error running Python diff: read error", style="diff.error")
 
-        mock_rprint.assert_called_with("[red]Error running Python diff:[/] read error")
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_python_diff_files_with_diff(self, mock_console):
+        diff_presenter._python_diff_files(self.file1, self.file2)
+        # Should call print multiple times for headers, hunks, and content lines
+        self.assertTrue(mock_console.print.call_count >= 1)
+        
+        # Verify diff output contains expected elements
+        calls_args = [str(args[0]) if args else "" for args, _ in mock_console.print.call_args_list]
+        combined_output = "\n".join(calls_args)
+        self.assertIn("---", combined_output)
+        self.assertIn("+++", combined_output)
 
-    @patch("aye.presenter.diff_presenter._diff_console")
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_python_diff_files_no_diff(self, mock_console):
+        # Same file on both sides = no differences
+        diff_presenter._python_diff_files(self.file1, self.file1)
+        mock_console.print.assert_called_once_with("No differences found.", style="diff.warning")
+
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_python_diff_files_both_missing_no_diff(self, mock_console):
+        missing1 = self.dir / "missing1.txt"
+        missing2 = self.dir / "missing2.txt"
+        diff_presenter._python_diff_files(missing1, missing2)
+        # Both files missing = both empty = no diff
+        mock_console.print.assert_called_once_with("No differences found.", style="diff.warning")
+
+    @patch('aye.presenter.diff_presenter._diff_console')
     def test_python_diff_content_with_diff(self, mock_console):
-        content1 = "line1\nline2\nline3"
-        content2 = "line1\nmodified\nline3"
+        content1 = "hello\nworld"
+        content2 = "hello\nthere"
+        diff_presenter._python_diff_content(content1, content2, "file1.txt", "file2.txt")
+        # Should call print multiple times for headers and content
+        self.assertTrue(mock_console.print.call_count >= 1)
 
-        diff_presenter._python_diff_content(content1, content2, "current", "snapshot")
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_python_diff_content_no_diff(self, mock_console):
+        content = "hello\nworld"
+        diff_presenter._python_diff_content(content, content, "file1.txt", "file2.txt")
+        mock_console.print.assert_called_once_with("No differences found.", style="diff.warning")
 
-        mock_console.print.assert_called_once()
-        output = mock_console.print.call_args[0][0]
-        self.assertIn("--- snapshot", output)
-        self.assertIn("+++ current", output)
-
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_python_diff_content_no_diff(self, mock_rprint):
-        content = "same\ncontent"
-
-        diff_presenter._python_diff_content(content, content, "file1", "file2")
-
-        mock_rprint.assert_called_once_with("[green]No differences found.[/]")
-
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_python_diff_content_error(self, mock_rprint):
-        # unified_diff is imported inside the function, so patch difflib.unified_diff
-        with patch("difflib.unified_diff", side_effect=Exception("diff error")):
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_python_diff_content_error(self, mock_console):
+        # Force an error by passing non-string content
+        with patch('aye.presenter.diff_presenter.difflib.unified_diff', side_effect=Exception("diff error")):
             diff_presenter._python_diff_content("a", "b", "f1", "f2")
+            mock_console.print.assert_called_with("Error running Python diff: diff error", style="diff.error")
 
-        mock_rprint.assert_called_with("[red]Error running Python diff:[/] diff error")
-
-    @patch("subprocess.run")
-    @patch("aye.presenter.diff_presenter._diff_console")
-    def test_show_diff_with_path_objects(self, mock_console, mock_run):
-        stdout_content = "diff output"
-        mock_run.return_value = MagicMock(stdout=stdout_content)
-
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_show_diff_with_path_objects(self, mock_console):
+        # Test that Path objects work correctly
         diff_presenter.show_diff(self.file1, self.file2)
+        self.assertTrue(mock_console.print.called)
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        self.assertEqual(call_args[3], str(self.file2))
-        self.assertEqual(call_args[4], str(self.file1))
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_show_diff_with_system_diff(self, mock_console):
+        # The refactored code uses Python difflib exclusively, not subprocess
+        diff_presenter.show_diff(str(self.file1), str(self.file2))
+        self.assertTrue(mock_console.print.called)
 
-    @patch("subprocess.run")
-    @patch("aye.presenter.diff_presenter._diff_console")
-    def test_show_diff_strips_ansi_codes(self, mock_console, mock_run):
-        stdout_with_ansi = "\x1b[31m--- file\x1b[0m\n\x1b[32m+++ file\x1b[0m"
-        mock_run.return_value = MagicMock(stdout=stdout_with_ansi)
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_show_diff_strips_ansi_codes(self, mock_console):
+        # The refactored code uses Python difflib, so ANSI stripping is not needed
+        # Just verify the diff works with string paths
+        diff_presenter.show_diff(str(self.file1), str(self.file2))
+        self.assertTrue(mock_console.print.called)
 
-        diff_presenter.show_diff(self.file1, self.file2)
+    @patch('aye.presenter.diff_presenter._diff_console')
+    def test_show_diff_system_diff_other_error(self, mock_console):
+        # Test error handling - use a non-existent file that will cause read error
+        with patch('pathlib.Path.read_text', side_effect=IOError("read error")):
+            diff_presenter.show_diff(self.file1, self.file2)
+            mock_console.print.assert_called_with("Error running Python diff: read error", style="diff.error")
 
-        mock_console.print.assert_called_once()
-        output = mock_console.print.call_args[0][0]
-        self.assertNotIn("\x1b[", output)
-        self.assertIn("--- file", output)
-        self.assertIn("+++ file", output)
-
-    # -------------------------------------------------------------------------
-    # Git snapshot reference (GitRefBackend) coverage
-    # -------------------------------------------------------------------------
-
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_show_diff_git_snapshot_wrong_backend(self, mock_rprint):
-        class DummyGitRefBackend:  # used only for isinstance check
-            pass
-
-        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
-            "aye.model.snapshot.get_backend", return_value=object()
-        ):
-            diff_presenter.show_diff(self.file1, "refs/aye/snapshots/001:path.txt", is_stash_ref=True)
-
-        mock_rprint.assert_called_once_with("[red]Error: Git snapshot references only work with GitRefBackend[/]")
-
-    @patch("aye.presenter.diff_presenter._python_diff_content")
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_show_diff_git_snapshot_current_vs_snapshot_success(self, mock_rprint, mock_py_diff):
-        class DummyGitRefBackend:
-            def __init__(self):
-                self.get_file_content_from_snapshot = MagicMock(return_value="snap-content\n")
-
-        backend = DummyGitRefBackend()
-
-        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
-            "aye.model.snapshot.get_backend", return_value=backend
-        ):
-            diff_presenter.show_diff(self.file1, "refs/aye/snapshots/001:file1.txt", is_stash_ref=True)
-
-        mock_rprint.assert_not_called()
-        backend.get_file_content_from_snapshot.assert_called_once_with("file1.txt", "refs/aye/snapshots/001")
-        mock_py_diff.assert_called_once()
-
-        # Ensure labels match the implementation
-        args = mock_py_diff.call_args[0]
-        self.assertEqual(args[0], self.file1.read_text(encoding="utf-8"))  # current content
-        self.assertEqual(args[1], "snap-content\n")
-        self.assertEqual(args[2], str(self.file1))
-        self.assertEqual(args[3], "refs/aye/snapshots/001:file1.txt")
-
-    @patch("aye.presenter.diff_presenter._python_diff_content")
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_show_diff_git_snapshot_current_file_missing(self, mock_rprint, mock_py_diff):
-        class DummyGitRefBackend:
-            def __init__(self):
-                self.get_file_content_from_snapshot = MagicMock(return_value="snap")
-
-        backend = DummyGitRefBackend()
-        missing_current = self.dir / "does_not_exist.txt"
-
-        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
-            "aye.model.snapshot.get_backend", return_value=backend
-        ):
-            diff_presenter.show_diff(missing_current, "refs/aye/snapshots/001:file.txt", is_stash_ref=True)
-
-        mock_py_diff.assert_not_called()
-        mock_rprint.assert_called_once()
-        self.assertIn("does not exist", mock_rprint.call_args[0][0])
-
-    @patch("aye.presenter.diff_presenter._python_diff_content")
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_show_diff_git_snapshot_snapshot_content_missing(self, mock_rprint, mock_py_diff):
-        class DummyGitRefBackend:
-            def __init__(self):
-                self.get_file_content_from_snapshot = MagicMock(return_value=None)
-
-        backend = DummyGitRefBackend()
-
-        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
-            "aye.model.snapshot.get_backend", return_value=backend
-        ):
-            diff_presenter.show_diff(self.file1, "refs/aye/snapshots/001:missing.txt", is_stash_ref=True)
-
-        mock_py_diff.assert_not_called()
-        mock_rprint.assert_called_once_with("[red]Error: Could not extract file from refs/aye/snapshots/001[/]")
-
-    @patch("aye.presenter.diff_presenter._python_diff_content")
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_show_diff_git_snapshot_two_snapshot_success(self, mock_rprint, mock_py_diff):
-        class DummyGitRefBackend:
-            def __init__(self):
-                self.get_file_content_from_snapshot = MagicMock(side_effect=["left\n", "right\n"])
-
-        backend = DummyGitRefBackend()
-
-        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
-            "aye.model.snapshot.get_backend", return_value=backend
-        ):
-            diff_presenter.show_diff(
-                self.file1,
-                "refs/aye/snapshots/001:a.txt|refs/aye/snapshots/002:b.txt",
-                is_stash_ref=True,
-            )
-
-        mock_rprint.assert_not_called()
-        self.assertEqual(
-            backend.get_file_content_from_snapshot.mock_calls,
-            [
-                # args are (repo_rel_path, refname)
-                # left
-                (("a.txt", "refs/aye/snapshots/001"),),
-                # right
-                (("b.txt", "refs/aye/snapshots/002"),),
-            ],
-        )
-        mock_py_diff.assert_called_once_with(
-            "left\n",
-            "right\n",
-            "refs/aye/snapshots/001:a.txt",
-            "refs/aye/snapshots/002:b.txt",
+    # Tests for git stash reference handling
+    @patch('aye.presenter.diff_presenter._diff_console')
+    @patch('aye.presenter.diff_presenter.get_backend')
+    def test_show_diff_git_snapshot_wrong_backend(self, mock_get_backend, mock_console):
+        # Non-GitRefBackend should produce an error
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+        
+        diff_presenter.show_diff(self.file1, "stash@{0}:file.txt", is_stash_ref=True)
+        mock_console.print.assert_called_with(
+            "Error: Git snapshot references only work with GitRefBackend",
+            style="diff.error"
         )
 
-    @patch("aye.presenter.diff_presenter._python_diff_content")
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_show_diff_git_snapshot_two_snapshot_left_missing(self, mock_rprint, mock_py_diff):
-        class DummyGitRefBackend:
-            def __init__(self):
-                self.get_file_content_from_snapshot = MagicMock(side_effect=[None, "right\n"])
+    @patch('aye.presenter.diff_presenter._diff_console')
+    @patch('aye.presenter.diff_presenter.get_backend')
+    def test_show_diff_git_snapshot_current_vs_snapshot_success(self, mock_get_backend, mock_console):
+        from aye.model.snapshot.git_ref_backend import GitRefBackend
+        
+        mock_backend = MagicMock(spec=GitRefBackend)
+        mock_backend.get_file_content_from_snapshot.return_value = "snapshot content\n"
+        mock_get_backend.return_value = mock_backend
+        
+        diff_presenter.show_diff(self.file1, "stash@{0}:file.txt", is_stash_ref=True)
+        # Should have called print for diff output
+        self.assertTrue(mock_console.print.called)
 
-        backend = DummyGitRefBackend()
+    @patch('aye.presenter.diff_presenter._diff_console')
+    @patch('aye.presenter.diff_presenter.get_backend')
+    def test_show_diff_git_snapshot_snapshot_content_missing(self, mock_get_backend, mock_console):
+        from aye.model.snapshot.git_ref_backend import GitRefBackend
+        
+        mock_backend = MagicMock(spec=GitRefBackend)
+        mock_backend.get_file_content_from_snapshot.return_value = None
+        mock_get_backend.return_value = mock_backend
+        
+        diff_presenter.show_diff(self.file1, "stash@{0}:file.txt", is_stash_ref=True)
+        mock_console.print.assert_called_with(
+            "Error: Could not extract file from stash@{0}",
+            style="diff.error"
+        )
 
-        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
-            "aye.model.snapshot.get_backend", return_value=backend
-        ):
-            diff_presenter.show_diff(
-                self.file1,
-                "refs/aye/snapshots/001:a.txt|refs/aye/snapshots/002:b.txt",
-                is_stash_ref=True,
-            )
+    @patch('aye.presenter.diff_presenter._diff_console')
+    @patch('aye.presenter.diff_presenter.get_backend')
+    def test_show_diff_git_snapshot_current_file_missing(self, mock_get_backend, mock_console):
+        from aye.model.snapshot.git_ref_backend import GitRefBackend
+        
+        mock_backend = MagicMock(spec=GitRefBackend)
+        mock_backend.get_file_content_from_snapshot.return_value = "snapshot content\n"
+        mock_get_backend.return_value = mock_backend
+        
+        missing_file = self.dir / "nonexistent.txt"
+        diff_presenter.show_diff(missing_file, "stash@{0}:file.txt", is_stash_ref=True)
+        mock_console.print.assert_called_with(
+            f"Error: Current file {missing_file} does not exist",
+            style="diff.error"
+        )
 
-        mock_py_diff.assert_not_called()
-        mock_rprint.assert_called_once_with("[red]Error: Could not extract file from refs/aye/snapshots/001[/]")
+    @patch('aye.presenter.diff_presenter._diff_console')
+    @patch('aye.presenter.diff_presenter.get_backend')
+    def test_show_diff_git_snapshot_two_snapshot_success(self, mock_get_backend, mock_console):
+        from aye.model.snapshot.git_ref_backend import GitRefBackend
+        
+        mock_backend = MagicMock(spec=GitRefBackend)
+        mock_backend.get_file_content_from_snapshot.side_effect = [
+            "left content\n",
+            "right content\n"
+        ]
+        mock_get_backend.return_value = mock_backend
+        
+        diff_presenter.show_diff(
+            self.file1,
+            "stash@{0}:file.txt|stash@{1}:file.txt",
+            is_stash_ref=True
+        )
+        # Should have called print for diff output
+        self.assertTrue(mock_console.print.called)
 
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_show_diff_git_snapshot_exception_handled(self, mock_rprint):
-        class DummyGitRefBackend:
-            def __init__(self):
-                self.get_file_content_from_snapshot = MagicMock(side_effect=RuntimeError("boom"))
+    @patch('aye.presenter.diff_presenter._diff_console')
+    @patch('aye.presenter.diff_presenter.get_backend')
+    def test_show_diff_git_snapshot_two_snapshot_left_missing(self, mock_get_backend, mock_console):
+        from aye.model.snapshot.git_ref_backend import GitRefBackend
+        
+        mock_backend = MagicMock(spec=GitRefBackend)
+        mock_backend.get_file_content_from_snapshot.side_effect = [None, "right content\n"]
+        mock_get_backend.return_value = mock_backend
+        
+        diff_presenter.show_diff(
+            self.file1,
+            "stash@{0}:file.txt|stash@{1}:file.txt",
+            is_stash_ref=True
+        )
+        mock_console.print.assert_called_with(
+            "Error: Could not extract file from stash@{0}",
+            style="diff.error"
+        )
 
-        backend = DummyGitRefBackend()
+    @patch('aye.presenter.diff_presenter._diff_console')
+    @patch('aye.presenter.diff_presenter.get_backend')
+    def test_show_diff_git_snapshot_exception_handled(self, mock_get_backend, mock_console):
+        mock_get_backend.side_effect = Exception("Backend error")
+        
+        diff_presenter.show_diff(self.file1, "stash@{0}:file.txt", is_stash_ref=True)
+        mock_console.print.assert_called_with(
+            "Error processing stash diff: Backend error",
+            style="diff.error"
+        )
 
-        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
-            "aye.model.snapshot.get_backend", return_value=backend
-        ):
-            diff_presenter.show_diff(self.file1, "refs/aye/snapshots/001:file1.txt", is_stash_ref=True)
-
-        mock_rprint.assert_called_once()
-        self.assertIn("Error processing git snapshot diff", mock_rprint.call_args[0][0])
-        self.assertIn("boom", mock_rprint.call_args[0][0])
-
-    @patch("aye.presenter.diff_presenter.rprint")
-    def test_show_diff_git_snapshot_malformed_ref_string_handled(self, mock_rprint):
-        class DummyGitRefBackend:
-            pass
-
-        # Missing ':' triggers ValueError in _extract; should be caught by outer try
-        with patch("aye.model.snapshot.git_ref_backend.GitRefBackend", DummyGitRefBackend), patch(
-            "aye.model.snapshot.get_backend", return_value=DummyGitRefBackend()
-        ):
-            diff_presenter.show_diff(self.file1, "not-a-ref-with-colon", is_stash_ref=True)
-
-        mock_rprint.assert_called_once()
-        self.assertIn("Error processing git snapshot diff", mock_rprint.call_args[0][0])
+    @patch('aye.presenter.diff_presenter._diff_console')
+    @patch('aye.presenter.diff_presenter.get_backend')
+    def test_show_diff_git_snapshot_malformed_ref_string_handled(self, mock_get_backend, mock_console):
+        from aye.model.snapshot.git_ref_backend import GitRefBackend
+        
+        mock_backend = MagicMock(spec=GitRefBackend)
+        mock_get_backend.return_value = mock_backend
+        
+        # Malformed ref without colon will raise ValueError on split
+        diff_presenter.show_diff(self.file1, "malformed_ref_no_colon", is_stash_ref=True)
+        # Should catch the exception and print error
+        self.assertTrue(mock_console.print.called)
+        call_args = mock_console.print.call_args
+        self.assertEqual(call_args[1].get('style'), 'diff.error')

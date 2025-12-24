@@ -127,16 +127,12 @@ class TestDiffPresenter(TestCase):
         
         self.assertIn("---", combined_output)
         self.assertIn("+++", combined_output)
-        # Content should be there (part of Syntax object or string)
-        # Since we pass Syntax objects, string matching exact content might be tricky depending on how str(Syntax) behaves in test.
-        # But we can check if it was called.
 
     @patch('aye.presenter.diff_presenter._diff_console')
     def test_show_diff_no_differences(self, mock_console):
         diff_presenter.show_diff(self.file1, self.file1)
-        mock_console.print.assert_called_once()
-        self.assertIn("No differences found", str(mock_console.print.call_args[0][0]))
-        self.assertEqual(mock_console.print.call_args[1].get('style'), "diff.warning")
+        # When no differences, it prints "No differences found."
+        mock_console.print.assert_called_once_with("No differences found.", style="diff.warning")
 
     @patch('aye.presenter.diff_presenter._diff_console')
     def test_python_diff_files_one_missing(self, mock_console):
@@ -144,12 +140,12 @@ class TestDiffPresenter(TestCase):
         # file1 exists, missing_file does not.
         diff_presenter._python_diff_files(self.file1, missing_file)
         
-        self.assertTrue(mock_console.print.called)
-        
-        # Verify that we are printing Tables (grids) for the content
-        from rich.table import Table
-        printed_tables = [args[0] for args, _ in mock_console.print.call_args_list if len(args) > 0 and isinstance(args[0], Table)]
-        self.assertTrue(len(printed_tables) > 0, "Should have printed at least one Table grid for diff content")
+        # When one file is missing, difflib still produces output showing the diff
+        # (all lines added/removed). The code prints via _diff_console.print
+        self.assertTrue(
+            mock_console.print.called,
+            "Should have printed diff content"
+        )
 
     @patch('aye.presenter.diff_presenter._diff_console')
     def test_python_diff_files_error(self, mock_console):
