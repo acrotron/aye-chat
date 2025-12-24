@@ -49,8 +49,8 @@ class TestTutorial(TestCase):
         self.assertFalse(result)
 
     @patch('aye.controller.tutorial.Confirm.ask', return_value=False)
-    @patch('aye.controller.tutorial.rprint')
-    def test_run_tutorial_user_declines_subsequent_run(self, mock_rprint, mock_confirm):
+    @patch('aye.controller.tutorial.console')
+    def test_run_tutorial_user_declines_subsequent_run(self, mock_console, mock_confirm):
         """Test that subsequent runs prompt user and skip if declined."""
         tutorial.run_tutorial(is_first_run=False)
         
@@ -61,7 +61,7 @@ class TestTutorial(TestCase):
         
         # Should create flag file even when skipped
         self.assertTrue(self.tutorial_flag_file.exists())
-        mock_rprint.assert_any_call("\nSkipping tutorial.")
+        mock_console.print.assert_any_call("\nSkipping tutorial.")
 
     @patch('aye.controller.tutorial.Confirm.ask')
     @patch('aye.controller.tutorial.input', return_value="")
@@ -70,7 +70,9 @@ class TestTutorial(TestCase):
     @patch('aye.controller.tutorial.list_snapshots')
     @patch('aye.controller.tutorial.show_diff')
     @patch('aye.controller.tutorial.restore_snapshot')
-    def test_run_tutorial_first_run_no_prompt(self, mock_restore, mock_diff, mock_list_snaps, mock_apply, mock_sleep, mock_input, mock_confirm):
+    @patch('aye.controller.tutorial.print_assistant_response')
+    @patch('aye.controller.tutorial.console')
+    def test_run_tutorial_first_run_no_prompt(self, mock_console, mock_print_resp, mock_restore, mock_diff, mock_list_snaps, mock_apply, mock_sleep, mock_input, mock_confirm):
         """Test that first run does NOT prompt user and executes all steps."""
         snap_content = 'def hello_world():\n    print("Hello, World!")\n'
         snap_file = self.test_root / "snap_for_diff.py"
@@ -101,7 +103,9 @@ class TestTutorial(TestCase):
     @patch('aye.controller.tutorial.list_snapshots')
     @patch('aye.controller.tutorial.show_diff')
     @patch('aye.controller.tutorial.restore_snapshot')
-    def test_run_tutorial_subsequent_run_with_confirmation(self, mock_restore, mock_diff, mock_list_snaps, mock_apply, mock_sleep, mock_input, mock_confirm):
+    @patch('aye.controller.tutorial.print_assistant_response')
+    @patch('aye.controller.tutorial.console')
+    def test_run_tutorial_subsequent_run_with_confirmation(self, mock_console, mock_print_resp, mock_restore, mock_diff, mock_list_snaps, mock_apply, mock_sleep, mock_input, mock_confirm):
         """Test that subsequent runs prompt user and execute if confirmed."""
         snap_content = 'def hello_world():\n    print("Hello, World!")\n'
         snap_file = self.test_root / "snap_for_diff.py"
@@ -128,8 +132,8 @@ class TestTutorial(TestCase):
     @patch('aye.controller.tutorial.input', return_value="")
     @patch('aye.controller.tutorial.time.sleep')
     @patch('aye.controller.tutorial.apply_updates', side_effect=RuntimeError("Model failed"))
-    @patch('aye.controller.tutorial.rprint')
-    def test_run_tutorial_step1_error(self, mock_rprint, mock_apply, mock_sleep, mock_input, mock_confirm):
+    @patch('aye.controller.tutorial.console')
+    def test_run_tutorial_step1_error(self, mock_console, mock_apply, mock_sleep, mock_input, mock_confirm):
         """Test that tutorial handles errors gracefully on first run."""
         tutorial_file = Path("tutorial_example.py")
 
@@ -139,6 +143,6 @@ class TestTutorial(TestCase):
         mock_confirm.assert_not_called()
         
         # Should show error and clean up
-        mock_rprint.assert_any_call("[red]An error occurred during the tutorial: Model failed[/red]")
+        mock_console.print.assert_any_call("[ui.error]An error occurred during the tutorial: Model failed[/]")
         self.assertTrue(self.tutorial_flag_file.exists())
         self.assertFalse(tutorial_file.exists())
