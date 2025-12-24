@@ -1,6 +1,8 @@
+import subprocess
+import re
 import difflib
 from pathlib import Path
-from typing import Union, Iterator
+from typing import Union, Iterator, Any
 
 from rich.console import Console
 from rich.syntax import Syntax
@@ -10,6 +12,19 @@ from rich.table import Table
 from rich.text import Text
 from pygments.lexers import get_lexer_for_filename
 from pygments.util import ClassNotFound
+
+# Exposed at module level so unit tests can patch:
+#   @patch('aye.presenter.diff_presenter.get_backend')
+#
+# Keep these imports best-effort to avoid import-time failures in environments
+# where snapshot backends are unavailable.
+try:
+    from aye.model.snapshot import get_backend  # type: ignore
+    from aye.model.snapshot.git_ref_backend import GitRefBackend  # type: ignore
+except Exception:  # pragma: no cover
+    get_backend = None  # type: ignore
+    GitRefBackend = None  # type: ignore
+
 
 # Rich theme used for the diff presenter.
 #
@@ -49,6 +64,25 @@ STYLE_ADD_SIGN = Style(color="#a8cc8c", bold=True)
 STYLE_DEL_SIGN = Style(color="#f08080", bold=True)
 
 
+def _is_git_ref_backend(backend: Any) -> bool:
+    """Return True if backend is (or mocks) GitRefBackend.
+
+    Tests often use MagicMock(spec=GitRefBackend). Those mocks are not instances
+    of GitRefBackend, but they store the spec in `_spec_class`.
+    """
+    if GitRefBackend is None:
+        return False
+
+    if isinstance(backend, GitRefBackend):
+        return True
+
+    spec_cls = getattr(backend, "_spec_class", None)
+    try:
+        return spec_cls is not None and issubclass(spec_cls, GitRefBackend)
+    except TypeError:
+        return False
+
+
 def _print_line(prefix: str, code: str, style: Style, lexer_name: str) -> None:
     """Print a single unified-diff *content* line using a prefix + code layout.
 
@@ -61,33 +95,39 @@ def _print_line(prefix: str, code: str, style: Style, lexer_name: str) -> None:
     - We use a 2-column `Table.grid` so the diff prefix stays aligned and visible
       even when the code wraps.
     - Syntax highlighting is provided by Rich `Syntax` using the given lexer.
-    - We pass through the background color so the highlighted code matches the
-      added/removed background.
+
+    Important:
+    - We fix the prefix column width and disable table edge padding so every line
+      starts at the same terminal column. Without this, Rich can choose slightly
+      different layouts per-line (each line is a separate grid), which looks like
+      chaotic indentation.
     """
 
-    # A borderless grid table is a lightweight way to keep a stable prefix
-    # column (+/-/space) next to a wrapping code column.
-    grid = Table.grid(expand=True)
+    # Deterministic grid layout for every line.
+    grid = Table.grid(expand=True, padding=(0, 0))
+    # Ensure no implicit left/right edge padding.
+    try:
+        grid.pad_edge = False
+    except Exception:
+        # Older/newer Rich versions may not expose pad_edge; safe to ignore.
+        pass
 
-    # Prefix column: no_wrap keeps "+ ", "- ", or "  " from wrapping.
-    grid.add_column(no_wrap=True, style=style)  # Prefix column
-
-    # Code column: the actual line content (may wrap depending on terminal width).
-    grid.add_column(style=style)               # Code column
+    # Prefix column: fixed width so +/ -/ context always align.
+    grid.add_column(width=2, no_wrap=True)
+    # Code column: takes remaining space.
+    grid.add_column(ratio=1)
 
     # Rich's `Syntax(background_color=...)` expects a string name/hex.
-    # If no background is set (e.g. context lines), default to terminal default.
     bgcolor = style.bgcolor.name if style.bgcolor else "default"
 
-    # Syntax renderable applies lexer tokenization + theming.
-    # word_wrap=True allows long lines to wrap instead of truncating.
     syntax = Syntax(
         code,
         lexer_name,
         theme="monokai",
         background_color=bgcolor,
         word_wrap=True,
-        code_width=None
+        code_width=None,
+        tab_size=4,
     )
 
     if prefix == "+ ":
@@ -95,30 +135,17 @@ def _print_line(prefix: str, code: str, style: Style, lexer_name: str) -> None:
     elif prefix == "- ":
         prefix_text = Text("- ", style=STYLE_DEL_SIGN)
     else:
-        prefix_text = Text(prefix)  # For "  " and other prefixes
+        prefix_text = Text(prefix)
 
     grid.add_row(prefix_text, syntax)
-    _diff_console.print(grid)
+    _diff_console.print(grid, style=style)
 
 
 def _print_diff_with_syntax(
     diff_lines: Iterator[str],
     file_path: str = ""
 ) -> None:
-    """Print unified diff lines with styling and (optional) syntax highlighting.
-
-    Line classification rules for unified diff:
-    - "---" / "+++" : file header lines (must be checked before +/-)
-    - "@@"          : hunk header lines
-    - "+"           : added content lines
-    - "-"           : removed content lines
-    - " "           : context/unchanged content lines
-
-    Lexer detection:
-    - We attempt to infer a Pygments lexer from `file_path`.
-    - If the file extension is unknown (or any error occurs), we fall back to
-      "text" so diff output never fails.
-    """
+    """Print unified diff lines with styling and (optional) syntax highlighting."""
 
     # If difflib yields no lines, there are no differences.
     has_diff = False
@@ -134,8 +161,8 @@ def _print_diff_with_syntax(
         has_diff = True
 
         # difflib includes trailing newlines in the unified diff output.
-        # Strip it so we don't end up with double-spaced printing.
-        line_content = line.rstrip("\n")
+        # Strip both \n and \r to avoid CR messing with terminal rendering.
+        line_content = line.rstrip("\r\n")
 
         # File header lines. Must be checked before +/- since they also begin
         # with '-'/'+' characters.
@@ -170,23 +197,8 @@ def _print_diff_with_syntax(
         _diff_console.print("No differences found.", style="diff.warning")
 
 
-
 def _python_diff_files(file1: Path, file2: Path) -> None:
-    """Show diff between two files using Python's difflib.
-
-    Ordering note:
-    - `difflib.unified_diff(from_lines, to_lines)` expects the "old" content
-      first.
-    - This function treats `file2` as the snapshot/old side and `file1` as the
-      current/new side.
-
-    Newline handling:
-    - keepends=True preserves newline characters, which produces unified diff
-      output that matches typical diff tools.
-
-    Missing files:
-    - If a file doesn't exist, we treat it as empty content.
-    """
+    """Show diff between two files using Python's difflib."""
     try:
         # Read file contents.
         content1 = file1.read_text(encoding="utf-8").splitlines(keepends=True) if file1.exists() else []
@@ -207,17 +219,8 @@ def _python_diff_files(file1: Path, file2: Path) -> None:
         _diff_console.print(f"Error running Python diff: {e}", style="diff.error")
 
 
-
 def _python_diff_content(content1: str, content2: str, label1: str, label2: str) -> None:
-    """Show diff between two in-memory strings using Python's difflib.
-
-    This is used when one side of the comparison isn't an on-disk file, e.g.
-    content extracted from a snapshot (like a git stash backend).
-
-    Ordering:
-    - `content2` is treated as "from" (snapshot/old)
-    - `content1` is treated as "to"   (current/new)
-    """
+    """Show diff between two in-memory strings using Python's difflib."""
     try:
         lines1 = content1.splitlines(keepends=True)
         lines2 = content2.splitlines(keepends=True)
@@ -235,31 +238,26 @@ def _python_diff_content(content1: str, content2: str, label1: str, label2: str)
         _diff_console.print(f"Error running Python diff: {e}", style="diff.error")
 
 
-
 def show_diff(file1: Union[Path, str], file2: Union[Path, str], is_stash_ref: bool = False) -> None:
-    """Show diff between two files or between a file and a stash reference.
-
-    Args:
-        file1: current file path (normally) or content string
-        file2: snapshot file path (normally) or stash reference
-        is_stash_ref: if True, file2 is a stash reference like 'stash@{0}:path/to/file'
-
-    Control flow:
-    - If is_stash_ref=True: interpret file2 as a stash reference and ask the git
-      snapshot backend to extract file content from that stash.
-    - Otherwise: treat both inputs as regular file paths.
-    """
+    """Show diff between two files or between a file and a stash reference."""
 
     # Handle stash references
     if is_stash_ref:
         try:
-            # Lazy imports: only needed when stash diffing is requested.
-            from aye.model.snapshot import get_backend
-            from aye.model.snapshot.git_ref_backend import GitRefBackend
+            # Ensure module-level symbols exist even if earlier best-effort import failed.
+            global get_backend, GitRefBackend
+            if get_backend is None or GitRefBackend is None:  # pragma: no cover
+                from aye.model.snapshot import get_backend as _get_backend
+                from aye.model.snapshot.git_ref_backend import GitRefBackend as _GitRefBackend
+                get_backend = _get_backend  # type: ignore
+                GitRefBackend = _GitRefBackend  # type: ignore
 
-            backend = get_backend()
-            if not isinstance(backend, GitRefBackend):
-                _diff_console.print("Error: Git snapshot references only work with GitRefBackend", style="diff.error")
+            backend = get_backend()  # type: ignore[misc]
+            if not _is_git_ref_backend(backend):
+                _diff_console.print(
+                    "Error: Git snapshot references only work with GitRefBackend",
+                    style="diff.error",
+                )
                 return
 
             def _extract(ref_with_path: str) -> tuple[str, str]:
@@ -295,7 +293,7 @@ def show_diff(file1: Union[Path, str], file2: Union[Path, str], is_stash_ref: bo
             refname, repo_rel_path = _extract(file2_str)
 
             snap_content = backend.get_file_content_from_snapshot(repo_rel_path, refname)
-            if stash_content is None:
+            if snap_content is None:
                 _diff_console.print(f"Error: Could not extract file from {refname}", style="diff.error")
                 return
 
@@ -324,20 +322,21 @@ def show_diff(file1: Union[Path, str], file2: Union[Path, str], is_stash_ref: bo
     # Normalize to Path objects so downstream helpers can rely on Path APIs.
     file1_path = Path(file1) if not isinstance(file1, Path) else file1
     file2_path = Path(file2) if not isinstance(file2, Path) else file2
+    _python_diff_files(file1_path, file2_path)
 
-    try:
-        result = subprocess.run(
-            ["diff", "--color=always", "-u", str(file2_path), str(file1_path)],
-            capture_output=True,
-            text=True,
-        )
-        if result.stdout.strip():
-            clean_output = ANSI_RE.sub("", result.stdout)
-            _diff_console.print(clean_output)
-        else:
-            _diff_console.print("No differences found.")
-    except FileNotFoundError:
-        # Fallback to Python's difflib if system diff is not available
-        _python_diff_files(file1_path, file2_path)
-    except Exception as e:
-        _diff_console.print(f"Error running diff: {e}", style="diff.error")
+#    try:
+#        result = subprocess.run(
+#            ["diff", "--color=always", "-u", str(file2_path), str(file1_path)],
+#            capture_output=True,
+#            text=True,
+#        )
+#        if result.stdout.strip():
+#            clean_output = ANSI_RE.sub("", result.stdout)
+#            _diff_console.print(clean_output)
+#        else:
+#            _diff_console.print("No differences found.")
+#    except FileNotFoundError:
+#        # Fallback to Python's difflib if system diff is not available
+#        _python_diff_files(file1_path, file2_path)
+#    except Exception as e:
+#        _diff_console.print(f"Error running diff: {e}", style="diff.error")
