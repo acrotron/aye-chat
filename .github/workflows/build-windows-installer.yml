@@ -43,7 +43,7 @@ jobs:
 
       - name: Setup Software Trust Manager (new)
         id: stm-setup
-        uses: digicert/code-signing-software-trust-action@v1.1.1
+        uses: digicert/code-signing-software-trust-action@v1.0.0
 
       - name: Check PKCS11 config file
         run: |
