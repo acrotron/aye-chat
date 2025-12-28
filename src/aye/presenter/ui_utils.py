@@ -4,6 +4,122 @@ from contextlib import contextmanager
 from typing import List, Optional
 from rich.console import Console
 from rich.spinner import Spinner
+from rich.live import Live
+
+
+# Default progressive messages for LLM operations
+DEFAULT_THINKING_MESSAGES = [
+    "Building prompt...",
+    "Sending to LLM...",
+    "Waiting for response...",
+    "Still waiting...",
+    "This is taking longer than usual..."
+]
+
+
+class StoppableSpinner:
+    """
+    A spinner that can be started and stopped programmatically.
+    
+    Unlike the context manager `thinking_spinner`, this class allows
+    external control over when the spinner stops - useful for stopping
+    the spinner when streaming content starts arriving.
+    
+    Usage:
+        spinner = StoppableSpinner(console)
+        spinner.start()
+        # ... do work ...
+        spinner.stop()  # Call when done or when streaming starts
+    """
+    
+    def __init__(
+        self,
+        console: Console,
+        messages: Optional[List[str]] = None,
+        interval: float = 10.0
+    ):
+        """
+        Initialize the stoppable spinner.
+        
+        Args:
+            console: Rich console instance
+            messages: List of messages to cycle through. Defaults to
+                     DEFAULT_THINKING_MESSAGES.
+            interval: Seconds between message changes (default: 3.0)
+        """
+        self._console = console
+        self._messages = messages or DEFAULT_THINKING_MESSAGES
+        self._interval = interval
+        self._live: Optional[Live] = None
+        self._spinner: Optional[Spinner] = None
+        self._timer_thread: Optional[threading.Thread] = None
+        self._state = {"index": 0, "stop": False}
+        self._started = False
+        self._stopped = False
+    
+    def _update_message(self):
+        """Background function to cycle through messages."""
+        while not self._state["stop"]:
+            # Wait for the interval or until stopped (check every 0.1s)
+            for _ in range(int(self._interval * 10)):
+                if self._state["stop"]:
+                    return
+                threading.Event().wait(0.1)
+            
+            if self._state["stop"]:
+                return
+            
+            # Move to next message if available
+            if self._state["index"] + 1 < len(self._messages):
+                self._state["index"] += 1
+                if self._spinner:
+                    self._spinner.text = self._messages[self._state["index"]]
+    
+    def start(self):
+        """Start the spinner. Safe to call multiple times (no-op if already started)."""
+        if self._started:
+            return
+        
+        self._started = True
+        self._state = {"index": 0, "stop": False}
+        
+        # Create spinner with initial message
+        self._spinner = Spinner("dots", text=self._messages[0])
+        self._live = Live(
+            self._spinner,
+            console=self._console,
+            refresh_per_second=10,
+            transient=True
+        )
+        self._live.start()
+        
+        # Start message rotation thread if we have multiple messages
+        if len(self._messages) > 1:
+            self._timer_thread = threading.Thread(target=self._update_message, daemon=True)
+            self._timer_thread.start()
+    
+    def stop(self):
+        """Stop the spinner. Safe to call multiple times."""
+        if self._stopped:
+            return
+        self._stopped = True
+        
+        # Signal the timer thread to stop
+        self._state["stop"] = True
+        
+        # Stop the live display
+        if self._live:
+            self._live.stop()
+            self._live = None
+        
+        # Wait for timer thread to finish
+        if self._timer_thread:
+            self._timer_thread.join(timeout=0.5)
+            self._timer_thread = None
+    
+    def is_stopped(self) -> bool:
+        """Check if the spinner has been stopped."""
+        return self._stopped
 
 
 @contextmanager
@@ -20,7 +136,7 @@ def thinking_spinner(
         console: Rich console instance
         text: Initial text to display with the spinner (used if messages is None)
         messages: Optional list of messages to cycle through at intervals
-        interval: Seconds between message changes (default: 20)
+        interval: Seconds between message changes (default: 15)
         
     Usage:
         # Simple usage (backward compatible):
@@ -40,45 +156,10 @@ def thinking_spinner(
     if messages is None:
         messages = [text]  # Just use the single text message
     
-    # Shared state for the message index
-    state = {"index": 0, "stop": False}
-    
-    def update_message():
-        """Background function to cycle through messages."""
-        while not state["stop"]:
-            # Wait for the interval or until stopped
-            for _ in range(int(interval * 10)):  # Check every 0.1s for quick exit
-                if state["stop"]:
-                    return
-                threading.Event().wait(0.1)
-            
-            if state["stop"]:
-                return
-            
-            # Move to next message
-            if state["index"] + 1 < len(messages):
-                state["index"] = (state["index"] + 1) % len(messages)
-                current_message = messages[state["index"]]
-                spinner.text = f"{current_message}"
-            else:
-                state["stop"] = True
-    
-    # Create spinner with initial message
-    initial_message = messages[0]
-    spinner = Spinner("dots", text=f"{initial_message}")
-    
-    # Start message rotation thread only if we have multiple messages
-    timer_thread = None
-    if len(messages) > 1:
-        timer_thread = threading.Thread(target=update_message, daemon=True)
-        timer_thread.start()
+    spinner = StoppableSpinner(console, messages=messages, interval=interval)
+    spinner.start()
     
     try:
-        with console.status(spinner):
-            yield
+        yield spinner
     finally:
-        # Stop the timer thread
-        state["stop"] = True
-        if timer_thread:
-            timer_thread.join(timeout=0.5)  # Give it a moment to exit cleanly
-
+        spinner.stop()
