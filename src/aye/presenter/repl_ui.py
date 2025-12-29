@@ -8,6 +8,7 @@ This module provides UI components for the interactive REPL, including:
 """
 
 from rich import box
+from rich.padding import Padding
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -50,8 +51,8 @@ def print_help_message() -> None:
  [ui.help.command]Session & Model Control:[/]
    [ui.help.text]new[/]              Start a fresh chat session
    [ui.help.text]model[/]            Select a different AI model
-   [ui.help.text]verbose \[on|off][/] Toggle verbose output
-   [ui.help.text]debug \[on|off][/]   Toggle debug mode
+   [ui.help.text]verbose [on|off][/] Toggle verbose output
+   [ui.help.text]debug [on|off][/]   Toggle debug mode
    [ui.help.text]exit, quit, :q[/]   Exit the chat
    [ui.help.text]help[/]             Show this message
 
@@ -121,10 +122,18 @@ def print_no_files_changed(console_instance: Console) -> None:
     console_instance.print("[dim]No files were changed.[/]")
 
 
-def print_files_updated(console_instance: Console, file_names: list) -> None:
-    """Print a message showing which files were updated."""
-    files_str = ",".join(file_names)
-    console_instance.print(f"[ui.success]Files updated:[/ui.success] {files_str}")
+def print_files_updated(console_arg: Console, file_names: list):
+    """Display message about updated files.
+    Args:
+        console_arg: Console to print to (theme-aware when available).
+        file_names: List of file paths/names that were written/updated.
+    Output is padded to visually separate status messages from chat output.
+    """
+    text = f"[ui.success]Files updated:[/] [ui.help.text]{','.join(file_names)}[/]"
+    if not getattr(console_arg, "theme", None):
+        console.print(Padding(text, (0, 4, 0, 4)))
+    else:
+        console_arg.print(Padding(text, (0, 4, 0, 4)))
 
 
 def print_error(error: Exception) -> None:
