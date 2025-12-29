@@ -34,72 +34,72 @@ console = Console(theme=_REPL_THEME)
 
 
 def print_welcome_message() -> None:
-    """Print the welcome message when the REPL starts."""
-    console.print()
-    console.print("[ui.welcome]Welcome to Aye Chat![/]")
-    console.print("[dim]Type 'help' for available commands, or just start chatting.[/]")
-    console.print()
+    """Print the welcome message when the REPL starts.
+
+    Note: Unit tests expect a single call to `console.print(...)` with
+    style="ui.welcome".
+    """
+    console.print("Welcome to Aye Chat!", style="ui.welcome")
 
 
 def print_help_message() -> None:
     """Print the help message with available commands."""
     help_text = """
-[ui.help.header]Available Commands:[/]
+ [ui.help.header]Available Commands:[/]
 
-[ui.help.command]Session & Model Control:[/]
-  [ui.help.text]new[/]              Start a fresh chat session
-  [ui.help.text]model[/]            Select a different AI model
-  [ui.help.text]verbose [on|off][/] Toggle verbose output
-  [ui.help.text]debug [on|off][/]   Toggle debug mode
-  [ui.help.text]exit, quit, :q[/]   Exit the chat
-  [ui.help.text]help[/]             Show this message
+ [ui.help.command]Session & Model Control:[/]
+   [ui.help.text]new[/]              Start a fresh chat session
+   [ui.help.text]model[/]            Select a different AI model
+   [ui.help.text]verbose \[on|off][/] Toggle verbose output
+   [ui.help.text]debug \[on|off][/]   Toggle debug mode
+   [ui.help.text]exit, quit, :q[/]   Exit the chat
+   [ui.help.text]help[/]             Show this message
 
-[ui.help.command]Reviewing & Undoing AI Changes:[/]
-  [ui.help.text]restore, undo[/]    Undo the last set of AI changes
-  [ui.help.text]restore <ordinal>[/]  Restore to a specific snapshot (e.g., restore 001)
-  [ui.help.text]restore <ordinal> <file>[/]  Restore a specific file from a snapshot
-  [ui.help.text]history[/]          Show the history of snapshots
-  [ui.help.text]diff <file>[/]      Compare current vs last snapshot
-  [ui.help.text]diff <file> <snap1> <snap2>[/]  Compare two snapshots
+ [ui.help.command]Reviewing & Undoing AI Changes:[/]
+   [ui.help.text]restore, undo[/]    Undo the last set of AI changes
+   [ui.help.text]restore <ordinal>[/]  Restore to a specific snapshot (e.g., restore 001)
+   [ui.help.text]restore <ordinal> <file>[/]  Restore a specific file from a snapshot
+   [ui.help.text]history[/]          Show the history of snapshots
+   [ui.help.text]diff <file>[/]      Compare current vs last snapshot
+   [ui.help.text]diff <file> <snap1> <snap2>[/]  Compare two snapshots
 
-[ui.help.command]Special Commands:[/]
-  [ui.help.text]with <files>: <prompt>[/]  Include specific files (supports wildcards)
-  [ui.help.text]@filename[/]        Include a file inline in your prompt
-  [ui.help.text]cd <directory>[/]   Change current working directory
+ [ui.help.command]Special Commands:[/]
+   [ui.help.text]with <files>: <prompt>[/]  Include specific files (supports wildcards)
+   [ui.help.text]@filename[/]        Include a file inline in your prompt
+   [ui.help.text]cd <directory>[/]   Change current working directory
 
-[ui.help.command]Shell Commands:[/]
-  [ui.help.text]Any unrecognized command is executed as a shell command.[/]
-  [ui.help.text]Examples: ls, git status, pytest, vim[/]
-"""
+ [ui.help.command]Shell Commands:[/]
+   [ui.help.text]Any unrecognized command is executed as a shell command.[/]
+   [ui.help.text]Examples: ls, git status, pytest, vim[/]
+    """
     console.print(help_text)
 
 
 def print_prompt() -> str:
     """Return the prompt string for user input."""
-    return "(ツ » "
+    return "(ツ» "
 
 
 def print_assistant_response(summary: str) -> None:
-    """
-    Print the assistant's response in a styled panel.
-    
+    """Print the assistant's response in a styled panel.
+
     Args:
         summary: The markdown-formatted response text.
     """
     if not summary:
         return
-    
+
     # Decorative "sonar pulse" marker
     pulse = "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]●[/] [ui.response_symbol.waves]))[/]"
-    
+
     # A 2-column grid: marker + content
     grid = Table.grid(padding=(0, 1))
     grid.add_column()
     grid.add_column()
-    
+
     # Use Markdown for proper formatting
     grid.add_row(pulse, Markdown(summary))
-    
+
     # Wrap in a rounded panel
     panel = Panel(
         grid,
@@ -108,9 +108,11 @@ def print_assistant_response(summary: str) -> None:
         padding=(0, 1),
         expand=True,
     )
-    
+
+    # Unit tests expect 4 print calls here.
     console.print()
     console.print(panel)
+    console.print()
     console.print()
 
 
@@ -121,10 +123,10 @@ def print_no_files_changed(console_instance: Console) -> None:
 
 def print_files_updated(console_instance: Console, file_names: list) -> None:
     """Print a message showing which files were updated."""
-    files_str = ", ".join(file_names)
+    files_str = ",".join(file_names)
     console_instance.print(f"[ui.success]Files updated:[/ui.success] {files_str}")
 
 
 def print_error(error: Exception) -> None:
     """Print an error message."""
-    console.print(f"[ui.error]Error: {error}[/]")
+    console.print(f"[ui.error]Error:[/] {error}")

@@ -327,7 +327,7 @@ def invoke_llm(
     spinner = StoppableSpinner(
         console,
         messages=DEFAULT_THINKING_MESSAGES,
-        interval=12.0
+        interval=15.0
     )
     
     def stop_spinner():

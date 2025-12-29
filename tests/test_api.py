@@ -111,14 +111,25 @@ class TestModelApi(TestCase):
     @patch('aye.model.api._check_response')
     @patch('aye.model.api._auth_headers')
     def test_cli_invoke_polling_json_decode_error(self, mock_headers, mock_check, mock_client, mock_get, mock_time):
+        """If the presigned URL returns 200 but the body isn't valid JSON,
+        cli_invoke() retries until poll_timeout and then raises TimeoutError.
+
+        The streaming refactor changed behavior from raising JSONDecodeError
+        immediately to retrying.
+        """
         mock_headers.return_value = {"Auth": "fake"}
         mock_check.return_value = {"response_url": "https://fake.url"}
-        mock_time.time.side_effect = [0, 2]
-        mock_get.return_value = MagicMock(status_code=200)
+
+        mock_time.sleep.return_value = None
+        # deadline = time.time() + poll_timeout uses first value
+        # the while loop condition consumes subsequent values
+        mock_time.time.side_effect = [0, 0.1, 0.2, 0.3, 1.1]
+
+        mock_get.return_value = MagicMock(status_code=200, text="not-json")
         mock_get.return_value.json.side_effect = json.JSONDecodeError("err", "doc", 0)
 
-        with self.assertRaises(json.JSONDecodeError):
-            api.cli_invoke(message="test")
+        with self.assertRaises(TimeoutError):
+            api.cli_invoke(message="test", poll_timeout=1.0)
 
     @patch('aye.model.api.time')
     @patch('httpx.get')

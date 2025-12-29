@@ -88,7 +88,7 @@ class StreamingResponseDisplay:
     def __init__(
         self, 
         console: Optional[Console] = None, 
-        word_delay: Optional[float] = 0.12,
+        word_delay: Optional[float] = 0.20,
         on_first_content: Optional[Callable[[], None]] = None
     ):
         """
@@ -97,7 +97,7 @@ class StreamingResponseDisplay:
         Args:
             console: Optional Rich Console. If not provided, creates one with
                      the streaming theme.
-            word_delay: Delay in seconds between words. Defaults to 0.12 (120ms).
+            word_delay: Delay in seconds between words. Defaults to 0.20 (200ms).
                        Can be overridden via AYE_STREAM_WORD_DELAY env var.
             on_first_content: Optional callback invoked when the first content
                              is received (before starting the display). Useful
@@ -116,9 +116,9 @@ class StreamingResponseDisplay:
             self._word_delay = word_delay
         else:
             try:
-                self._word_delay = float(os.environ.get("AYE_STREAM_WORD_DELAY", "0.12") or "0.12")
+                self._word_delay = float(os.environ.get("AYE_STREAM_WORD_DELAY", "0.20") or "0.20")
             except ValueError:
-                self._word_delay = 0.12
+                self._word_delay = 0.20
     
     def start(self) -> None:
         """
