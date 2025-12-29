@@ -12,7 +12,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from aye.plugins.offline_llm import OfflineLLMPlugin
+from aye.plugins.offline_llm import OfflineLLMPlugin, TRUNCATED_RESPONSE_MESSAGE
 
 
 def test_build_user_message_with_sources():
@@ -74,6 +74,27 @@ def test_parse_llm_response_invalid_json_returns_fallback():
     assert parsed["updated_files"] == []
 
 
+def test_parse_llm_response_invalid_json_empty_string_returns_no_response():
+    plugin = OfflineLLMPlugin()
+
+    parsed = plugin._parse_llm_response("")
+
+    assert parsed["summary"] == "No response"
+    assert parsed["updated_files"] == []
+
+
+def test_parse_llm_response_invalid_json_truncated_returns_truncated_message(monkeypatch):
+    plugin = OfflineLLMPlugin()
+
+    # Force truncated detection on malformed JSON
+    monkeypatch.setattr("aye.plugins.offline_llm.is_truncated_json", lambda _: True)
+
+    parsed = plugin._parse_llm_response("{\"answer_summary\": \"hello\"")
+
+    assert parsed["summary"] == TRUNCATED_RESPONSE_MESSAGE
+    assert parsed["updated_files"] == []
+
+
 def test_parse_llm_response_without_properties():
     plugin = OfflineLLMPlugin()
     payload = json.dumps({"answer_summary": "Simple", "source_files": []})
@@ -82,6 +103,16 @@ def test_parse_llm_response_without_properties():
 
     assert parsed["summary"] == "Simple"
     assert parsed["updated_files"] == []
+
+
+def test_parse_llm_response_json_missing_expected_keys_returns_empty_summary():
+    plugin = OfflineLLMPlugin()
+    payload = json.dumps({"properties": {"source_files": [{"file_name": "a", "file_content": "b"}]}})
+
+    parsed = plugin._parse_llm_response(payload)
+
+    assert parsed["summary"] == ""
+    assert parsed["updated_files"] == [{"file_name": "a", "file_content": "b"}]
 
 
 def test_create_error_response_verbose_logs(monkeypatch):
@@ -99,6 +130,29 @@ def test_create_error_response_verbose_logs(monkeypatch):
 
     assert result == {"summary": error_msg, "updated_files": []}
     assert calls == [f"[red]{error_msg}[/]"]
+
+
+def test_save_history_no_history_file_is_noop(monkeypatch):
+    plugin = OfflineLLMPlugin()
+    plugin.history_file = None
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("write_text should not be called when history_file is None")
+
+    monkeypatch.setattr(Path, "write_text", fail_if_called, raising=False)
+
+    plugin.chat_history = {"default": [{"role": "user", "content": "hi"}]}
+    plugin._save_history()
+
+
+def test_load_history_no_history_file_resets_history():
+    plugin = OfflineLLMPlugin()
+    plugin.history_file = None
+    plugin.chat_history = {"default": [{"role": "user", "content": "hi"}]}
+
+    plugin._load_history()
+
+    assert plugin.chat_history == {}
 
 
 def test_save_and_load_history_round_trip(tmp_path):
@@ -160,6 +214,19 @@ def test_load_model_returns_true_when_already_loaded():
     assert plugin._load_model("test-model") is True
 
 
+def test_load_model_dependency_missing_short_circuits(monkeypatch):
+    plugin = OfflineLLMPlugin()
+    monkeypatch.setattr(plugin, "_check_dependencies", lambda: False)
+
+    # If dependencies are missing, model path shouldn't be queried.
+    monkeypatch.setattr(
+        "aye.plugins.offline_llm.get_model_path",
+        lambda _: (_ for _ in ()).throw(AssertionError("get_model_path should not be called")),
+    )
+
+    assert plugin._load_model("any") is False
+
+
 def test_load_model_success_path(monkeypatch, tmp_path):
     plugin = OfflineLLMPlugin()
     plugin.verbose = False
@@ -180,6 +247,32 @@ def test_load_model_success_path(monkeypatch, tmp_path):
     assert isinstance(plugin._llm_instance, DummyLlama)
     assert plugin._current_model_id == "foo"
     assert plugin._llm_instance.kwargs["model_path"] == str(model_file)
+
+
+def test_load_model_switches_models_unloads_previous(monkeypatch, tmp_path):
+    plugin = OfflineLLMPlugin()
+    plugin.verbose = False
+
+    old_instance = object()
+    plugin._llm_instance = old_instance
+    plugin._current_model_id = "old"
+
+    model_file = tmp_path / "model.bin"
+    model_file.write_text("data")
+
+    class DummyLlama:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=DummyLlama))
+    monkeypatch.setattr(plugin, "_check_dependencies", lambda: True)
+    monkeypatch.setattr("aye.plugins.offline_llm.get_model_path", lambda _: model_file)
+    monkeypatch.setattr("aye.plugins.offline_llm.get_model_config", lambda _: {"context_length": 1024})
+
+    assert plugin._load_model("new") is True
+    assert plugin._current_model_id == "new"
+    assert isinstance(plugin._llm_instance, DummyLlama)
+    assert plugin._llm_instance is not old_instance
 
 
 def test_load_model_missing_model_path_returns_false(monkeypatch):
@@ -276,6 +369,74 @@ def test_generate_response_returns_error_when_instance_missing():
     assert "Model instance" in result["summary"]
 
 
+def test_generate_response_uses_default_system_prompt_when_none(monkeypatch):
+    plugin = OfflineLLMPlugin()
+    plugin.chat_history = {}
+    plugin._load_model = lambda _: True
+
+    monkeypatch.setattr("aye.plugins.offline_llm.SYSTEM_PROMPT", "DEFAULT_SYSTEM")
+
+    dummy_response_text = json.dumps(
+        {"properties": {"answer_summary": "Summary", "source_files": []}}
+    )
+
+    class DummyLLM:
+        def __init__(self):
+            self.calls = []
+
+        def create_chat_completion(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"choices": [{"message": {"content": dummy_response_text}}]}
+
+    llm = DummyLLM()
+    plugin._llm_instance = llm
+    monkeypatch.setattr(plugin, "_save_history", lambda: None)
+
+    result = plugin._generate_response(
+        "model",
+        "Do work",
+        {},
+        chat_id=1,
+        system_prompt=None,
+    )
+
+    assert result["summary"] == "Summary"
+    assert llm.calls[0]["messages"][0] == {"role": "system", "content": "DEFAULT_SYSTEM"}
+
+
+def test_generate_response_system_prompt_override(monkeypatch):
+    plugin = OfflineLLMPlugin()
+    plugin.chat_history = {}
+    plugin._load_model = lambda _: True
+
+    dummy_response_text = json.dumps(
+        {"properties": {"answer_summary": "Summary", "source_files": []}}
+    )
+
+    class DummyLLM:
+        def __init__(self):
+            self.calls = []
+
+        def create_chat_completion(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"choices": [{"message": {"content": dummy_response_text}}]}
+
+    llm = DummyLLM()
+    plugin._llm_instance = llm
+    monkeypatch.setattr(plugin, "_save_history", lambda: None)
+
+    result = plugin._generate_response(
+        "model",
+        "Do work",
+        {},
+        chat_id=1,
+        system_prompt="OVERRIDE_SYSTEM",
+    )
+
+    assert result["summary"] == "Summary"
+    assert llm.calls[0]["messages"][0] == {"role": "system", "content": "OVERRIDE_SYSTEM"}
+
+
 def test_generate_response_success_updates_history_and_saves(monkeypatch):
     plugin = OfflineLLMPlugin()
     plugin.chat_history = {}
@@ -335,6 +496,21 @@ def test_generate_response_returns_error_when_no_choices():
     assert result["summary"] == "No response generated from offline model"
 
 
+def test_generate_response_returns_error_when_response_missing_choices_key():
+    plugin = OfflineLLMPlugin()
+    plugin._load_model = lambda _: True
+
+    class DummyLLM:
+        def create_chat_completion(self, **kwargs):
+            return {"not_choices": True}
+
+    plugin._llm_instance = DummyLLM()
+
+    result = plugin._generate_response("model", "prompt", {}, chat_id=None)
+
+    assert result["summary"] == "No response generated from offline model"
+
+
 def test_generate_response_returns_error_on_exception():
     plugin = OfflineLLMPlugin()
     plugin._load_model = lambda _: True
@@ -383,6 +559,17 @@ def test_on_command_download_model_triggers_download(monkeypatch):
     result = plugin.on_command("download_offline_model", {"model_id": "m"})
 
     assert result == {"success": True}
+
+
+def test_on_command_download_model_propagates_download_failure(monkeypatch):
+    plugin = OfflineLLMPlugin()
+    monkeypatch.setattr("aye.plugins.offline_llm.is_offline_model", lambda _: True)
+    monkeypatch.setattr("aye.plugins.offline_llm.get_model_status", lambda _: "PENDING")
+    monkeypatch.setattr("aye.plugins.offline_llm.download_model_sync", lambda _: False)
+
+    result = plugin.on_command("download_offline_model", {"model_id": "m"})
+
+    assert result == {"success": False}
 
 
 def test_on_command_new_chat_clears_history(monkeypatch, tmp_path):
@@ -457,3 +644,39 @@ def test_on_command_local_model_invoke_success(monkeypatch, tmp_path):
     assert captured["args"] == ("m", "Test", {"a": "b"}, 3, "custom prompt", 4096)
     assert loaded["called"] is True
     assert plugin.history_file == tmp_path / ".aye" / "offline_chat_history.json"
+
+
+def test_on_command_local_model_invoke_passes_max_output_tokens(monkeypatch, tmp_path):
+    plugin = OfflineLLMPlugin()
+    monkeypatch.setattr("aye.plugins.offline_llm.is_offline_model", lambda _: True)
+    monkeypatch.setattr("aye.plugins.offline_llm.get_model_status", lambda _: "READY")
+    monkeypatch.setattr(plugin, "_load_history", lambda: None)
+
+    captured = {}
+
+    def fake_generate(model_id, prompt, source_files, chat_id, system_prompt, max_output_tokens):
+        captured["args"] = (model_id, prompt, source_files, chat_id, system_prompt, max_output_tokens)
+        return {"summary": "ok", "updated_files": []}
+
+    monkeypatch.setattr(plugin, "_generate_response", fake_generate)
+
+    params = {
+        "model_id": "m",
+        "prompt": "Test",
+        "source_files": {},
+        "chat_id": 3,
+        "root": tmp_path,
+        "system_prompt": None,
+        "max_output_tokens": 123,
+    }
+
+    result = plugin.on_command("local_model_invoke", params)
+
+    assert result == {"summary": "ok", "updated_files": []}
+    assert captured["args"] == ("m", "Test", {}, 3, None, 123)
+
+
+def test_on_command_unknown_returns_none():
+    plugin = OfflineLLMPlugin()
+
+    assert plugin.on_command("some_unknown_command", {}) is None
