@@ -133,13 +133,39 @@ class CmdPathCompleter(Completer):
                 # System commands still loading, return just builtins
                 return sorted(self._builtin_commands)
 
+    def _split_path_env(self, path_value: str) -> List[str]:
+        """Split a PATH-like env var into directories.
+
+        Normally PATH is split with os.pathsep, but unit tests (and some
+        environments) may provide POSIX-style PATH strings (':') even when
+        running on Windows (where os.pathsep is ';').
+
+        This keeps behavior correct across platforms while avoiding breaking
+        typical Windows paths like 'C:\\Windows\\System32'.
+        """
+        if not path_value:
+            return []
+
+        # Prefer the platform separator when it is actually present.
+        if os.pathsep in path_value:
+            return [p for p in path_value.split(os.pathsep) if p]
+
+        # Heuristic: looks like a POSIX/WSL PATH (starts with '/' or contains /mnt/)
+        # In that case, ':' is the correct separator.
+        if path_value.startswith("/") or "/mnt/" in path_value:
+            return [p for p in path_value.split(":") if p]
+
+        # Fallback: no known separator found; treat as a single entry.
+        return [path_value]
+
     def _get_system_commands(self) -> List[str]:
         """Get list of available system commands.
 
         Skips directories that are slow to access (Windows paths on WSL).
         """
         try:
-            path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+            path_value = os.environ.get("PATH", "")
+            path_dirs = self._split_path_env(path_value)
             commands = set()
 
             for directory in path_dirs:
