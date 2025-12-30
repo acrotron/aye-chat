@@ -92,19 +92,19 @@ def print_help_message():
     commands = [
         ("@filename", "Include a file in your prompt inline (e.g., \"explain @main.py\"). Supports wildcards (e.g., @*.py, @src/*.js)."),
         ("model", "Select a different model. Selection will persist between sessions."),
-        ("verbose [on|off]", "Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)"),
-        ("completion [readline|multi]", "Switch auto-completion style (readline or multi, persists between sessions)"),
+        (r"verbose \[on|off]", "Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)"),
+        (r"completion \[readline|multi]", "Switch auto-completion style (readline or multi, persists between sessions)"),
         ("new", "Start a new chat session (if you want to change the subject)"),
         ("history", "Show snapshot history"),
-        ("diff <file> [snapshot_id]", "Show diff of file with the latest snapshot, or a specified snapshot"),
-        ("restore, undo [id] [file]", "Revert changes to the last state, a specific snapshot `id`, or for a single `file`."),
+        (r"diff <file> \[snapshot_id]", "Show diff of file with the latest snapshot, or a specified snapshot"),
+        (r"restore, undo \[id] \[file]", "Revert changes to the last state, a specific snapshot `id`, or for a single `file`."),
         ("keep [N]", "Keep only N most recent snapshots (10 by default)"),
         ("exit, quit, Ctrl+D", "Exit the chat session"),
         ("help", "Show this help message"),
     ]
 
     for cmd, desc in commands:
-        console.print(f"  [ui.help.command]{cmd:<28}[/] - [ui.help.text]{desc}[/]")
+        console.print(f"  [ui.help.command]{cmd:<28}[/]\t- [ui.help.text]{desc}[/]")
 
     console.print("")
     # This line reminds users that Aye Chat does context retrieval automatically.

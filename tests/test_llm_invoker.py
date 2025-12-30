@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 from unittest import TestCase
-from unittest.mock import patch, MagicMock, call, PropertyMock
+from unittest.mock import patch, MagicMock, call, PropertyMock, ANY
 import json
 import os
 from pathlib import Path
@@ -581,8 +581,7 @@ class TestLlmInvoker(TestCase):
         pass
 
     @patch('aye.controller.llm_invoker.collect_sources')
-    @patch('aye.controller.llm_invoker.thinking_spinner')
-    def test_invoke_llm_local_model_success(self, mock_spinner, mock_collect_sources):
+    def test_invoke_llm_local_model_success(self, mock_collect_sources):
         mock_collect_sources.return_value = self.source_files
         local_response = {
             "summary": "local summary",
@@ -598,6 +597,13 @@ class TestLlmInvoker(TestCase):
         )
 
         mock_collect_sources.assert_called_once_with(root_dir=str(self.conf.root), file_mask=self.conf.file_mask)
+
+        model_config = llm_invoker._get_model_config(self.conf.selected_model)
+        expected_max_output_tokens = (
+            model_config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)
+            if model_config else DEFAULT_MAX_OUTPUT_TOKENS
+        )
+
         self.plugin_manager.handle_command.assert_called_once_with(
             "local_model_invoke",
             {
@@ -607,19 +613,36 @@ class TestLlmInvoker(TestCase):
                 "chat_id": None,
                 "root": self.conf.root,
                 "system_prompt": SYSTEM_PROMPT,
-                "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS
+                "max_output_tokens": expected_max_output_tokens
             }
         )
         self.assertEqual(response.source, LLMSource.LOCAL)
         self.assertEqual(response.summary, "local summary")
         self.assertEqual(len(response.updated_files), 1)
 
-    @patch('aye.controller.llm_invoker.collect_sources')
-    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
     @patch('aye.controller.llm_invoker.cli_invoke')
-    def test_invoke_llm_api_fallback_success(self, mock_cli_invoke, mock_spinner, mock_collect_sources):
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_api_fallback_success(
+        self,
+        mock_collect_sources,
+        mock_cli_invoke,
+        mock_spinner_class,
+        mock_streaming_display_class,
+        mock_create_stream_callback,
+    ):
         mock_collect_sources.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
+
+        # Avoid streaming side effects
+        streaming_display_instance = MagicMock()
+        streaming_display_instance.is_active.return_value = False
+        mock_streaming_display_class.return_value = streaming_display_instance
+
+        spinner_instance = MagicMock()
+        mock_spinner_class.return_value = spinner_instance
 
         api_response_payload = {
             "answer_summary": "api summary",
@@ -640,23 +663,35 @@ class TestLlmInvoker(TestCase):
         )
 
         mock_collect_sources.assert_called_once_with(root_dir=str(self.conf.root), file_mask=self.conf.file_mask)
+
+        model_config = llm_invoker._get_model_config(self.conf.selected_model)
+        expected_max_output_tokens = (
+            model_config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)
+            if model_config else DEFAULT_MAX_OUTPUT_TOKENS
+        )
+
         mock_cli_invoke.assert_called_once_with(
             message="test prompt",
             chat_id=123,
             source_files=self.source_files,
             model=self.conf.selected_model,
             system_prompt=SYSTEM_PROMPT,
-            max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
-            telemetry=None
+            max_output_tokens=expected_max_output_tokens,
+            telemetry=None,
+            on_stream_update=ANY,
         )
+
+        # Spinner should be used for API path
+        spinner_instance.start.assert_called_once()
+        self.assertTrue(spinner_instance.stop.called)
+
         self.assertEqual(response.source, LLMSource.API)
         self.assertEqual(response.summary, "api summary")
         self.assertEqual(response.chat_id, 456)
         self.assertEqual(len(response.updated_files), 1)
 
     @patch('aye.controller.llm_invoker.rprint')
-    @patch('aye.controller.llm_invoker.thinking_spinner')
-    def test_invoke_llm_large_project_uses_rag(self, mock_spinner, mock_rprint):
+    def test_invoke_llm_large_project_uses_rag(self, mock_rprint):
         """Test that large projects use RAG to select relevant files."""
         large_content = "a" * (CONTEXT_HARD_LIMIT + 1)
 
@@ -682,12 +717,25 @@ class TestLlmInvoker(TestCase):
             self.assertIn("relevant.py", final_source_files)
             self.assertNotIn("large.py", final_source_files)
 
-    @patch('aye.controller.llm_invoker.collect_sources')
-    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
     @patch('aye.controller.llm_invoker.cli_invoke')
-    def test_invoke_llm_api_plain_text_response(self, mock_cli_invoke, mock_spinner, mock_collect_sources):
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_api_plain_text_response(
+        self,
+        mock_collect_sources,
+        mock_cli_invoke,
+        mock_spinner_class,
+        mock_streaming_display_class,
+        mock_create_stream_callback,
+    ):
         mock_collect_sources.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
+
+        streaming_display_instance = MagicMock()
+        streaming_display_instance.is_active.return_value = False
+        mock_streaming_display_class.return_value = streaming_display_instance
 
         api_response = {
             "assistant_response": "just plain text",
@@ -701,12 +749,25 @@ class TestLlmInvoker(TestCase):
         self.assertEqual(response.updated_files, [])
         self.assertEqual(response.chat_id, 789)
 
-    @patch('aye.controller.llm_invoker.collect_sources')
-    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
     @patch('aye.controller.llm_invoker.cli_invoke')
-    def test_invoke_llm_api_server_error_in_response(self, mock_cli_invoke, mock_spinner, mock_collect_sources):
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_api_server_error_in_response(
+        self,
+        mock_collect_sources,
+        mock_cli_invoke,
+        mock_spinner_class,
+        mock_streaming_display_class,
+        mock_create_stream_callback,
+    ):
         mock_collect_sources.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
+
+        streaming_display_instance = MagicMock()
+        streaming_display_instance.is_active.return_value = False
+        mock_streaming_display_class.return_value = streaming_display_instance
 
         api_response = {
             "assistant_response": "An error occurred on the server.",
@@ -717,12 +778,25 @@ class TestLlmInvoker(TestCase):
         with self.assertRaisesRegex(Exception, "Server error in chat 'My Chat'"):
             llm_invoker.invoke_llm("p", self.conf, self.console, self.plugin_manager)
 
-    @patch('aye.controller.llm_invoker.collect_sources')
-    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
     @patch('aye.controller.llm_invoker.cli_invoke')
-    def test_invoke_llm_api_no_assistant_response(self, mock_cli_invoke, mock_spinner, mock_collect_sources):
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_api_no_assistant_response(
+        self,
+        mock_collect_sources,
+        mock_cli_invoke,
+        mock_spinner_class,
+        mock_streaming_display_class,
+        mock_create_stream_callback,
+    ):
         mock_collect_sources.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
+
+        streaming_display_instance = MagicMock()
+        streaming_display_instance.is_active.return_value = False
+        mock_streaming_display_class.return_value = streaming_display_instance
 
         api_response = {"chat_id": 111}
         mock_cli_invoke.return_value = api_response
@@ -735,8 +809,7 @@ class TestLlmInvoker(TestCase):
 
     @patch('aye.controller.llm_invoker.rprint')
     @patch('aye.controller.llm_invoker.collect_sources')
-    @patch('aye.controller.llm_invoker.thinking_spinner')
-    def test_invoke_llm_verbose_mode_small_project(self, mock_spinner, mock_collect, mock_rprint):
+    def test_invoke_llm_verbose_mode_small_project(self, mock_collect, mock_rprint):
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = {"summary": "s", "updated_files": []}
 
@@ -747,13 +820,29 @@ class TestLlmInvoker(TestCase):
         mock_rprint.assert_any_call(f"[yellow]Included with prompt: {', '.join(self.source_files.keys())}[/]")
 
     @patch('builtins.print')
-    @patch('aye.controller.llm_invoker.collect_sources')
-    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
     @patch('aye.controller.llm_invoker.cli_invoke')
+    @patch('aye.controller.llm_invoker.collect_sources')
     @patch('aye.controller.llm_invoker.get_user_config', return_value='on')
-    def test_invoke_llm_debug_mode(self, mock_get_cfg, mock_cli_invoke, mock_spinner, mock_collect, mock_print):
+    def test_invoke_llm_debug_mode(
+        self,
+        mock_get_cfg,
+        mock_collect,
+        mock_cli_invoke,
+        mock_spinner_class,
+        mock_streaming_display_class,
+        mock_create_stream_callback,
+        mock_print,
+    ):
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
+
+        streaming_display_instance = MagicMock()
+        streaming_display_instance.is_active.return_value = False
+        mock_streaming_display_class.return_value = streaming_display_instance
+
         mock_cli_invoke.return_value = {
             "assistant_response": json.dumps({"answer_summary": "s"}),
             "chat_id": 123
@@ -761,14 +850,21 @@ class TestLlmInvoker(TestCase):
 
         llm_invoker.invoke_llm("p", self.conf, self.console, self.plugin_manager)
 
+        model_config = llm_invoker._get_model_config(self.conf.selected_model)
+        expected_max_output_tokens = (
+            model_config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)
+            if model_config else DEFAULT_MAX_OUTPUT_TOKENS
+        )
+
         mock_cli_invoke.assert_called_once_with(
             message="p",
             chat_id=-1,
             source_files=self.source_files,
             model=self.conf.selected_model,
             system_prompt=SYSTEM_PROMPT,
-            max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
-            telemetry=None
+            max_output_tokens=expected_max_output_tokens,
+            telemetry=None,
+            on_stream_update=ANY,
         )
 
         debug_prints = [call[0][0] for call in mock_print.call_args_list]
@@ -776,12 +872,26 @@ class TestLlmInvoker(TestCase):
         self.assertIn("[DEBUG] Chat message processed, response keys: dict_keys(['assistant_response', 'chat_id'])", debug_prints)
         self.assertIn("[DEBUG] Successfully parsed assistant_response JSON", debug_prints)
 
-    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
     @patch('aye.controller.llm_invoker.cli_invoke')
     @patch('aye.controller.llm_invoker.collect_sources')
-    def test_invoke_llm_with_explicit_source_files(self, mock_collect, mock_cli, mock_spinner):
+    def test_invoke_llm_with_explicit_source_files(
+        self,
+        mock_collect,
+        mock_cli,
+        mock_spinner_class,
+        mock_streaming_display_class,
+        mock_create_stream_callback,
+    ):
         explicit_files = {"explicit.py": "content"}
         self.plugin_manager.handle_command.return_value = None
+
+        streaming_display_instance = MagicMock()
+        streaming_display_instance.is_active.return_value = False
+        mock_streaming_display_class.return_value = streaming_display_instance
+
         mock_cli.return_value = {"assistant_response": "{}", "chat_id": 1}
 
         llm_invoker.invoke_llm(
@@ -793,12 +903,26 @@ class TestLlmInvoker(TestCase):
         mock_cli.assert_called_once()
         self.assertEqual(mock_cli.call_args[1]['source_files'], explicit_files)
 
-    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
     @patch('aye.controller.llm_invoker.cli_invoke')
     @patch('aye.controller.llm_invoker.collect_sources')
-    def test_invoke_llm_with_all_command(self, mock_collect, mock_cli, mock_spinner):
+    def test_invoke_llm_with_all_command(
+        self,
+        mock_collect,
+        mock_cli,
+        mock_spinner_class,
+        mock_streaming_display_class,
+        mock_create_stream_callback,
+    ):
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
+
+        streaming_display_instance = MagicMock()
+        streaming_display_instance.is_active.return_value = False
+        mock_streaming_display_class.return_value = streaming_display_instance
+
         mock_cli.return_value = {"assistant_response": "{}", "chat_id": 1}
 
         llm_invoker.invoke_llm("/all do something", self.conf, self.console, self.plugin_manager)
@@ -823,7 +947,9 @@ class TestLlmInvoker(TestCase):
             result = llm_invoker._get_rag_context_files("p", self.conf, verbose=True)
 
         self.assertEqual(result, {})
-        mock_rprint.assert_any_call(f"[yellow]Skipping large file large.py ({len(large_content.encode('utf-8')) / 1024:.1f}KB) to stay within payload limits.[/]")
+        mock_rprint.assert_any_call(
+            f"[yellow]Skipping large file large.py ({len(large_content.encode('utf-8')) / 1024:.1f}KB) to stay within payload limits.[/]"
+        )
 
     def test_get_rag_context_files_no_chunks(self):
         mock_index_manager = MagicMock()
@@ -861,13 +987,27 @@ class TestLlmInvoker(TestCase):
         debug_prints = [c[0][0] for c in mock_print.call_args_list]
         self.assertIn("[DEBUG] Successfully parsed assistant_response JSON", debug_prints)
 
-    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
     @patch('aye.controller.llm_invoker.cli_invoke')
     @patch('aye.controller.llm_invoker.collect_sources')
-    def test_invoke_llm_passes_chat_id_to_api(self, mock_collect, mock_cli, mock_spinner):
+    def test_invoke_llm_passes_chat_id_to_api(
+        self,
+        mock_collect,
+        mock_cli,
+        mock_spinner_class,
+        mock_streaming_display_class,
+        mock_create_stream_callback,
+    ):
         """Test that chat_id is correctly passed to cli_invoke."""
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
+
+        streaming_display_instance = MagicMock()
+        streaming_display_instance.is_active.return_value = False
+        mock_streaming_display_class.return_value = streaming_display_instance
+
         mock_cli.return_value = {"assistant_response": "{}", "chat_id": 999}
 
         llm_invoker.invoke_llm(
@@ -878,25 +1018,51 @@ class TestLlmInvoker(TestCase):
         mock_cli.assert_called_once()
         self.assertEqual(mock_cli.call_args[1]['chat_id'], 555)
 
-    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
+    @patch('aye.controller.llm_invoker.cli_invoke')
     @patch('aye.controller.llm_invoker.collect_sources')
-    def test_invoke_llm_spinner_messages(self, mock_collect, mock_spinner):
-        """Test that spinner is called with progressive messages."""
+    def test_invoke_llm_spinner_messages(
+        self,
+        mock_collect,
+        mock_cli,
+        mock_spinner_class,
+        mock_streaming_display_class,
+        mock_create_stream_callback,
+    ):
+        """Test that spinner is constructed with progressive messages for API calls."""
         mock_collect.return_value = self.source_files
-        self.plugin_manager.handle_command.return_value = {"summary": "s", "updated_files": []}
+        self.plugin_manager.handle_command.return_value = None  # force API path
+
+        streaming_display_instance = MagicMock()
+        streaming_display_instance.is_active.return_value = False
+        mock_streaming_display_class.return_value = streaming_display_instance
+
+        spinner_instance = MagicMock()
+        mock_spinner_class.return_value = spinner_instance
+
+        mock_cli.return_value = {"assistant_response": json.dumps({"answer_summary": "s"}), "chat_id": 1}
 
         llm_invoker.invoke_llm("prompt", self.conf, self.console, self.plugin_manager)
 
-        mock_spinner.assert_called_once()
-        call_kwargs = mock_spinner.call_args[1]
+        mock_spinner_class.assert_called_once()
+        call_args, call_kwargs = mock_spinner_class.call_args
+
+        # First positional arg is console
+        self.assertEqual(call_args[0], self.console)
+
+        # Ensure progressive messages and interval are passed
         self.assertIn('messages', call_kwargs)
         self.assertEqual(len(call_kwargs['messages']), 5)
         self.assertIn('interval', call_kwargs)
         self.assertEqual(call_kwargs['interval'], 15.0)
 
-    @patch('aye.controller.llm_invoker.thinking_spinner')
+        spinner_instance.start.assert_called_once()
+        self.assertTrue(spinner_instance.stop.called)
+
     @patch('aye.controller.llm_invoker.collect_sources')
-    def test_invoke_llm_local_model_empty_summary(self, mock_collect, mock_spinner):
+    def test_invoke_llm_local_model_empty_summary(self, mock_collect):
         """Test local model response with missing summary key."""
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = {"updated_files": []}
@@ -908,9 +1074,8 @@ class TestLlmInvoker(TestCase):
         self.assertEqual(response.summary, "")
         self.assertEqual(response.source, LLMSource.LOCAL)
 
-    @patch('aye.controller.llm_invoker.thinking_spinner')
     @patch('aye.controller.llm_invoker.collect_sources')
-    def test_invoke_llm_local_model_missing_updated_files(self, mock_collect, mock_spinner):
+    def test_invoke_llm_local_model_missing_updated_files(self, mock_collect):
         """Test local model response with missing updated_files key."""
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = {"summary": "test"}
@@ -922,13 +1087,27 @@ class TestLlmInvoker(TestCase):
         self.assertEqual(response.updated_files, [])
         self.assertEqual(response.source, LLMSource.LOCAL)
 
-    @patch('aye.controller.llm_invoker.thinking_spinner')
+    @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
     @patch('aye.controller.llm_invoker.cli_invoke')
     @patch('aye.controller.llm_invoker.collect_sources')
-    def test_invoke_llm_api_response_missing_answer_summary(self, mock_collect, mock_cli, mock_spinner):
+    def test_invoke_llm_api_response_missing_answer_summary(
+        self,
+        mock_collect,
+        mock_cli,
+        mock_spinner_class,
+        mock_streaming_display_class,
+        mock_create_stream_callback,
+    ):
         """Test API response with missing answer_summary in parsed JSON."""
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
+
+        streaming_display_instance = MagicMock()
+        streaming_display_instance.is_active.return_value = False
+        mock_streaming_display_class.return_value = streaming_display_instance
+
         mock_cli.return_value = {
             "assistant_response": json.dumps({"source_files": [{"file_name": "f.py", "file_content": "c"}]}),
             "chat_id": 1

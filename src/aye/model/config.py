@@ -95,8 +95,8 @@ SYSTEM_PROMPT = (
     "- No telemetry or usage tracking\n\n"
     "You provide clear and concise answers. Answer **directly**, give only the "
     "information the user asked for. When you are unsure, say so. You generate "
-    "your responses in text-friendly format because your responses will be "
-    "displayed in a terminal: use ASCII and pseudo-graphics.\n\n"
+    "your responses in markdown format - but not excessively: only when "
+    "it makes sense.\n\n"
     "You follow instructions closely and respond accurately to a given prompt. "
     "You emphasize precise instruction-following and accuracy over speed of "
     "response: take your time to understand a question.\n\n"
@@ -148,6 +148,7 @@ SYSTEM_PROMPT = (
 MODELS = [
     {"id": "x-ai/grok-code-fast-1", "name": "xAI: Grok Code Fast 1", "max_prompt_kb": 150, "max_output_tokens": 32000, "context_target_kb": 120},
     {"id": "x-ai/grok-4.1-fast", "name": "xAI: Grok 4.1 Fast", "max_prompt_kb": 340, "max_output_tokens": 32000, "context_target_kb": 250},
+    {"id": "minimax/minimax-m2.1", "name": "MiniMax: MiniMax M2.1", "max_prompt_kb": 120, "max_output_tokens": 16000, "context_target_kb": 150},
     {"id": "google/gemini-2.5-flash", "name": "Google: Gemini 2.5 Flash", "max_prompt_kb": 340, "max_output_tokens": 32000, "context_target_kb": 250},
     {"id": "openai/gpt-5.1-codex-mini", "name": "OpenAI: GPT-5.1-Codex-Mini", "max_prompt_kb": 220, "max_output_tokens": 32000, "context_target_kb": 200},
     {"id": "moonshotai/kimi-k2-0905", "name": "MoonshotAI: Kimi K2 0905", "max_prompt_kb": 170, "max_output_tokens": 32000, "context_target_kb": 150},
