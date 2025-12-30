@@ -1,7 +1,8 @@
 import os
 import json
 import time
-from typing import Any, Dict, Optional
+import sys
+from typing import Any, Dict, Optional, Callable
 from rich import print as rprint
 
 import httpx
@@ -22,6 +23,11 @@ TIMEOUT = 900.0
 
 def _is_debug():
     return get_user_config("debug", "off").lower() == "on"
+
+
+def _is_stream_debug():
+    """Check if streaming debug mode is enabled via environment variable."""
+    return os.environ.get("AYE_STREAM_DEBUG", "").lower() in ("1", "true", "on")
 
 
 def _auth_headers() -> Dict[str, str]:
@@ -66,6 +72,32 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
     return payload
 
 
+def _extract_answer_summary_from_assistant_response(resp: Dict[str, Any]) -> str:
+    """Best-effort extraction of answer_summary from the final response payload."""
+    assistant_resp_str = resp.get("assistant_response")
+    if assistant_resp_str is None:
+        return ""
+
+    # assistant_response is expected to be a JSON string.
+    if isinstance(assistant_resp_str, (dict, list)):
+        try:
+            # If backend ever switches to embedding the JSON directly
+            if isinstance(assistant_resp_str, dict):
+                return str(assistant_resp_str.get("answer_summary", ""))
+            return ""
+        except Exception:
+            return ""
+
+    try:
+        parsed = json.loads(assistant_resp_str)
+        if isinstance(parsed, dict):
+            return str(parsed.get("answer_summary", ""))
+    except Exception:
+        return ""
+
+    return ""
+
+
 def cli_invoke(
     chat_id=-1,
     message="",
@@ -77,12 +109,35 @@ def cli_invoke(
     telemetry: Optional[Dict[str, Any]] = None,
     poll_interval=2.0,
     poll_timeout=TIMEOUT,
+    on_stream_update: Optional[Callable[[str], None]] = None,
 ):
+    """
+    Invoke the CLI API endpoint.
+    
+    Args:
+        chat_id: The chat session ID (-1 for new chat)
+        message: The user's message/prompt
+        source_files: Dictionary of filename -> content
+        model: Model ID to use
+        system_prompt: Custom system prompt
+        max_output_tokens: Maximum tokens in response
+        dry_run: If True, don't actually invoke
+        telemetry: Optional telemetry data to piggyback
+        poll_interval: Seconds between polling attempts
+        poll_timeout: Maximum seconds to wait for response
+        on_stream_update: Optional callback for streaming updates.
+                          Called with the current partial content string.
+    
+    Returns:
+        The API response dictionary
+    """
     payload: Dict[str, Any] = {
         "chat_id": chat_id,
         "message": message,
         "source_files": source_files,
         "dry_run": dry_run,
+        # Flag for streaming support
+        "streaming": True
     }
     if model:
         payload["model"] = model
@@ -110,46 +165,93 @@ def cli_invoke(
         if _is_debug():
             print(f"[DEBUG] Initial response data: {data}")
 
-    # Otherwise poll the presigned GET URL until the object exists, then download+return it
+    # Poll the presigned GET URL until the object exists
     response_url = data["response_url"]
     if _is_debug():
         print(f"[DEBUG] Polling response URL: {response_url}")
+
     deadline = time.time() + poll_timeout
     last_status = None
     poll_count = 0
+
+    # Streaming state
+    streamed_content = ""
+    has_streamed = False
+
+    # Faster polling while streaming is active
+    streaming_poll_interval = min(poll_interval, 0.25)
 
     while time.time() < deadline:
         try:
             poll_count += 1
             if _is_debug():
                 print(f"[DEBUG] Poll attempt {poll_count}, status: {last_status}")
-            r = httpx.get(response_url, timeout=TIMEOUT)  # default verify=True
+            r = httpx.get(response_url, timeout=TIMEOUT)
             last_status = r.status_code
             if _is_debug():
                 print(f"[DEBUG] Poll response status: {r.status_code}")
+
             if r.status_code == 200:
                 if _is_debug():
                     print(f"[DEBUG] Response body length: {len(r.text)} bytes")
                     print(f"[DEBUG] Response body preview: {r.text[:200]}")
+
                 try:
                     result = r.json()
-                    if _is_debug():
-                        print(f"[DEBUG] Successfully parsed JSON response")
-                    return result
                 except json.JSONDecodeError as e:
                     if _is_debug():
-                        print(f"[DEBUG] JSON decode error: {e}")
-                        print(f"[DEBUG] Full response text: {r.text}")
-                    raise
+                        print(f"[DEBUG] JSON decode error while polling: {e}")
+                        print(f"[DEBUG] Full response text: {r.text[:200]}")
+                    time.sleep(streaming_poll_interval if has_streamed else poll_interval)
+                    continue
+
+                if _is_debug():
+                    print(f"[DEBUG] Successfully parsed JSON response")
+
+                # --- Streaming support ---
+                if isinstance(result, dict) and result.get("streaming") is True:
+                    partial = result.get("partial_content")
+                    if isinstance(partial, str) and partial:
+                        # Debug: show the raw partial content on first receipt
+                        if _is_stream_debug() and not streamed_content:
+                            print(f"\n[STREAM_DEBUG] First partial_content repr: {repr(partial[:200])}...\n", file=sys.stderr)
+                        
+                        # Check if content has changed
+                        if partial != streamed_content:
+                            streamed_content = partial
+                            has_streamed = True
+                            
+                            # Call the streaming callback if provided
+                            if on_stream_update is not None:
+                                on_stream_update(streamed_content)
+
+                    # Keep polling for updates until streaming becomes false
+                    time.sleep(streaming_poll_interval)
+                    continue
+
+                # Final response reached
+                if has_streamed:
+                    # Get final content and send one last update
+                    final_summary = _extract_answer_summary_from_assistant_response(result)
+                    if final_summary and final_summary != streamed_content:
+                        if on_stream_update is not None:
+                            on_stream_update(final_summary)
+                    
+                    # Mark so upstream can avoid printing the summary twice
+                    result["_streamed_summary"] = True
+
+                return result
+
             if r.status_code in (403, 404):
-                time.sleep(poll_interval)
+                time.sleep(streaming_poll_interval if has_streamed else poll_interval)
                 continue
-            r.raise_for_status()  # other non‑2xx errors are unexpected
+
+            r.raise_for_status()
+
         except httpx.RequestError as e:
-            # transient network issue; retry
             if _is_debug():
                 print(f"[DEBUG] Network error: {e}")
-            time.sleep(poll_interval)
+            time.sleep(streaming_poll_interval if has_streamed else poll_interval)
             continue
 
     raise TimeoutError(f"Timed out waiting for response object from LLM")
@@ -169,7 +271,7 @@ def fetch_plugin_manifest(dry_run: bool = False):
         resp = client.post(url, json=payload, headers=_auth_headers())
         if _is_debug():
             print(f"[DEBUG] Response status: {resp.status_code}")
-        _check_response(resp)  # will raise on error and print the message
+        _check_response(resp)
         return resp.json()
 
 
@@ -187,14 +289,11 @@ def fetch_server_time(dry_run: bool = False) -> int:
         if _is_debug():
             print(f"[DEBUG] Response status: {resp.status_code}")
         if not resp.ok:
-            # Use the same helper for consistency but avoid raising for 200‑like cases
             try:
                 _check_response(resp)
             except Exception:
-                # _check_response already printed the error; re‑raise
                 raise
         else:
-            # Successful response – still ensure no embedded error field
             payload = _check_response(resp)
             return payload['timestamp']
 
@@ -219,12 +318,10 @@ def send_feedback(feedback_text: str, chat_id: int = 0, telemetry: Optional[Dict
 
     try:
         with httpx.Client(timeout=10.0, verify=True) as client:
-            # Fire-and-forget call. Errors are ignored to not block exit.
             resp = client.post(url, json=payload, headers=_auth_headers())
             if _is_debug():
                 print(f"[DEBUG] Response status: {resp.status_code}")
     except Exception as e:
-        # Silently ignore all errors, but log in debug mode.
         if _is_debug():
             print(f"[DEBUG] Error sending feedback: {e}")
         pass
