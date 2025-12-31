@@ -17,7 +17,7 @@ brew install aye-chat
 
 **Windows (Installer):**
 
-Download and run [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/download/v0.35.1/aye-chat-setup.exe)
+Download and run [aye-chat-setup.exe](https://github.com/acrotron/aye-chat/releases/download/v0.36.1/aye-chat-setup.exe)
 
 ![Aye Chat: The AI-powered terminal workspace](https://raw.githubusercontent.com/acrotron/aye-media/refs/heads/main/files/ai-shell.gif)
 
