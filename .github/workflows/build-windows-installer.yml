@@ -167,7 +167,7 @@ jobs:
           $minor = if ($parts.Length -gt 1) { $parts[1] } else { "0" }
           $patch = if ($parts.Length -gt 2) { $parts[2] -replace '[^0-9].*', '' } else { "0" }
 
-          $content = @"
+          @"
           VSVersionInfo(
             ffi=FixedFileInfo(
               filevers=($major, $minor, $patch, 0),
@@ -198,15 +198,7 @@ jobs:
               VarFileInfo([VarStruct('Translation', [1033, 1200])])
             ]
           )
-          "@
-
-          # Write without UTF-8 BOM (PowerShell-only fix)
-          $content | Set-Content -Path version_info.txt -Encoding utf8NoBOM
-
-          Write-Host "version_info.txt written. First 16 bytes:"
-          Format-Hex -Path version_info.txt -Count 16
-          Write-Host "First line of version_info.txt:"
-          Get-Content -Path version_info.txt -TotalCount 1
+          "@ | Out-File -FilePath version_info.txt -Encoding UTF8
 
       - name: Build with PyInstaller
         run: |
