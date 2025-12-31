@@ -279,7 +279,7 @@ jobs:
         shell: pwsh
         run: |
           $sdkPath = "C:\Program Files (x86)\Windows Kits\10\bin"
-          $latestSdk = Get-ChildItem -Path $sdkPath -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Sort-Object Name -Descending | Select-Object-First 1
+          $latestSdk = Get-ChildItem -Path $sdkPath -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Sort-Object Name -Descending | Select-Object -First 1
           $signtoolPath = Join-Path $latestSdk.FullName "x64"
           echo "Adding to PATH: $signtoolPath"
           echo "$signtoolPath" >> $env:GITHUB_PATH
