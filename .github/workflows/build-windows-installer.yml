@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "dev" ]
   release:
-    types: [published]
+    types:
   workflow_dispatch:
     inputs:
       version:
@@ -26,20 +26,52 @@ jobs:
         with:
           fetch-depth: 0  # Needed for setuptools-scm to get version from tags
 
-      - name: Set up certificate 
-        run: | 
-            echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | base64 --decode > /d/Certificate_pkcs12.p12 
-        shell: bash 
+      - name: Set up certificate
+        run: |
+            echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | base64 --decode > /d/Certificate_pkcs12.p12
+        shell: bash
 
-      - name: Set variables 
-        id: variables 
-        run: | 
-          echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT 
-          echo "SM_HOST=${{ secrets.SM_HOST }}" >> "$GITHUB_ENV" 
-          echo "SM_API_KEY=${{ secrets.SM_API_KEY }}" >> "$GITHUB_ENV" 
-          echo "SM_CLIENT_CERT_FILE=D:\\Certificate_pkcs12.p12" >> "$GITHUB_ENV" 
-          echo "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" >> "$GITHUB_ENV" 
-        shell: bash 
+      - name: Set variables
+        id: variables
+        run: |
+          echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          echo "SM_HOST=${{ secrets.SM_HOST }}" >> "$GITHUB_ENV"
+          echo "SM_API_KEY=${{ secrets.SM_API_KEY }}" >> "$GITHUB_ENV"
+          echo "SM_CLIENT_CERT_FILE=D:\\Certificate_pkcs12.p12" >> "$GITHUB_ENV"
+          echo "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" >> "$GITHUB_ENV"
+        shell: bash
+
+      - name: Force reg add to be non-interactive (auto-append /f)
+        shell: pwsh
+        run: |
+          $wrapperDir = Join-Path $env:RUNNER_TEMP "reg-wrapper"
+          New-Item -ItemType Directory -Force -Path $wrapperDir | Out-Null
+
+          $wrapperPath = Join-Path $wrapperDir "reg.cmd"
+
+          @'
+          @echo off
+          setlocal EnableExtensions EnableDelayedExpansion
+
+          rem Wrapper around reg.exe to avoid interactive prompts.
+          rem If called as: reg add ... (without /f), append /f.
+
+          if /I "%~1"=="add" (
+            set "all=%*"
+            echo !all! | findstr /I /C:" /f" >nul
+            if errorlevel 1 (
+              "%SystemRoot%\System32\reg.exe" %* /f
+              exit /b %errorlevel%
+            )
+          )
+
+          "%SystemRoot%\System32\reg.exe" %*
+          exit /b %errorlevel%
+          '@ | Set-Content -Path $wrapperPath -Encoding ascii
+
+          "${wrapperDir}" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          Write-Host "Installed reg wrapper at: $wrapperPath"
+          Write-Host "Wrapper directory added to PATH: $wrapperDir"
 
       - name: Setup Software Trust Manager (new)
         id: stm-setup
@@ -119,9 +151,9 @@ jobs:
 
             # Split version into major.minor.patch
             $parts = $latestTag.Split('.')
-            $major = if ($parts.Length -gt 0) { [int]$parts[0] } else { 0 }
-            $minor = if ($parts.Length -gt 1) { [int]$parts[1] } else { 0 }
-            $patch = if ($parts.Length -gt 2) { [int]($parts[2] -replace '[^0-9].*', '') } else { 0 }
+            $major = if ($parts.Length -gt 0) { $parts[0] } else { 0 }
+            $minor = if ($parts.Length -gt 1) { $parts[1] } else { 0 }
+            $patch = if ($parts.Length -gt 2) { ($parts[2] -replace '[^0-9].*', '') } else { 0 }
 
             # Increment patch version for dev releases
             $nextPatch = $patch + 1
@@ -167,7 +199,7 @@ jobs:
           $minor = if ($parts.Length -gt 1) { $parts[1] } else { "0" }
           $patch = if ($parts.Length -gt 2) { $parts[2] -replace '[^0-9].*', '' } else { "0" }
 
-          @"
+          $content = @"
           VSVersionInfo(
             ffi=FixedFileInfo(
               filevers=($major, $minor, $patch, 0),
@@ -198,7 +230,15 @@ jobs:
               VarFileInfo([VarStruct('Translation', [1033, 1200])])
             ]
           )
-          "@ | Out-File -FilePath version_info.txt -Encoding UTF8
+          "@
+
+          # Write without UTF-8 BOM (PowerShell-only fix)
+          $content | Set-Content -Path version_info.txt -Encoding utf8NoBOM
+
+          Write-Host "version_info.txt written. First 16 bytes:"
+          Format-Hex -Path version_info.txt -Count 16
+          Write-Host "First line of version_info.txt:"
+          Get-Content -Path version_info.txt -TotalCount 1
 
       - name: Build with PyInstaller
         run: |
@@ -300,9 +340,9 @@ jobs:
 
             # Split version into major.minor.patch
             $parts = $latestTag.Split('.')
-            $major = if ($parts.Length -gt 0) { [int]$parts[0] } else { 0 }
-            $minor = if ($parts.Length -gt 1) { [int]$parts[1] } else { 0 }
-            $patch = if ($parts.Length -gt 2) { [int]($parts[2] -replace '[^0-9].*', '') } else { 0 }
+            $major = if ($parts.Length -gt 0) { $parts[0] } else { 0 }
+            $minor = if ($parts.Length -gt 1) { $parts[1] } else { 0 }
+            $patch = if ($parts.Length -gt 2) { ($parts[2] -replace '[^0-9].*', '') } else { 0 }
 
             # Increment patch version for dev releases
             $nextPatch = $patch + 1
