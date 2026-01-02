@@ -65,7 +65,7 @@ deep_ocean_theme = Theme({
 #
 # This keeps output consistent across the entire CLI and avoids each module
 # creating its own Console with different settings.
-console = Console(theme=deep_ocean_theme)
+console = Console(force_terminal=True, theme=deep_ocean_theme)
 
 
 def print_auth_status(token: Optional[str]) -> None:
