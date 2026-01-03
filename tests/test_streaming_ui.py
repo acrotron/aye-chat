@@ -77,7 +77,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
 
         events = []
 
-        def fake_panel(content: str, use_markdown: bool = True):
+        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False):
             # Return a lightweight sentinel to assert on
             events.append((content, use_markdown))
             return {"content": content, "use_markdown": use_markdown}
@@ -109,7 +109,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     def test_update_same_content_is_noop(self):
         events = []
 
-        def fake_panel(content: str, use_markdown: bool = True):
+        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False):
             events.append((content, use_markdown))
             return (content, use_markdown)
 
@@ -125,7 +125,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     def test_update_non_appended_content_resets_animation(self):
         events = []
 
-        def fake_panel(content: str, use_markdown: bool = True):
+        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False):
             events.append((content, use_markdown))
             return (content, use_markdown)
 
@@ -143,7 +143,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     def test_stop_final_markdown_render_and_spacing_after(self):
         events = []
 
-        def fake_panel(content: str, use_markdown: bool = True):
+        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False):
             events.append((content, use_markdown))
             return (content, use_markdown)
 
@@ -164,7 +164,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     def test_context_manager_starts_and_stops(self):
         events = []
 
-        def fake_panel(content: str, use_markdown: bool = True):
+        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False):
             events.append((content, use_markdown))
             return (content, use_markdown)
 
@@ -204,4 +204,4 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         display = MagicMock()
         cb = streaming_ui.create_streaming_callback(display)
         cb("abc")
-        display.update.assert_called_once_with("abc")
+        display.update.assert_called_once_with("abc", is_final=False)

@@ -275,3 +275,76 @@ def handle_with_command(
     except Exception as exc:
         handle_llm_error(exc)
         return None
+
+
+_BLOG_PROMPT_PREAMBLE = (
+    "You are going to write a technical blog post as a deep dive into what we implemented in this chat session.\n"
+    "\n"
+    "Requirements:\n"
+    "- Derive the narrative and details primarily from this *current chat session* (the conversation so far).\n"
+    "- The blog post must be written in Markdown.\n"
+    "- Write the blog post to a file named `blog.md` (project root).\n"
+    "- Return a JSON object that follows the required schema, and include exactly one updated file: `blog.md`.\n"
+    "  (Unless the user explicitly asked for additional files.)\n"
+    "\n"
+)
+
+
+def handle_blog_command(
+    tokens: List[str],
+    conf: Any,
+    console: Console,
+    chat_id: int,
+    chat_id_file: Path,
+) -> Optional[int]:
+    """Handle the 'blog' command.
+
+    Syntax:
+        blog <intent>
+
+    This wraps the user's intent with a pre-defined instruction block that:
+    - forces output to blog.md
+    - asks the model to derive content from the current chat session
+
+    Returns:
+        New chat_id if available, None otherwise
+    """
+    try:
+        intent = " ".join(tokens[1:]).strip() if len(tokens) > 1 else ""
+        if not intent:
+            rprint("[red]Usage:[/] blog <text to describe blog post intent>")
+            return None
+
+        llm_prompt = (
+            f"{_BLOG_PROMPT_PREAMBLE}\n"
+            f"User intent: {intent}\n"
+        )
+
+        llm_response = invoke_llm(
+            prompt=llm_prompt,
+            conf=conf,
+            console=console,
+            plugin_manager=conf.plugin_manager,
+            chat_id=chat_id,
+            verbose=conf.verbose,
+            explicit_source_files=None,
+        )
+
+        if llm_response:
+            # Store a concise prompt label in snapshots/history.
+            snapshot_prompt = f"blog {intent}".strip()
+            new_chat_id = process_llm_response(
+                response=llm_response,
+                conf=conf,
+                console=console,
+                prompt=snapshot_prompt,
+                chat_id_file=chat_id_file if llm_response.chat_id else None,
+            )
+            return new_chat_id
+
+        rprint("[yellow]No response from LLM.[/]")
+        return None
+
+    except Exception as exc:
+        handle_llm_error(exc)
+        return None

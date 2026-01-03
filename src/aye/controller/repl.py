@@ -38,7 +38,8 @@ from aye.controller.command_handlers import (
     handle_verbose_command,
     handle_debug_command,
     handle_completion_command,
-    handle_with_command
+    handle_with_command,
+    handle_blog_command,
 )
 
 DEBUG = False
@@ -119,7 +120,7 @@ def collect_and_send_feedback(chat_id: int):
         rprint("\n[bold cyan]Before you go, would you mind sharing some comments about your experience?")
         rprint("[bold cyan]Include your email if you are ok with us contacting you with some questions.")
         rprint("[bold cyan](Start typing. Press Enter for a new line. Press Ctrl+C to finish.)")
-        feedback = feedback_session.prompt("> ", multiline=True, key_bindings=bindings)
+        feedback = feedback_session.prompt("> ", multiline=True, key_bindings=bindings, reserve_space_for_menu=6)
         if feedback and feedback.strip():
             feedback_text = feedback.strip()
     except (EOFError, KeyboardInterrupt):
@@ -230,7 +231,7 @@ def create_prompt_session(completer: Any, completion_style: str = "readline") ->
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "completion", "exit", "quit", ":q", "help", "cd", "db"]
+    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "completion", "exit", "quit", ":q", "help", "cd", "db"]
 
     # Get the completion style setting
     completion_style = get_user_config("completion_style", "readline").lower()
@@ -267,7 +268,7 @@ def chat_repl(conf: Any) -> None:
     if conf.verbose or is_first_run:
         handle_model_command(None, MODELS, conf, ['model'])
 
-    console = Console()
+    console = Console(force_terminal=True)
     chat_id_file = Path(".aye/chat_id.tmp")
     chat_id_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -287,7 +288,11 @@ def chat_repl(conf: Any) -> None:
                     progress = index_manager.get_progress_display()
                     prompt_str = f"(ツ ({progress}) » "
 
-                prompt = session.prompt(prompt_str)
+                # IMPORTANT: prompt_toolkit reserves space at the bottom of the terminal
+                # for the completion menu. Default is ~8 lines, which can look like
+                # "prompt stuck above bottom" with empty lines below.
+                # Setting this to 0 fixes the issue.
+                prompt = session.prompt(prompt_str, reserve_space_for_menu=6)
 
                 # Handle 'with' command before tokenizing. It has its own flow.
                 if prompt.strip().lower().startswith("with ") and ":" in prompt:
@@ -355,6 +360,12 @@ def chat_repl(conf: Any) -> None:
                         # Recreate the session with the new completer
                         session = create_prompt_session(completer, new_style)
                         rprint(f"[green]Completion style is now active.[/]")
+                elif lowered_first == "blog":
+                    telemetry.record_command("blog", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
+                    telemetry.record_llm_prompt("LLM <blog>")
+                    new_chat_id = handle_blog_command(tokens, conf, console, chat_id, chat_id_file)
+                    if new_chat_id is not None:
+                        chat_id = new_chat_id
                 elif lowered_first == "diff":
                     telemetry.record_command("diff", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     args = tokens[1:]

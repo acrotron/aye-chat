@@ -98,6 +98,32 @@ def _extract_answer_summary_from_assistant_response(resp: Dict[str, Any]) -> str
     return ""
 
 
+def _call_stream_update(on_stream_update: Optional[Callable[..., None]], content: str, *, is_final: bool) -> None:
+    """Call the provided streaming callback.
+
+    Backwards compatible:
+    - Prefer calling with `is_final` keyword (new API)
+    - Fall back to positional, then to legacy single-arg callbacks.
+    """
+    if on_stream_update is None:
+        return
+
+    try:
+        on_stream_update(content, is_final=is_final)
+        return
+    except TypeError:
+        pass
+
+    try:
+        on_stream_update(content, is_final)
+        return
+    except TypeError:
+        pass
+
+    on_stream_update(content)
+
+
+
 def cli_invoke(
     chat_id=-1,
     message="",
@@ -109,11 +135,11 @@ def cli_invoke(
     telemetry: Optional[Dict[str, Any]] = None,
     poll_interval=2.0,
     poll_timeout=TIMEOUT,
-    on_stream_update: Optional[Callable[[str], None]] = None,
+    on_stream_update: Optional[Callable[..., None]] = None,
 ):
     """
     Invoke the CLI API endpoint.
-    
+
     Args:
         chat_id: The chat session ID (-1 for new chat)
         message: The user's message/prompt
@@ -127,7 +153,9 @@ def cli_invoke(
         poll_timeout: Maximum seconds to wait for response
         on_stream_update: Optional callback for streaming updates.
                           Called with the current partial content string.
-    
+                          If the callback supports it, it will additionally
+                          receive `is_final=True` when the final response is ready.
+
     Returns:
         The API response dictionary
     """
@@ -215,15 +243,14 @@ def cli_invoke(
                         # Debug: show the raw partial content on first receipt
                         if _is_stream_debug() and not streamed_content:
                             print(f"\n[STREAM_DEBUG] First partial_content repr: {repr(partial[:200])}...\n", file=sys.stderr)
-                        
+
                         # Check if content has changed
                         if partial != streamed_content:
                             streamed_content = partial
                             has_streamed = True
-                            
+
                             # Call the streaming callback if provided
-                            if on_stream_update is not None:
-                                on_stream_update(streamed_content)
+                            _call_stream_update(on_stream_update, streamed_content, is_final=False)
 
                     # Keep polling for updates until streaming becomes false
                     time.sleep(streaming_poll_interval)
@@ -231,12 +258,13 @@ def cli_invoke(
 
                 # Final response reached
                 if has_streamed:
-                    # Get final content and send one last update
+                    # IMPORTANT: as soon as final response is ready, force a final render.
+                    # This allows the UI layer to stop any per-word animation immediately.
                     final_summary = _extract_answer_summary_from_assistant_response(result)
-                    if final_summary and final_summary != streamed_content:
-                        if on_stream_update is not None:
-                            on_stream_update(final_summary)
-                    
+                    final_to_render = final_summary or streamed_content
+
+                    _call_stream_update(on_stream_update, final_to_render, is_final=True)
+
                     # Mark so upstream can avoid printing the summary twice
                     result["_streamed_summary"] = True
 
@@ -257,6 +285,7 @@ def cli_invoke(
     raise TimeoutError(f"Timed out waiting for response object from LLM")
 
 
+
 def fetch_plugin_manifest(dry_run: bool = False):
     """Fetch the plugin manifest from the server."""
     url = f"{BASE_URL}/plugins"
@@ -273,6 +302,7 @@ def fetch_plugin_manifest(dry_run: bool = False):
             print(f"[DEBUG] Response status: {resp.status_code}")
         _check_response(resp)
         return resp.json()
+
 
 
 def fetch_server_time(dry_run: bool = False) -> int:
@@ -296,6 +326,7 @@ def fetch_server_time(dry_run: bool = False) -> int:
         else:
             payload = _check_response(resp)
             return payload['timestamp']
+
 
 
 def send_feedback(feedback_text: str, chat_id: int = 0, telemetry: Optional[Dict[str, Any]] = None):

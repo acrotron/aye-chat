@@ -70,7 +70,7 @@ deep_ocean_theme = Theme({
 #
 # Using a single Console instance guarantees a consistent theme and makes it
 # easier to adjust output behavior in one place.
-console = Console(theme=deep_ocean_theme)
+console = Console(force_terminal=True, theme=deep_ocean_theme)
 
 
 def print_welcome_message():
@@ -90,7 +90,9 @@ def print_help_message():
     # Commands are rendered as a fixed-width left column to keep descriptions
     # aligned and easy to scan.
     commands = [
+        # Some commands are intentionally undocumented: keep them as such.
         ("@filename", "Include a file in your prompt inline (e.g., \"explain @main.py\"). Supports wildcards (e.g., @*.py, @src/*.js)."),
+        ("blog <intent>", "Generate a technical deep-dive blog post derived from the current chat session and write it to blog.md."),
         ("model", "Select a different model. Selection will persist between sessions."),
         (r"verbose \[on|off]", "Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)"),
         (r"completion \[readline|multi]", "Switch auto-completion style (readline or multi, persists between sessions)"),

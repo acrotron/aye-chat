@@ -116,7 +116,8 @@ def test_config_delete_not_found(mock_print, mock_delete):
 def test_config_invalid_action():
     result = runner.invoke(app, ["config", "invalid_action"])
     assert result.exit_code != 0
-    assert "Invalid action 'invalid_action'" in result.stdout
+    assert "Invalid action" in result.stdout
+    assert "invalid_action" in result.stdout
 
 
 def test_config_missing_args():

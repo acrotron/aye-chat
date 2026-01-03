@@ -318,8 +318,8 @@ class TestModelApi(TestCase):
             on_stream_update=lambda s: updates.append(s),
         )
 
-        # Only one partial update, final summary is the same so no extra call
-        self.assertEqual(updates, ["Same"])
+        # Identical partials are deduped, but finalization always triggers a final update.
+        self.assertEqual(updates, ["Same", "Same"])
         self.assertTrue(result.get("_streamed_summary"))
 
     @patch("aye.model.api.time")
