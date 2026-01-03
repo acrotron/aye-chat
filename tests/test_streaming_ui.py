@@ -204,4 +204,4 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         display = MagicMock()
         cb = streaming_ui.create_streaming_callback(display)
         cb("abc")
-        display.update.assert_called_once_with("abc")
+        display.update.assert_called_once_with("abc", is_final=False)
