@@ -38,7 +38,8 @@ from aye.controller.command_handlers import (
     handle_verbose_command,
     handle_debug_command,
     handle_completion_command,
-    handle_with_command
+    handle_with_command,
+    handle_blog_command,
 )
 
 DEBUG = False
@@ -230,7 +231,7 @@ def create_prompt_session(completer: Any, completion_style: str = "readline") ->
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["with", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "completion", "exit", "quit", ":q", "help", "cd", "db"]
+    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "completion", "exit", "quit", ":q", "help", "cd", "db"]
 
     # Get the completion style setting
     completion_style = get_user_config("completion_style", "readline").lower()
@@ -359,6 +360,12 @@ def chat_repl(conf: Any) -> None:
                         # Recreate the session with the new completer
                         session = create_prompt_session(completer, new_style)
                         rprint(f"[green]Completion style is now active.[/]")
+                elif lowered_first == "blog":
+                    telemetry.record_command("blog", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
+                    telemetry.record_llm_prompt("LLM <blog>")
+                    new_chat_id = handle_blog_command(tokens, conf, console, chat_id, chat_id_file)
+                    if new_chat_id is not None:
+                        chat_id = new_chat_id
                 elif lowered_first == "diff":
                     telemetry.record_command("diff", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     args = tokens[1:]
