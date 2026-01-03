@@ -2,11 +2,12 @@
 
 This module provides the StreamingResponseDisplay class which handles
 real-time display of LLM responses in a styled Rich panel with
-word-by-word animation.
+word-by-word animation and stall detection.
 """
 
 import os
 import time
+import threading
 from typing import Optional, Callable
 
 from rich import box
@@ -25,39 +26,50 @@ _STREAMING_THEME = Theme({
     "ui.response_symbol.waves": "steel_blue",
     "ui.response_symbol.pulse": "bold pale_turquoise1",
     "ui.border": "dim slate_blue3",
+    "ui.stall_spinner": "dim yellow",
 })
 
 
-def _create_response_panel(content: str, use_markdown: bool = True) -> Panel:
-    """
-    Create a styled response panel matching the final response display.
-    
-    This mirrors the layout in presenter/repl_ui.py print_assistant_response()
-    so streaming output looks identical to final output.
-    
-    Args:
-        content: The content to display
-        use_markdown: If True, render as Markdown; if False, render as plain Text
-        
-    Returns:
-        A styled Rich Panel
-    """
+def _get_env_float(env_var: str, default: float) -> float:
+    """Get a float value from environment variable with fallback default."""
+    try:
+        return float(os.environ.get(env_var, str(default)) or str(default))
+    except ValueError:
+        return default
+
+
+def _create_response_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False) -> Panel:
+    """Create a styled response panel matching the final response display."""
     # Decorative "sonar pulse" marker
     pulse = "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]●[/] [ui.response_symbol.waves]))[/]"
-    
+
     # A 2-column grid: marker + content
     grid = Table.grid(padding=(0, 1))
     grid.add_column()
     grid.add_column()
-    
+
     # Use Markdown for proper formatting, or Text for mid-animation
     if use_markdown and content:
         rendered_content = Markdown(content)
     else:
         rendered_content = Text(content) if content else Text("")
-    
+
+    # Add stall indicator if needed
+    if show_stall_indicator:
+        stall_text = Text("\n⋯ waiting for more", style="ui.stall_spinner")
+        if isinstance(rendered_content, Markdown):
+            # For markdown, we need to convert to a container that can hold both
+            container = Table.grid(padding=0)
+            container.add_column()
+            container.add_row(rendered_content)
+            container.add_row(stall_text)
+            rendered_content = container
+        else:
+            # For Text, we can append directly
+            rendered_content.append("\n⋯ waiting for more", style="ui.stall_spinner")
+
     grid.add_row(pulse, rendered_content)
-    
+
     # Wrap in a rounded panel
     return Panel(
         grid,
@@ -69,225 +81,256 @@ def _create_response_panel(content: str, use_markdown: bool = True) -> Panel:
 
 
 class StreamingResponseDisplay:
-    """
-    Manages a live-updating Rich panel for streaming LLM responses
-    with word-by-word animation.
-    
-    Usage:
-        display = StreamingResponseDisplay()
-        display.start()
-        display.update("First chunk...")
-        display.update("First chunk... more content")
-        display.stop()
-    
-    Or as a context manager:
-        with StreamingResponseDisplay() as display:
-            display.update("content")
-    """
-    
+    """Manages a live-updating Rich panel for streaming LLM responses."""
+
     def __init__(
-        self, 
-        console: Optional[Console] = None, 
+        self,
+        console: Optional[Console] = None,
         word_delay: Optional[float] = 0.20,
-        on_first_content: Optional[Callable[[], None]] = None
+        stall_threshold: Optional[float] = 3.0,
+        on_first_content: Optional[Callable[[], None]] = None,
     ):
-        """
-        Initialize the streaming display.
-        
-        Args:
-            console: Optional Rich Console. If not provided, creates one with
-                     the streaming theme.
-            word_delay: Delay in seconds between words. Defaults to 0.20 (200ms).
-                       Can be overridden via AYE_STREAM_WORD_DELAY env var.
-            on_first_content: Optional callback invoked when the first content
-                             is received (before starting the display). Useful
-                             for stopping a spinner.
-        """
         self._console = console or Console(theme=_STREAMING_THEME)
         self._live: Optional[Live] = None
+
         self._current_content: str = ""  # Full content received so far
-        self._animated_content: str = ""  # Content that has been animated word-by-word
+        self._animated_content: str = ""  # Content that has been animated
+
         self._started: bool = False
         self._first_content_received: bool = False
         self._on_first_content = on_first_content
-        
-        # Word delay configuration
-        if word_delay is not None:
-            self._word_delay = word_delay
-        else:
-            try:
-                self._word_delay = float(os.environ.get("AYE_STREAM_WORD_DELAY", "0.20") or "0.20")
-            except ValueError:
-                self._word_delay = 0.20
-    
-    def start(self) -> None:
-        """
-        Start the live display.
-        
-        Call this before the first update. Adds spacing before the panel.
-        """
-        if self._started:
-            return
-        
-        self._console.print()  # Add spacing before panel
-        self._live = Live(
-            _create_response_panel("", use_markdown=False),
-            console=self._console,
-            refresh_per_second=30,  # Higher refresh rate for smooth animation
-            transient=False
+
+        # Configuration with env var fallbacks
+        self._word_delay = word_delay if word_delay is not None else _get_env_float("AYE_STREAM_WORD_DELAY", 0.20)
+        self._stall_threshold = (
+            stall_threshold if stall_threshold is not None else _get_env_float("AYE_STREAM_STALL_THRESHOLD", 3.0)
         )
-        self._live.start()
-        self._started = True
-    
+
+        # Synchronization: Live + internal state are touched by monitor thread
+        # and by whichever thread calls update(). We must serialize them.
+        self._lock = threading.RLock()
+
+        # Stall detection state
+        # NOTE: this must track *when we last received new content from the stream*,
+        # not when we last refreshed the UI. If we update this timestamp when we draw
+        # the stall indicator, the indicator will blink on/off.
+        self._last_receive_time: float = 0.0
+        self._is_animating: bool = False
+        self._showing_stall_indicator: bool = False
+
+        self._stall_monitor_thread: Optional[threading.Thread] = None
+        self._stop_monitoring = threading.Event()
+
+    def _refresh_display(self, use_markdown: bool = False, show_stall: bool = False) -> None:
+        """Refresh the live display with current animated content."""
+        with self._lock:
+            if not self._live:
+                return
+
+            self._live.update(
+                _create_response_panel(
+                    self._animated_content,
+                    use_markdown=use_markdown,
+                    show_stall_indicator=show_stall,
+                )
+            )
+            self._showing_stall_indicator = show_stall
+
+    def start(self) -> None:
+        """Start the live display."""
+        with self._lock:
+            if self._started:
+                return
+
+            self._console.print()  # spacing before panel
+            self._live = Live(
+                _create_response_panel("", use_markdown=False),
+                console=self._console,
+                refresh_per_second=30,
+                transient=False,
+            )
+            self._live.start()
+            self._started = True
+            self._last_receive_time = time.time()
+
+            # Start stall monitoring thread
+            self._stop_monitoring.clear()
+            self._stall_monitor_thread = threading.Thread(target=self._monitor_stall, daemon=True)
+            self._stall_monitor_thread.start()
+
+    def _monitor_stall(self) -> None:
+        """Monitor for stalls.
+
+        A true stall is:
+        - we are not animating
+        - AND the animated output has caught up to the received content
+        - AND we have not received new stream content for >= stall_threshold
+
+        Important: do NOT use a timestamp that is updated when the stall indicator is rendered,
+        otherwise the stall indicator will blink (it resets its own timer).
+        """
+        while not self._stop_monitoring.is_set():
+            if self._stop_monitoring.wait(0.5):
+                break
+
+            with self._lock:
+                if not self._started or not self._animated_content:
+                    continue
+
+                caught_up = (not self._is_animating) and (self._animated_content == self._current_content)
+                if not caught_up:
+                    # If we were showing stall but new content is now pending/animating,
+                    # the animation path will refresh with show_stall=False.
+                    continue
+
+                time_since_receive = time.time() - self._last_receive_time
+                should_show_stall = time_since_receive >= self._stall_threshold
+
+                # Only redraw when the stall state changes.
+                if should_show_stall != self._showing_stall_indicator:
+                    self._live.update(
+                        _create_response_panel(
+                            self._animated_content,
+                            use_markdown=False,
+                            show_stall_indicator=should_show_stall,
+                        )
+                    )
+                    self._showing_stall_indicator = should_show_stall
+
     def _animate_words(self, new_text: str) -> None:
-        """
-        Animate new text word by word.
-        
-        Args:
-            new_text: The new text to animate (delta from what's already shown)
-        """
-        if not new_text or not self._live:
+        """Animate new text word by word."""
+        if not new_text:
             return
-        
-        # Split into tokens (words and whitespace)
-        # We want to preserve whitespace structure
-        i = 0
-        n = len(new_text)
-        
-        while i < n:
-            char = new_text[i]
-            
-            if char in '\n\r':
-                # Newline - add it immediately
-                self._animated_content += char
-                i += 1
-                # Update display with markdown rendering for newlines
-                self._live.update(_create_response_panel(self._animated_content, use_markdown=True))
-            elif char in ' \t':
-                # Whitespace - collect all consecutive whitespace
-                ws_start = i
-                while i < n and new_text[i] in ' \t':
+
+        with self._lock:
+            if not self._live:
+                return
+            self._is_animating = True
+
+        try:
+            i = 0
+            n = len(new_text)
+
+            while i < n:
+                char = new_text[i]
+
+                if char in "\n\r":
+                    with self._lock:
+                        self._animated_content += char
                     i += 1
-                self._animated_content += new_text[ws_start:i]
-                # Update display (no delay for whitespace)
-                self._live.update(_create_response_panel(self._animated_content, use_markdown=False))
-            else:
-                # Word - collect consecutive non-whitespace
-                word_start = i
-                while i < n and new_text[i] not in ' \t\n\r':
-                    i += 1
-                word = new_text[word_start:i]
-                self._animated_content += word
-                
-                # Update display with the new word
-                # Use markdown=False during animation for speed, True on newlines
-                self._live.update(_create_response_panel(self._animated_content, use_markdown=False))
-                
-                # Delay after each word
-                if self._word_delay > 0:
-                    time.sleep(self._word_delay)
-    
+                    self._refresh_display(use_markdown=True, show_stall=False)
+
+                elif char in " \t":
+                    ws_start = i
+                    while i < n and new_text[i] in " \t":
+                        i += 1
+                    with self._lock:
+                        self._animated_content += new_text[ws_start:i]
+                    self._refresh_display(use_markdown=False, show_stall=False)
+
+                else:
+                    word_start = i
+                    while i < n and new_text[i] not in " \t\n\r":
+                        i += 1
+                    with self._lock:
+                        self._animated_content += new_text[word_start:i]
+                    self._refresh_display(use_markdown=False, show_stall=False)
+
+                    if self._word_delay > 0:
+                        time.sleep(self._word_delay)
+
+        finally:
+            with self._lock:
+                self._is_animating = False
+
     def update(self, content: str) -> None:
-        """
-        Update the displayed content with word-by-word animation.
-        
+        """Update the displayed content with word-by-word animation.
+
         Args:
             content: The full content to display (not a delta).
-                     This replaces the previous content.
         """
-        if content == self._current_content:
-            return
-        
-        # Fire the on_first_content callback before starting the display
-        if not self._first_content_received:
-            self._first_content_received = True
-            if self._on_first_content:
-                self._on_first_content()
-        
+        with self._lock:
+            if content == self._current_content:
+                return
+
+            # This is the key timestamp for stall detection:
+            # it should only change when new stream content arrives.
+            self._last_receive_time = time.time()
+
+            # Fire the on_first_content callback before starting the display
+            if not self._first_content_received:
+                self._first_content_received = True
+                if self._on_first_content:
+                    self._on_first_content()
+
         # Auto-start if not started
         if not self._started:
             self.start()
-        
-        # Calculate the new text that needs to be animated
-        if content.startswith(self._current_content):
-            # Content was appended - animate only the new part
-            new_text = content[len(self._current_content):]
-        else:
-            # Content changed completely - reset and animate all
-            self._animated_content = ""
-            new_text = content
-        
-        self._current_content = content
-        
-        # Animate the new words
-        if new_text and self._live:
+
+        # Decide new_text and update state under lock
+        with self._lock:
+            stall_was_showing = self._showing_stall_indicator
+
+            if content.startswith(self._current_content):
+                new_text = content[len(self._current_content):]
+            else:
+                self._animated_content = ""
+                new_text = content
+
+            self._current_content = content
+
+        # If stall indicator is currently shown, hide it immediately.
+        # (Otherwise it would stay visible until the first animated refresh.)
+        if stall_was_showing:
+            self._refresh_display(use_markdown=False, show_stall=False)
+
+        if new_text:
             self._animate_words(new_text)
-    
+
     def stop(self) -> None:
-        """
-        Stop the live display.
-        
-        Call this when streaming is complete. Does a final render with
-        full Markdown formatting and adds spacing after the panel.
-        """
-        if self._live:
+        """Stop the live display."""
+        # Stop the monitoring thread
+        self._stop_monitoring.set()
+        if self._stall_monitor_thread and self._stall_monitor_thread.is_alive():
+            self._stall_monitor_thread.join(timeout=1.0)
+        self._stall_monitor_thread = None
+
+        with self._lock:
+            live = self._live
+
+        if live:
             # Final update with full markdown rendering
             if self._animated_content:
-                self._live.update(_create_response_panel(self._animated_content, use_markdown=True))
-            self._live.stop()
-            self._console.print()  # Add spacing after panel
-            self._live = None
-        self._started = False
-    
+                self._refresh_display(use_markdown=True, show_stall=False)
+
+            with self._lock:
+                live.stop()
+                self._console.print()  # spacing after panel
+                self._live = None
+                self._started = False
+
     def is_active(self) -> bool:
-        """
-        Check if the display is currently active.
-        
-        Returns:
-            True if started and not stopped.
-        """
         return self._started and self._live is not None
-    
+
     def has_received_content(self) -> bool:
-        """
-        Check if any content has been received.
-        
-        Returns:
-            True if update() has been called with non-empty content.
-        """
         return self._first_content_received
-    
+
     @property
     def content(self) -> str:
-        """
-        Get the current displayed content.
-        
-        Returns:
-            The current content string.
-        """
         return self._current_content
-    
-    def __enter__(self) -> 'StreamingResponseDisplay':
-        """Context manager entry - starts the display."""
+
+    def __enter__(self) -> "StreamingResponseDisplay":
         self.start()
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Context manager exit - stops the display."""
         self.stop()
 
 
 def create_streaming_callback(display: StreamingResponseDisplay):
-    """
-    Create a callback function for use with cli_invoke.
-    
-    Args:
-        display: The StreamingResponseDisplay instance to update.
-    
-    Returns:
-        A callable that accepts content strings and updates the display.
-    """
+    """Create a callback function for use with cli_invoke."""
+
     def callback(content: str) -> None:
         display.update(content)
-    
+
     return callback
