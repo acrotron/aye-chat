@@ -243,14 +243,21 @@ class StreamingResponseDisplay:
             with self._lock:
                 self._is_animating = False
 
-    def update(self, content: str) -> None:
-        """Update the displayed content with word-by-word animation.
+    def update(self, content: str, is_final: bool = False) -> None:
+        """Update the displayed content.
+
+        By default, updates are animated word-by-word.
+        If `is_final=True`, animation is skipped and the content is rendered
+        immediately (Markdown), so the UI snaps to the final response as soon
+        as it is ready.
 
         Args:
             content: The full content to display (not a delta).
+            is_final: If True, stop animating and render final content immediately.
         """
         with self._lock:
-            if content == self._current_content:
+            # For finalization, we must still run even if content matches.
+            if not is_final and content == self._current_content:
                 return
 
             # This is the key timestamp for stall detection:
@@ -267,23 +274,36 @@ class StreamingResponseDisplay:
         if not self._started:
             self.start()
 
-        # Decide new_text and update state under lock
+        new_text = ""
+
+        # Decide how to update state under lock
         with self._lock:
             stall_was_showing = self._showing_stall_indicator
 
-            if content.startswith(self._current_content):
-                new_text = content[len(self._current_content):]
+            if is_final:
+                # Immediately snap to the final content (no word-by-word delays).
+                self._current_content = content
+                self._animated_content = content
             else:
-                self._animated_content = ""
-                new_text = content
+                if content.startswith(self._current_content):
+                    new_text = content[len(self._current_content):]
+                else:
+                    self._animated_content = ""
+                    new_text = content
 
-            self._current_content = content
+                self._current_content = content
 
         # If stall indicator is currently shown, hide it immediately.
         # (Otherwise it would stay visible until the first animated refresh.)
         if stall_was_showing:
             self._refresh_display(use_markdown=False, show_stall=False)
 
+        # Final render: no animation.
+        if is_final:
+            self._refresh_display(use_markdown=True, show_stall=False)
+            return
+
+        # Streaming render: animate only the delta.
         if new_text:
             self._animate_words(new_text)
 
@@ -330,7 +350,7 @@ class StreamingResponseDisplay:
 def create_streaming_callback(display: StreamingResponseDisplay):
     """Create a callback function for use with cli_invoke."""
 
-    def callback(content: str) -> None:
-        display.update(content)
+    def callback(content: str, is_final: bool = False) -> None:
+        display.update(content, is_final=is_final)
 
     return callback
