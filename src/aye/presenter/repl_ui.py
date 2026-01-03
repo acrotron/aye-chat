@@ -70,7 +70,7 @@ deep_ocean_theme = Theme({
 #
 # Using a single Console instance guarantees a consistent theme and makes it
 # easier to adjust output behavior in one place.
-console = Console(theme=deep_ocean_theme)
+console = Console(force_terminal=True, theme=deep_ocean_theme)
 
 
 def print_welcome_message():

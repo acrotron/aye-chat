@@ -119,7 +119,7 @@ def collect_and_send_feedback(chat_id: int):
         rprint("\n[bold cyan]Before you go, would you mind sharing some comments about your experience?")
         rprint("[bold cyan]Include your email if you are ok with us contacting you with some questions.")
         rprint("[bold cyan](Start typing. Press Enter for a new line. Press Ctrl+C to finish.)")
-        feedback = feedback_session.prompt("> ", multiline=True, key_bindings=bindings)
+        feedback = feedback_session.prompt("> ", multiline=True, key_bindings=bindings, reserve_space_for_menu=6)
         if feedback and feedback.strip():
             feedback_text = feedback.strip()
     except (EOFError, KeyboardInterrupt):
@@ -267,7 +267,7 @@ def chat_repl(conf: Any) -> None:
     if conf.verbose or is_first_run:
         handle_model_command(None, MODELS, conf, ['model'])
 
-    console = Console()
+    console = Console(force_terminal=True)
     chat_id_file = Path(".aye/chat_id.tmp")
     chat_id_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -287,7 +287,11 @@ def chat_repl(conf: Any) -> None:
                     progress = index_manager.get_progress_display()
                     prompt_str = f"(ツ ({progress}) » "
 
-                prompt = session.prompt(prompt_str)
+                # IMPORTANT: prompt_toolkit reserves space at the bottom of the terminal
+                # for the completion menu. Default is ~8 lines, which can look like
+                # "prompt stuck above bottom" with empty lines below.
+                # Setting this to 0 fixes the issue.
+                prompt = session.prompt(prompt_str, reserve_space_for_menu=6)
 
                 # Handle 'with' command before tokenizing. It has its own flow.
                 if prompt.strip().lower().startswith("with ") and ":" in prompt:
