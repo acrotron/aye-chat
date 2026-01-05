@@ -47,6 +47,7 @@ plugin_manager = None # HACK: for broken test patch to work
 
 
 _TELEMETRY_OPT_IN_KEY = "telemetry_opt_in"
+_FEEDBACK_OPT_IN_KEY = "feedback_opt_in"
 
 # Telemetry prefixes (product decision)
 _AYE_PREFIX = "aye:"
@@ -88,6 +89,22 @@ def _prompt_for_telemetry_consent_if_needed() -> bool:
     return bool(allow)
 
 
+def _is_feedback_prompt_enabled() -> bool:
+    """Return True if the exit feedback prompt is enabled.
+
+    Config key:
+        feedback_opt_in: on|off
+
+    Default:
+        on
+
+    This is read from the Aye Chat settings file (~/.ayecfg) via get_user_config,
+    and can also be overridden via environment variable AYE_FEEDBACK_OPT_IN.
+    """
+    val = get_user_config(_FEEDBACK_OPT_IN_KEY, "on")
+    return str(val).lower() == "on"
+
+
 def print_startup_header(conf: Any):
     """Prints the session context, current model, and welcome message."""
     try:
@@ -107,7 +124,15 @@ def collect_and_send_feedback(chat_id: int):
 
     Updated requirement: only send feedback (and include telemetry) if the user
     entered feedback text. If feedback is empty, do not send anything.
+
+    This prompt can be disabled globally with:
+        feedback_opt_in=off
+    in the Aye Chat settings file (~/.ayecfg) or via env var AYE_FEEDBACK_OPT_IN.
     """
+    if not _is_feedback_prompt_enabled():
+        rprint("[cyan]Goodbye![/cyan]")
+        return
+
     feedback_session = PromptSession(history=InMemoryHistory())
     bindings = KeyBindings()
 
@@ -130,7 +155,6 @@ def collect_and_send_feedback(chat_id: int):
         feedback_text = ""
 
     if not feedback_text:
-        rprint("[cyan]Goodbye![/cyan]")
         return
 
     telemetry_payload = telemetry.build_payload(top_n=20) if telemetry.is_enabled() else None
