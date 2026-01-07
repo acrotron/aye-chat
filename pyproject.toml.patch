@@ -1,0 +1,18 @@
+# Add this to your pyproject.toml dependencies:
+# 
+# Under [project.dependencies] or [tool.poetry.dependencies], add:
+#
+#   "textual>=0.50.0",
+#
+# Example for pyproject.toml with setuptools:
+#
+# [project]
+# dependencies = [
+#     ...
+#     "textual>=0.50.0",
+# ]
+#
+# Or if using optional dependencies:
+#
+# [project.optional-dependencies]
+# tui = ["textual>=0.50.0"]
