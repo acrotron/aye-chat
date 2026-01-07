@@ -1,18 +1,17 @@
+"""Plugin download and management module.
+
+This module handles downloading plugins from the server and managing the local
+plugin manifest.
+"""
+
 import hashlib
 import json
-import httpx
-from pathlib import Path
-from typing import List, Dict
-import traceback
-import time
-import base64
 import shutil
-
-import binascii
-from typing import Union
+import time
+from pathlib import Path
 
 from aye.model.auth import get_token
-from aye.model.api import fetch_plugin_manifest, fetch_server_time
+from aye.model.api import fetch_plugin_manifest
 
 PLUGIN_ROOT = Path.home() / ".aye" / "plugins"
 MANIFEST_FILE = PLUGIN_ROOT / "manifest.json"
@@ -24,7 +23,12 @@ def _now_ts() -> int:
     return int(time.time())
 
 
-def fetch_plugins(dry_run: bool = True) -> None:
+def fetch_plugins(dry_run: bool = True) -> None:  # pylint: disable=too-many-locals
+    """Fetch plugins from the server and update local manifest.
+
+    Args:
+        dry_run: If True, performs a dry run without making actual changes.
+    """
     token = get_token()
     if not token:
         return
@@ -37,15 +41,13 @@ def fetch_plugins(dry_run: bool = True) -> None:
     # Load any existing manifest so we can preserve previous timestamps
     try:
         old_manifest = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         old_manifest = {}
 
     manifest = {}
     try:
         # Use the dedicated API function instead of direct httpx call
         plugins = fetch_plugin_manifest(dry_run=dry_run)
-
-        #print(plugins)
 
         for name, entry in plugins.items():
             expected_hash = entry["sha256"]
@@ -75,11 +77,10 @@ def fetch_plugins(dry_run: bool = True) -> None:
         # Write manifest with all plugins
         # Sort keys so the file is deterministic – helpful for tests / diffs
         sorted_manifest = {k: manifest[k] for k in sorted(manifest)}
-        #print(json.dumps(sorted_manifest, indent=4))
         MANIFEST_FILE.write_text(json.dumps(sorted_manifest, indent=4), encoding="utf-8")
 
     except Exception as e:
-        raise RuntimeError(f"{e}")
+        raise RuntimeError(f"{e}") from e
 
 
 def driver() -> None:
@@ -87,7 +88,7 @@ def driver() -> None:
     try:
         fetch_plugins()
         print("Plugins fetched successfully.")
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"Error fetching plugins: {e}")
 
 

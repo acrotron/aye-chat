@@ -19,7 +19,6 @@ class SnapshotBackend(ABC):
         Returns:
             Batch identifier string (e.g., "001_20231201T120000")
         """
-        pass
 
     @abstractmethod
     def list_snapshots(self, file: Optional[Path] = None) -> Union[List[str], List[Tuple[str, str]]]:
@@ -32,7 +31,6 @@ class SnapshotBackend(ABC):
             If file is None: List of formatted strings for all snapshots
             If file is provided: List of (batch_id, snapshot_path) tuples
         """
-        pass
 
     @abstractmethod
     def restore_snapshot(self, ordinal: Optional[str] = None, file_name: Optional[str] = None) -> None:
@@ -42,24 +40,19 @@ class SnapshotBackend(ABC):
             ordinal: Optional snapshot ordinal (e.g., "001")
             file_name: Optional specific file to restore
         """
-        pass
 
     @abstractmethod
     def list_all_snapshots(self) -> List[Path]:
         """List all snapshot directories/identifiers in chronological order (oldest first)."""
-        pass
 
     @abstractmethod
     def delete_snapshot(self, snapshot_id: Any) -> None:
         """Delete a specific snapshot."""
-        pass
 
     @abstractmethod
     def prune_snapshots(self, keep_count: int = 10) -> int:
         """Delete all but the most recent N snapshots. Returns count deleted."""
-        pass
 
     @abstractmethod
     def cleanup_snapshots(self, older_than_days: int = 30) -> int:
         """Delete snapshots older than N days. Returns count deleted."""
-        pass
