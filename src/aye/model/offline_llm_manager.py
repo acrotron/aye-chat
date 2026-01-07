@@ -1,11 +1,12 @@
-import os
+"""Offline LLM model download and management.
+
+This module handles downloading and managing offline LLM models from Hugging Face.
+"""
+
 import threading
-import json
-import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional
 from rich import print as rprint
-from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn
 
 # Represents the download status of offline LLM models.
 _model_status: Dict[str, str] = {}  # model_id -> status
@@ -60,6 +61,7 @@ def _download_model_with_progress(model_id: str, repo_id: str, filename: str, si
     Download a model from Hugging Face with progress display.
     Returns True on success, False on failure.
     """
+    # pylint: disable=import-outside-toplevel
     try:
         from huggingface_hub import hf_hub_download
         from huggingface_hub.utils import HfHubHTTPError
@@ -71,37 +73,37 @@ def _download_model_with_progress(model_id: str, repo_id: str, filename: str, si
     try:
         cache_dir = _get_model_cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
-        
+
         model_path = cache_dir / filename
-        
+
         # Check if already downloaded
         if model_path.exists():
             return True
-            
+
         rprint(f"[yellow]Downloading {model_id} ({size_gb}GB)...[/]")
         rprint("[yellow]This may take several minutes depending on your internet connection.[/]")
-        
+
         # Download with progress (huggingface_hub handles progress internally)
-        downloaded_path = hf_hub_download(
+        hf_hub_download(
             repo_id=repo_id,
             filename=filename,
             cache_dir=str(cache_dir),
             local_dir=str(cache_dir),
             local_dir_use_symlinks=False
         )
-        
+
         # Create flag file to mark successful download
         flag_file = _get_model_flag_file(model_id)
         flag_file.parent.mkdir(parents=True, exist_ok=True)
         flag_file.touch()
-        
+
         rprint(f"[green]✅ {model_id} downloaded successfully![/]")
         return True
-        
+
     except HfHubHTTPError as e:
         rprint(f"[red]Failed to download model: {e}[/]")
         return False
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         rprint(f"[red]Error downloading model: {e}[/]")
         return False
 
@@ -113,23 +115,23 @@ def download_model_sync(model_id: str) -> bool:
     if model_id not in OFFLINE_MODELS:
         rprint(f"[red]Unknown offline model: {model_id}[/]")
         return False
-        
+
     model_config = OFFLINE_MODELS[model_id]
-    
+
     _set_model_status(model_id, "DOWNLOADING")
-    
+
     success = _download_model_with_progress(
         model_id=model_id,
         repo_id=model_config["repo_id"],
         filename=model_config["filename"],
         size_gb=model_config["size_gb"]
     )
-    
+
     if success:
         _set_model_status(model_id, "READY")
     else:
         _set_model_status(model_id, "FAILED")
-        
+
     return success
 
 def get_model_path(model_id: str) -> Optional[Path]:
@@ -139,14 +141,14 @@ def get_model_path(model_id: str) -> Optional[Path]:
     """
     if get_model_status(model_id) != "READY":
         return None
-        
+
     if model_id not in OFFLINE_MODELS:
         return None
-        
+
     model_config = OFFLINE_MODELS[model_id]
     cache_dir = _get_model_cache_dir()
     model_path = cache_dir / model_config["filename"]
-    
+
     return model_path if model_path.exists() else None
 
 def get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
