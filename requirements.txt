@@ -1,5 +1,5 @@
 # Runtime dependencies
-typer==0.21.0
+typer==0.21.1
 keyring==25.7.0
 prompt_toolkit==3.0.52
 httpx==0.28.1
