@@ -66,6 +66,9 @@ def _download_model_sync():
     """Blocking function to download the model and create a flag file on success."""
     global _status  # pylint: disable=global-statement
 
+    # Import triggers model download as a side effect
+    from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2  # noqa: F401 pylint: disable=import-outside-toplevel,unused-import
+
     try:
         with _lock:
             _status = "DOWNLOADING"
