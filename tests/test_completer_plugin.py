@@ -209,10 +209,12 @@ class TestCmdPathCompleter(TestCase):
         self.assertIn(Completion("xt", start_position=-1, display="file.txt"), completions)
         mock_isdir.assert_called_once_with("file.txt")
 
+    @patch("aye.plugins.completer.sys.platform", "linux")
     @patch.dict(os.environ, {"AYE_SKIP_PATH_SCAN": "1"}, clear=False)
     @patch("os.environ.get", return_value=None)
     def test_get_system_commands_no_path(self, mock_env_get):
         # Ensure no background thread starts; we want to directly test the method.
+        # Mock platform as linux to avoid Windows built-ins being included.
         completer = CmdPathCompleter()
         self.assertEqual(completer._get_system_commands(), [])
 
@@ -259,8 +261,10 @@ class TestCmdPathCompleter(TestCase):
             self.assertNotIn("/mnt/c/Windows", scanned_dirs)
             self.assertNotIn("/mnt/d/Data", scanned_dirs)
 
+    @patch("aye.plugins.completer.sys.platform", "linux")
     def test_get_system_commands_unreadable_dir(self):
         # Use os.pathsep so test works on both Unix (':') and Windows (';')
+        # Mock platform as linux to test Unix-style executable detection.
         test_path = os.pathsep.join(["/bin", "/usr/bin", "/unreadable"])
 
         with (
@@ -304,3 +308,82 @@ class TestCmdPathCompleter(TestCase):
             self.assertIn("ls", commands)
             self.assertIn("grep", commands)
             self.assertEqual(len(commands), 2)
+
+    @patch("aye.plugins.completer.sys.platform", "win32")
+    @patch.dict(os.environ, {"AYE_SKIP_PATH_SCAN": "1", "PATH": "C:\\Windows\\System32"})
+    def test_windows_builtin_commands_included(self):
+        """Windows shell built-in commands (dir, mkdir, etc.) should be included."""
+        from aye.plugins.completer import _WINDOWS_BUILTINS
+
+        with patch("aye.plugins.completer.os.path.isdir", return_value=False):
+            completer = CmdPathCompleter()
+            commands = completer._get_system_commands()
+
+            # Should include Windows built-ins even if no PATH dirs are accessible
+            self.assertIn("dir", commands)
+            self.assertIn("mkdir", commands)
+            self.assertIn("cd", commands)
+            self.assertIn("copy", commands)
+            for builtin in _WINDOWS_BUILTINS:
+                self.assertIn(builtin, commands)
+
+    @patch("aye.plugins.completer.sys.platform", "win32")
+    @patch.dict(os.environ, {"AYE_SKIP_PATH_SCAN": "1", "PATH": "C:\\Windows\\System32"})
+    def test_windows_executable_detection_by_extension(self):
+        """On Windows, executables should be detected by extension, not permission bit."""
+        with (
+            patch("aye.plugins.completer.os.path.isdir", return_value=True),
+            patch("aye.plugins.completer.os.scandir") as mock_scandir,
+        ):
+            class DummyDirEntries:
+                def __init__(self, entries):
+                    self._entries = entries
+
+                def __enter__(self):
+                    return iter(self._entries)
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+            def make_entry(name, is_file=True):
+                entry = MagicMock()
+                entry.name = name
+                entry.path = f"C:\\Windows\\System32\\{name}"
+                entry.is_file.return_value = is_file
+                return entry
+
+            mock_scandir.return_value = DummyDirEntries([
+                make_entry("python.exe"),
+                make_entry("script.bat"),
+                make_entry("tool.cmd"),
+                make_entry("readme.txt"),  # Not executable
+                make_entry("SubDir", is_file=False),  # Directory
+            ])
+
+            completer = CmdPathCompleter()
+            commands = completer._get_system_commands()
+
+            # Should include executables (without extension)
+            self.assertIn("python", commands)
+            self.assertIn("script", commands)
+            self.assertIn("tool", commands)
+
+            # Should NOT include non-executables
+            self.assertNotIn("readme.txt", commands)
+            self.assertNotIn("readme", commands)
+            self.assertNotIn("SubDir", commands)
+
+    def test_get_command_name_strips_extension_on_windows(self):
+        """_get_command_name should strip executable extensions on Windows."""
+        completer = CmdPathCompleter()
+
+        with patch("aye.plugins.completer.sys.platform", "win32"):
+            self.assertEqual(completer._get_command_name("python.exe"), "python")
+            self.assertEqual(completer._get_command_name("script.bat"), "script")
+            self.assertEqual(completer._get_command_name("tool.cmd"), "tool")
+            self.assertEqual(completer._get_command_name("readme.txt"), "readme.txt")
+
+        with patch("aye.plugins.completer.sys.platform", "linux"):
+            # On non-Windows, should not strip extensions
+            self.assertEqual(completer._get_command_name("python.exe"), "python.exe")
+            self.assertEqual(completer._get_command_name("script"), "script")
