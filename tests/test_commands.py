@@ -545,3 +545,98 @@ class TestCommandsInitializeProjectContext(TestCase):
         printed = "\n".join(str(c.args[0]) for c in mock_rprint.mock_calls if c.args)
         self.assertIn("Error during project scan", printed)
         self.assertIn("Proceeding without index updates", printed)
+
+    @patch("aye.controller.commands._is_small_project")
+    @patch("aye.controller.commands.PluginManager")
+    @patch("aye.controller.commands.onnx_manager.download_model_if_needed")
+    @patch("aye.controller.commands.get_user_config")
+    @patch("aye.controller.commands.config.get_value")
+    @patch("aye.controller.commands.rprint")
+    def test_initialize_project_context_project_config_priority_for_selected_model(
+        self, mock_rprint, mock_config_get, mock_get_user_config, mock_dl, mock_plugin_mgr_cls, mock_is_small
+    ):
+        """Project config (.aye/config.json) should take priority over user config (~/.ayecfg) for selected_model."""
+        # User config has "USER-MODEL", but project config has "PROJECT-MODEL"
+        mock_get_user_config.side_effect = lambda k, d=None: {
+            "verbose": "off",
+            "selected_model": "USER-MODEL",
+        }.get(k, d)
+
+        # Project config returns "PROJECT-MODEL" for selected_model
+        mock_config_get.side_effect = lambda k: {"selected_model": "PROJECT-MODEL"}.get(k)
+
+        plugin_mgr = MagicMock()
+        plugin_mgr.handle_command.return_value = {"mask": "*.py"}
+        mock_plugin_mgr_cls.return_value = plugin_mgr
+
+        mock_is_small.return_value = (True, [])
+
+        with tempfile.TemporaryDirectory() as td:
+            conf = commands.initialize_project_context(root=Path(td), file_mask="*.py", ground_truth_file=None)
+
+        # Project config should win
+        self.assertEqual(conf.selected_model, "PROJECT-MODEL")
+
+    @patch("aye.controller.commands._is_small_project")
+    @patch("aye.controller.commands.PluginManager")
+    @patch("aye.controller.commands.onnx_manager.download_model_if_needed")
+    @patch("aye.controller.commands.get_user_config")
+    @patch("aye.controller.commands.config.get_value")
+    @patch("aye.controller.commands.rprint")
+    def test_initialize_project_context_project_config_priority_for_file_mask(
+        self, mock_rprint, mock_config_get, mock_get_user_config, mock_dl, mock_plugin_mgr_cls, mock_is_small
+    ):
+        """Project config (.aye/config.json) should take priority over auto-detect for file_mask."""
+        mock_get_user_config.side_effect = lambda k, d=None: "off" if k == "verbose" else d
+
+        # Project config returns "*.ts,*.tsx" for file_mask
+        mock_config_get.side_effect = lambda k: {"file_mask": "*.ts,*.tsx"}.get(k)
+
+        plugin_mgr = MagicMock()
+        # Auto-detect would return "*.py" but should not be used
+        plugin_mgr.handle_command.return_value = {"mask": "*.py"}
+        mock_plugin_mgr_cls.return_value = plugin_mgr
+
+        mock_is_small.return_value = (True, [])
+
+        with tempfile.TemporaryDirectory() as td:
+            # file_mask is None, so should check project config
+            conf = commands.initialize_project_context(root=Path(td), file_mask=None, ground_truth_file=None)
+
+        # Project config should win over auto-detect
+        self.assertEqual(conf.file_mask, "*.ts,*.tsx")
+        # auto_detect_mask should NOT be called since project config had a value
+        plugin_mgr.handle_command.assert_not_called()
+
+    @patch("aye.controller.commands._is_small_project")
+    @patch("aye.controller.commands.PluginManager")
+    @patch("aye.controller.commands.onnx_manager.download_model_if_needed")
+    @patch("aye.controller.commands.get_user_config")
+    @patch("aye.controller.commands.config.get_value")
+    @patch("aye.controller.commands.rprint")
+    def test_initialize_project_context_fallback_when_no_project_config(
+        self, mock_rprint, mock_config_get, mock_get_user_config, mock_dl, mock_plugin_mgr_cls, mock_is_small
+    ):
+        """When project config has no values, should fall back to user config and auto-detect."""
+        mock_get_user_config.side_effect = lambda k, d=None: {
+            "verbose": "off",
+            "selected_model": "FALLBACK-MODEL",
+        }.get(k, d)
+
+        # Project config returns None for everything
+        mock_config_get.return_value = None
+
+        plugin_mgr = MagicMock()
+        plugin_mgr.handle_command.return_value = {"mask": "*.rb"}  # Auto-detected Ruby
+        mock_plugin_mgr_cls.return_value = plugin_mgr
+
+        mock_is_small.return_value = (True, [])
+
+        with tempfile.TemporaryDirectory() as td:
+            conf = commands.initialize_project_context(root=Path(td), file_mask=None, ground_truth_file=None)
+
+        # Should fall back to user config for selected_model
+        self.assertEqual(conf.selected_model, "FALLBACK-MODEL")
+        # Should fall back to auto-detect for file_mask
+        self.assertEqual(conf.file_mask, "*.rb")
+        plugin_mgr.handle_command.assert_called_once()

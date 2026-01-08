@@ -318,12 +318,18 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str], g
     plugin_manager.discover()
     conf.plugin_manager = plugin_manager
 
-    # 3. Auto-detect file mask if not provided
-    if not file_mask:
-        response = plugin_manager.handle_command("auto_detect_mask", {"project_root": str(conf.root)})
-        conf.file_mask = response["mask"] if response and response.get("mask") else "*.py"
-    else:
+    # 3. Determine file mask: CLI arg > project config > auto-detect
+    if file_mask:
         conf.file_mask = file_mask
+    else:
+        # Check project config first
+        project_file_mask = config.get_value("file_mask")
+        if project_file_mask:
+            conf.file_mask = project_file_mask
+        else:
+            # Auto-detect as fallback
+            response = plugin_manager.handle_command("auto_detect_mask", {"project_root": str(conf.root)})
+            conf.file_mask = response["mask"] if response and response.get("mask") else "*.py"
 
     # 4. Fast project size check to determine if we need RAG
     is_small, discovered_files = _is_small_project(conf.root, conf.file_mask, conf.verbose)
@@ -348,7 +354,11 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str], g
             rprint(f"[red]Error during project scan: {e}[/]")
             rprint("[yellow]Proceeding without index updates.[/]")
 
-    # 7. Load other configs
-    conf.selected_model = get_user_config("selected_model", DEFAULT_MODEL_ID)
+    # 7. Load other configs: project config > user config > default
+    conf.selected_model = (
+        config.get_value("selected_model")
+        or get_user_config("selected_model")
+        or DEFAULT_MODEL_ID
+    )
 
     return conf
