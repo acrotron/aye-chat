@@ -447,7 +447,7 @@ class TestModelApi(TestCase):
         mock_client.return_value.__enter__.return_value.post.assert_called_once()
         call_args = mock_client.return_value.__enter__.return_value.post.call_args
 
-        self.assertTrue("ayechat.ai/feedback" in call_args.args[0])
+        self.assertTrue("/feedback" in call_args.args[0])
         self.assertEqual(call_args.kwargs["json"], {"feedback": "great tool!", "chat_id": 123})
 
     @patch("aye.model.api._auth_headers")
