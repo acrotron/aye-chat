@@ -241,11 +241,6 @@ class TestAtFileCompleterPlugin(TestCase):
         (src_dir / "module1.py").write_text("# module 1")
         (src_dir / "module2.py").write_text("# module 2")
         
-        # Create nested directory
-        nested_dir = src_dir / "nested"
-        nested_dir.mkdir()
-        (nested_dir / "deep.py").write_text("# deep file")
-        
         tests_dir = self.project_root / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_main.py").write_text("# test main")
@@ -260,7 +255,7 @@ class TestAtFileCompleterPlugin(TestCase):
 
     def test_plugin_metadata(self):
         self.assertEqual(self.plugin.name, "at_file_completer")
-        self.assertEqual(self.plugin.version, "1.2.0")
+        self.assertEqual(self.plugin.version, "1.1.0")
         self.assertEqual(self.plugin.premium, "free")
 
     def test_plugin_init(self):
@@ -571,75 +566,6 @@ class TestAtFileCompleterPlugin(TestCase):
         self.assertIn("file1.py", expanded)
         self.assertIn("file2.py", expanded)
         self.assertNotIn("file10.py", expanded)
-
-    def test_parse_at_references_directory(self):
-        """Test @directory includes all files recursively."""
-        self.plugin.init({})
-        
-        result = self.plugin.on_command("parse_at_references", {
-            "text": "explain @src",
-            "project_root": str(self.project_root)
-        })
-        
-        self.assertIsNotNone(result)
-        self.assertIn("src", result["references"])
-        # Should expand to all files in src/ including nested
-        expanded = result["expanded_files"]
-        self.assertTrue(any("app.py" in f for f in expanded))
-        self.assertTrue(any("module1.py" in f for f in expanded))
-        self.assertTrue(any("deep.py" in f for f in expanded))
-
-    def test_parse_at_references_directory_with_slash(self):
-        """Test @directory/ includes all files recursively."""
-        self.plugin.init({})
-        
-        result = self.plugin.on_command("parse_at_references", {
-            "text": "explain @src/",
-            "project_root": str(self.project_root)
-        })
-        
-        self.assertIsNotNone(result)
-        # Should expand to all files in src/ including nested
-        expanded = result["expanded_files"]
-        self.assertTrue(any("app.py" in f for f in expanded))
-        self.assertTrue(any("deep.py" in f for f in expanded))
-
-    def test_parse_at_references_double_wildcard(self):
-        """Test @**/*.py recursive glob pattern."""
-        self.plugin.init({})
-        
-        result = self.plugin.on_command("parse_at_references", {
-            "text": "review @**/*.py",
-            "project_root": str(self.project_root)
-        })
-        
-        self.assertIsNotNone(result)
-        # Should find all .py files recursively
-        expanded = result["expanded_files"]
-        self.assertTrue(any("main.py" in f for f in expanded))
-        self.assertTrue(any("app.py" in f for f in expanded))
-        self.assertTrue(any("deep.py" in f for f in expanded))
-        self.assertTrue(any("test_main.py" in f for f in expanded))
-
-    def test_parse_at_references_double_wildcard_subdir(self):
-        """Test @src/** includes all files in src recursively."""
-        self.plugin.init({})
-        
-        result = self.plugin.on_command("parse_at_references", {
-            "text": "review @src/**",
-            "project_root": str(self.project_root)
-        })
-        
-        self.assertIsNotNone(result)
-        # Should find all files in src/ recursively
-        expanded = result["expanded_files"]
-        self.assertTrue(any("app.py" in f for f in expanded))
-        self.assertTrue(any("module1.py" in f for f in expanded))
-        self.assertTrue(any("deep.py" in f for f in expanded))
-        # Should NOT include root files
-        self.assertFalse(any(f == "main.py" for f in expanded))
-        # Should NOT include tests
-        self.assertFalse(any("test_" in f for f in expanded))
 
     def test_unknown_command_returns_none(self):
         self.plugin.init({})

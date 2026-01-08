@@ -155,272 +155,34 @@ def handle_completion_command(tokens: list) -> Optional[str]:
         return None
 
 
-def _should_skip_path_part(part: str, explicitly_allowed_parts: set) -> bool:
-    """Check if a path part should be skipped (hidden and not explicitly allowed).
-    
-    Args:
-        part: A single path component to check.
-        explicitly_allowed_parts: Set of path parts that should NOT be skipped
-                                  even if they start with '.'.
-    
-    Returns:
-        True if the part should be skipped, False otherwise.
-    """
-    # Not hidden - don't skip
-    if not part.startswith('.'):
-        return False
-    
-    # Hidden but explicitly allowed - don't skip
-    if part in explicitly_allowed_parts:
-        return False
-    
-    # Hidden and not explicitly allowed - skip
-    return True
-
-
-def _get_explicitly_allowed_parts(pattern: str) -> set:
-    """Extract all explicitly specified hidden directory/file names from a pattern.
-    
-    For example:
-    - '.github' -> {'.github'}
-    - '.github/' -> {'.github'}
-    - '.github/workflows' -> {'.github'}
-    - '.vscode/.hidden' -> {'.vscode', '.hidden'}
-    
-    Args:
-        pattern: The original pattern string.
-    
-    Returns:
-        Set of path parts that start with '.' and were explicitly specified.
-    """
-    # Normalize separators and remove trailing slashes
-    normalized = pattern.replace('\\', '/').rstrip('/')
-    
-    # Split into parts and collect hidden ones
-    parts = normalized.split('/')
-    hidden_parts = {part for part in parts if part.startswith('.') and part not in ('.', '..')}
-    
-    return hidden_parts
-
-
 def _expand_file_patterns(patterns: list[str], conf: Any) -> list[str]:
-    """Expand wildcard patterns and return a list of existing file paths.
-    
-    Supports:
-    - Direct file paths: src/main.py
-    - Directory paths: src/ or src (includes all files recursively)
-    - Hidden directories: .github, .vscode (when explicitly specified)
-    - Single wildcards: *.py, src/*.py
-    - Double wildcards: src/**/*.py, src/** (recursive)
-    
-    When expanding directories or using **, respects .gitignore and .ayeignore patterns.
-    Hidden files/directories are skipped UNLESS the user explicitly specifies them.
-    """
-    # Lazy import to avoid circular dependencies
-    from aye.model.ignore_patterns import load_ignore_patterns
-    
+    """Expand wildcard patterns and return a list of existing file paths."""
     expanded_files = []
-    ignore_spec = None  # Lazy load only if needed
-    verbose = getattr(conf, 'verbose', False)
-    
-    # Resolve conf.root to handle path normalization issues
-    root_resolved = conf.root.resolve()
     
     for pattern in patterns:
         pattern = pattern.strip()
         if not pattern:
             continue
-        
-        # Get all explicitly specified hidden parts from the pattern
-        explicitly_allowed = _get_explicitly_allowed_parts(pattern)
-        
-        if verbose and explicitly_allowed:
-            rprint(f"[dim]Pattern '{pattern}' explicitly allows hidden: {explicitly_allowed}[/dim]")
-        
-        # Remove trailing slash for consistency
-        pattern_clean = pattern.rstrip('/').rstrip('\\')
-        
-        # Build the target path and resolve it
-        # Use forward slashes for consistency, then let Path handle it
-        pattern_normalized = pattern_clean.replace('\\', '/')
-        direct_path = (root_resolved / pattern_normalized)
-        
-        # Try to resolve - but don't fail if path doesn't exist yet
-        try:
-            direct_path_resolved = direct_path.resolve()
-        except (OSError, ValueError):
-            direct_path_resolved = direct_path
-        
-        if verbose:
-            rprint(f"[dim]Checking path: {direct_path_resolved}[/dim]")
-            rprint(f"[dim]  exists={direct_path_resolved.exists()}, is_dir={direct_path_resolved.is_dir()}, is_file={direct_path_resolved.is_file()}[/dim]")
-        
-        # Check if it's a direct file path
-        if direct_path_resolved.is_file():
-            expanded_files.append(pattern_normalized)
-            if verbose:
-                rprint(f"[dim]'{pattern}' is a file[/dim]")
+            
+        # Check if it's a direct file path first
+        direct_path = conf.root / pattern
+        if direct_path.is_file():
+            expanded_files.append(pattern)
             continue
+            
+        # Use glob to expand wildcards
+        # Search relative to the project root
+        matched_paths = list(conf.root.glob(pattern))
         
-        # Check if it's a directory - include all files recursively
-        if direct_path_resolved.is_dir():
-            if ignore_spec is None:
-                ignore_spec = load_ignore_patterns(root_resolved)
-            
-            file_count = 0
-            if verbose:
-                rprint(f"[dim]'{pattern}' is a directory, scanning recursively...[/dim]")
-            
-            try:
-                for file_path in direct_path_resolved.rglob('*'):
-                    if not file_path.is_file():
-                        continue
-                    try:
-                        # Get path relative to the project root (not the target directory)
-                        relative_path = file_path.relative_to(root_resolved)
-                        rel_path_str = relative_path.as_posix()
-                        
-                        # Skip ignored files
-                        if ignore_spec.match_file(rel_path_str):
-                            continue
-                        
-                        # Skip hidden files/directories, but allow explicitly specified ones
-                        if any(_should_skip_path_part(part, explicitly_allowed) 
-                               for part in relative_path.parts):
-                            continue
-                        
-                        expanded_files.append(rel_path_str)
-                        file_count += 1
-                    except ValueError as e:
-                        if verbose:
-                            rprint(f"[dim]  Skipping {file_path}: {e}[/dim]")
-            except Exception as e:
-                if verbose:
-                    rprint(f"[dim]  Error scanning directory: {e}[/dim]")
-            
-            if verbose:
-                rprint(f"[dim]Expanded '{pattern}' to {file_count} file(s)[/dim]")
-            continue
-        
-        # Handle ** patterns for recursive matching
-        if '**' in pattern:
-            if ignore_spec is None:
-                ignore_spec = load_ignore_patterns(root_resolved)
-            
-            # If pattern ends with ** or **/, convert to **/* to match files
-            glob_pattern = pattern_normalized
-            if glob_pattern.endswith('**'):
-                glob_pattern = glob_pattern + '/*'
-            
-            if verbose:
-                rprint(f"[dim]Using glob pattern: {glob_pattern}[/dim]")
-            
-            file_count = 0
-            try:
-                matched_paths = list(root_resolved.glob(glob_pattern))
-                for matched_path in matched_paths:
-                    if not matched_path.is_file():
-                        continue
-                    try:
-                        relative_path = matched_path.relative_to(root_resolved)
-                        rel_path_str = relative_path.as_posix()
-                        
-                        # Skip ignored files for ** patterns
-                        if ignore_spec.match_file(rel_path_str):
-                            continue
-                        
-                        # Skip hidden files/directories, but allow explicitly specified ones
-                        if any(_should_skip_path_part(part, explicitly_allowed)
-                               for part in relative_path.parts):
-                            continue
-                        
-                        expanded_files.append(rel_path_str)
-                        file_count += 1
-                    except ValueError:
-                        pass
-            except Exception as e:
-                if verbose:
-                    rprint(f"[dim]  Error with glob: {e}[/dim]")
-            
-            if verbose:
-                rprint(f"[dim]Expanded '{pattern}' to {file_count} file(s)[/dim]")
-            continue
-        
-        # Use glob to expand single wildcards (no filtering for explicit patterns)
-        if verbose:
-            rprint(f"[dim]Trying simple glob: {pattern_normalized}[/dim]")
-        
-        try:
-            matched_paths = list(root_resolved.glob(pattern_normalized))
-            
-            for matched_path in matched_paths:
-                if matched_path.is_file():
-                    try:
-                        relative_path = matched_path.relative_to(root_resolved)
-                        expanded_files.append(relative_path.as_posix())
-                    except ValueError:
-                        expanded_files.append(pattern_normalized)
-                elif matched_path.is_dir():
-                    # Glob matched a directory - recursively include files
-                    if ignore_spec is None:
-                        ignore_spec = load_ignore_patterns(root_resolved)
-                    
-                    if verbose:
-                        rprint(f"[dim]Glob matched directory '{matched_path.name}', scanning recursively...[/dim]")
-                    
-                    for file_path in matched_path.rglob('*'):
-                        if not file_path.is_file():
-                            continue
-                        try:
-                            relative_path = file_path.relative_to(root_resolved)
-                            rel_path_str = relative_path.as_posix()
-                            
-                            if ignore_spec.match_file(rel_path_str):
-                                continue
-                            
-                            if any(_should_skip_path_part(part, explicitly_allowed)
-                                   for part in relative_path.parts):
-                                continue
-                            
-                            expanded_files.append(rel_path_str)
-                        except ValueError:
-                            pass
-        except Exception as e:
-            if verbose:
-                rprint(f"[dim]  Error with simple glob: {e}[/dim]")
-        
-        # If still no matches and pattern looks like a directory path, try one more time
-        # This handles edge cases where is_dir() returns False but the directory exists
-        if not expanded_files or expanded_files == []:
-            if direct_path.exists() and not direct_path.is_file():
-                if verbose:
-                    rprint(f"[dim]Path exists but wasn't detected as dir, trying fallback scan...[/dim]")
-                
-                if ignore_spec is None:
-                    ignore_spec = load_ignore_patterns(root_resolved)
-                
+        # Add relative paths of matched files
+        for matched_path in matched_paths:
+            if matched_path.is_file():
                 try:
-                    for file_path in direct_path.rglob('*'):
-                        if not file_path.is_file():
-                            continue
-                        try:
-                            relative_path = file_path.relative_to(root_resolved)
-                            rel_path_str = relative_path.as_posix()
-                            
-                            if ignore_spec.match_file(rel_path_str):
-                                continue
-                            
-                            if any(_should_skip_path_part(part, explicitly_allowed)
-                                   for part in relative_path.parts):
-                                continue
-                            
-                            if rel_path_str not in expanded_files:
-                                expanded_files.append(rel_path_str)
-                        except ValueError:
-                            pass
-                except Exception as e:
-                    if verbose:
-                        rprint(f"[dim]  Fallback scan error: {e}[/dim]")
+                    relative_path = matched_path.relative_to(conf.root)
+                    expanded_files.append(str(relative_path))
+                except ValueError:
+                    # If we can't make it relative, use the original pattern
+                    expanded_files.append(pattern)
     
     return expanded_files
 
@@ -434,14 +196,6 @@ def handle_with_command(
 ) -> Optional[int]:
     """Handle the 'with' command for file-specific prompts with wildcard support.
     
-    Supports:
-    - Single files: with main.py: prompt
-    - Multiple files: with main.py, utils.py: prompt
-    - Wildcards: with *.py: prompt
-    - Directories: with src: prompt (includes all files recursively)
-    - Hidden directories: with .github: prompt (explicitly allowed)
-    - Double wildcards: with src/**: prompt, with **/*.py: prompt
-    
     Args:
         prompt: The full prompt string starting with 'with'
         conf: Configuration object
@@ -454,10 +208,6 @@ def handle_with_command(
     """
     try:
         parts = prompt.split(":", 1)
-        if len(parts) != 2:
-            rprint("[red]Error: 'with' command requires format: with <files>: <prompt>[/red]")
-            return None
-            
         file_list_str, new_prompt_str = parts
         file_list_str = file_list_str.strip()[4:].strip()  # Remove 'with ' prefix
 
@@ -468,48 +218,36 @@ def handle_with_command(
             rprint("[red]Error: Prompt cannot be empty after the colon.[/red]")
             return None
 
-        # Parse file patterns (can include wildcards, directories, **)
+        # Parse file patterns (can include wildcards)
         file_patterns = [f.strip() for f in file_list_str.replace(",", " ").split() if f.strip()]
         
-        if getattr(conf, 'verbose', False):
-            rprint(f"[dim]File patterns: {file_patterns}[/dim]")
-            rprint(f"[dim]Project root: {conf.root}[/dim]")
-        
-        # Expand wildcards and directories to get actual file paths
+        # Expand wildcards to get actual file paths
         expanded_files = _expand_file_patterns(file_patterns, conf)
         
         if not expanded_files:
             rprint("[red]Error: No files found matching the specified patterns.[/red]")
-            rprint(f"[dim]Patterns tried: {file_patterns}[/dim]")
-            rprint(f"[dim]Project root: {conf.root}[/dim]")
             return None
         
         explicit_source_files = {}
-        read_errors = []
         
         for file_name in expanded_files:
             file_path = conf.root / file_name
             if not file_path.is_file():
                 rprint(f"[yellow]File not found, skipping: {file_name}[/yellow]")
-                continue
+                continue  # Continue with other files instead of breaking
             try:
                 explicit_source_files[file_name] = file_path.read_text(encoding="utf-8")
             except Exception as e:
-                read_errors.append(f"{file_name}: {e}")
-                continue
+                rprint(f"[red]Could not read file '{file_name}': {e}[/red]")
+                continue  # Continue with other files instead of breaking
         
         if not explicit_source_files:
             rprint("[red]Error: No readable files found.[/red]")
-            if read_errors:
-                for err in read_errors[:5]:
-                    rprint(f"[dim]  {err}[/dim]")
             return None
         
         # Show which files were included
-        if getattr(conf, 'verbose', False) or len(explicit_source_files) != len(expanded_files):
-            file_list = ', '.join(list(explicit_source_files.keys())[:10])
-            suffix = f" (+{len(explicit_source_files) - 10} more)" if len(explicit_source_files) > 10 else ""
-            rprint(f"[cyan]Including {len(explicit_source_files)} file(s): {file_list}{suffix}[/cyan]")
+        if conf.verbose or len(explicit_source_files) != len(expanded_files):
+            rprint(f"[cyan]Including {len(explicit_source_files)} file(s): {', '.join(explicit_source_files.keys())}[/cyan]")
 
         llm_response = invoke_llm(
             prompt=new_prompt_str.strip(),
@@ -517,7 +255,7 @@ def handle_with_command(
             console=console,
             plugin_manager=conf.plugin_manager,
             chat_id=chat_id,
-            verbose=getattr(conf, 'verbose', False),
+            verbose=conf.verbose,
             explicit_source_files=explicit_source_files
         )
         
@@ -588,7 +326,7 @@ def handle_blog_command(
             console=console,
             plugin_manager=conf.plugin_manager,
             chat_id=chat_id,
-            verbose=getattr(conf, 'verbose', False),
+            verbose=conf.verbose,
             explicit_source_files=None,
         )
 

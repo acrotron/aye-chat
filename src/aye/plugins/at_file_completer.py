@@ -8,8 +8,6 @@ Usage:
     - Multiple @references can be used in a single prompt
     - Supports relative paths: @src/utils.py
     - Supports wildcards in file patterns: @src/*.py, @*.py, @tests/test_*.py
-    - Supports directories: @src/ or @src (includes all files recursively)
-    - Supports double wildcards: @**/*.py, @src/** (recursive)
 
 Examples:
     "I want to update @main.py with a driver function"
@@ -17,8 +15,6 @@ Examples:
     "Explain what @config.py does"
     "Update all @*.py files with better logging"
     "Fix tests in @tests/test_*.py"
-    "Explain the @src/ directory structure"
-    "Review @src/** for code quality"
 '''
 
 import os
@@ -329,12 +325,12 @@ class AtFileCompleterPlugin(Plugin):
     """
 
     name = "at_file_completer"
-    version = "1.2.0"  # Version bump for directory and ** support
+    version = "1.1.0"  # Version bump for wildcard support
     premium = "free"
     debug = False
     verbose = False
 
-    # Regex pattern for @file references - includes wildcards (* and ?) and directories
+    # Regex pattern for @file references - includes wildcards (* and ?)
     AT_REFERENCE_PATTERN = r'(?:^|\s)@([\w./\-_*?]+)'
 
     def __init__(self):
@@ -384,93 +380,47 @@ class AtFileCompleterPlugin(Plugin):
         return references, cleaned
 
     def _expand_file_patterns(self, patterns: List[str], project_root: Path) -> List[str]:
-        """Expand file patterns (including wildcards and directories) to actual file paths.
+        """Expand file patterns (including wildcards) to actual file paths.
         
         Supports:
         - Direct file paths: src/main.py
         - Wildcards: *.py, src/*.py, tests/test_*.py
         - Question mark wildcards: file?.py
-        - Directories: src, src/ (recursively includes all files)
-        - Double wildcards: **/*.py, src/** (recursive glob)
-        
-        Respects .gitignore and .ayeignore patterns.
         """
         expanded = []
-        
-        # Load ignore patterns for filtering
-        ignore_spec = load_ignore_patterns(project_root)
-        
-        def is_ignored(file_path: Path) -> bool:
-            """Check if a file should be ignored."""
-            try:
-                rel_path = file_path.relative_to(project_root)
-                rel_path_str = rel_path.as_posix()
-                
-                if ignore_spec.match_file(rel_path_str):
-                    return True
-                
-                # Skip hidden files/directories
-                if any(part.startswith('.') for part in rel_path.parts):
-                    return True
-                
-                return False
-            except ValueError:
-                return True
-        
-        def add_file(file_path: Path) -> None:
-            """Add a file to expanded list if valid."""
-            if not file_path.is_file():
-                return
-            if is_ignored(file_path):
-                return
-            try:
-                rel_path = str(file_path.relative_to(project_root))
-                if rel_path not in expanded:
-                    expanded.append(rel_path)
-            except ValueError:
-                pass
 
         for pattern in patterns:
             pattern = pattern.strip()
             if not pattern:
                 continue
             
-            # Remove trailing slash for directory detection
-            pattern_normalized = pattern.rstrip('/')
+            # Remove trailing slash if present (it's a folder reference)
+            pattern = pattern.rstrip('/')
 
             # Check if pattern contains wildcards
             has_wildcard = '*' in pattern or '?' in pattern
-            has_double_wildcard = '**' in pattern
             
             if not has_wildcard:
-                # Direct file or directory path
-                direct_path = project_root / pattern_normalized
-                
+                # Direct file path - check if it exists
+                direct_path = project_root / pattern
                 if direct_path.is_file():
-                    add_file(direct_path)
+                    expanded.append(pattern)
                     continue
                 
-                # Check if it's a directory - recursively include all files
+                # Check if it's a directory - if so, skip it
                 if direct_path.is_dir():
-                    for file_path in direct_path.rglob('*'):
-                        add_file(file_path)
                     continue
             else:
-                # Pattern contains wildcards
-                if has_double_wildcard:
-                    # Use glob which supports ** for recursive matching
-                    matched = list(project_root.glob(pattern))
-                else:
-                    # Single * patterns
-                    matched = list(project_root.glob(pattern))
-                
+                # Pattern contains wildcards - use glob expansion
+                matched = list(project_root.glob(pattern))
                 for match in matched:
                     if match.is_file():
-                        add_file(match)
-                    elif match.is_dir():
-                        # If glob matched a directory, include its files recursively
-                        for file_path in match.rglob('*'):
-                            add_file(file_path)
+                        try:
+                            rel_path = match.relative_to(project_root)
+                            expanded.append(str(rel_path))
+                        except ValueError:
+                            # If we can't make it relative, use the pattern as-is
+                            pass
 
         return expanded
 
@@ -520,7 +470,7 @@ class AtFileCompleterPlugin(Plugin):
             if not references:
                 return None  # No @references found
 
-            # Expand patterns to actual files (handles wildcards and directories)
+            # Expand patterns to actual files (handles wildcards)
             expanded_files = self._expand_file_patterns(references, project_root)
 
             if not expanded_files:
