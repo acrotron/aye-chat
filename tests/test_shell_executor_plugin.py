@@ -154,3 +154,49 @@ class TestShellExecutorPlugin(TestCase):
         with patch.object(self.plugin, '_is_windows', return_value=True):
             cmd = self.plugin._build_full_cmd('echo', ['hello world', 'C:\\Users\\Test'])
             self.assertEqual(cmd, 'echo "hello world" C:\\Users\\Test')
+
+    def test_strip_outer_quotes(self):
+        """Test that outer quotes are properly stripped from arguments."""
+        # Double quotes
+        self.assertEqual(self.plugin._strip_outer_quotes('"."'), '.')
+        self.assertEqual(self.plugin._strip_outer_quotes('"hello world"'), 'hello world')
+        self.assertEqual(self.plugin._strip_outer_quotes('".\\path\\to\\file"'), '.\\path\\to\\file')
+
+        # Single quotes
+        self.assertEqual(self.plugin._strip_outer_quotes("'.'"), '.')
+        self.assertEqual(self.plugin._strip_outer_quotes("'hello world'"), 'hello world')
+
+        # No quotes - should be unchanged
+        self.assertEqual(self.plugin._strip_outer_quotes('hello'), 'hello')
+        self.assertEqual(self.plugin._strip_outer_quotes('.'), '.')
+
+        # Mismatched quotes - should not be stripped
+        self.assertEqual(self.plugin._strip_outer_quotes('"hello\''), '"hello\'')
+        self.assertEqual(self.plugin._strip_outer_quotes('\'hello"'), '\'hello"')
+
+        # Single character - should not crash
+        self.assertEqual(self.plugin._strip_outer_quotes('"'), '"')
+        self.assertEqual(self.plugin._strip_outer_quotes(''), '')
+
+    def test_build_full_cmd_windows_with_quoted_args(self):
+        """Test that pre-quoted args (from shlex posix=False) are handled correctly on Windows."""
+        with patch.object(self.plugin, '_is_windows', return_value=True):
+            # This simulates: pip install -e "."
+            # shlex.split('pip install -e "."', posix=False) gives: ['pip', 'install', '-e', '"."']
+            cmd = self.plugin._build_full_cmd('pip', ['install', '-e', '"."'])
+            # Should produce: pip install -e .
+            # The key fix: NOT pip install -e "".""
+            # Stripping quotes from "." gives "." which doesn't need re-quoting
+            self.assertEqual(cmd, 'pip install -e .')
+
+            # Test with path containing spaces - quotes are preserved/re-added
+            cmd = self.plugin._build_full_cmd('pip', ['install', '-e', '"./my project"'])
+            self.assertEqual(cmd, 'pip install -e "./my project"')
+
+            # Test with already unquoted args
+            cmd = self.plugin._build_full_cmd('pip', ['install', '-e', '.'])
+            self.assertEqual(cmd, 'pip install -e .')
+
+            # Test mixed quoted and unquoted args - "echo hello" has space so gets re-quoted
+            cmd = self.plugin._build_full_cmd('cmd', ['/c', '"echo hello"', 'world'])
+            self.assertEqual(cmd, 'cmd /c "echo hello" world')

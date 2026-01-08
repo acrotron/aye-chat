@@ -10,7 +10,7 @@ from rich import print as rprint
 
 class ShellExecutorPlugin(Plugin):
     name = "shell_executor"
-    version = "1.0.0"
+    version = "1.0.1"  # Fixed Windows quote escaping
     premium = "free"
 
     # Known interactive commands that require a TTY (add more as needed)
@@ -61,15 +61,31 @@ class ShellExecutorPlugin(Plugin):
             except (subprocess.CalledProcessError, FileNotFoundError):
                 return False
 
+    def _strip_outer_quotes(self, arg: str) -> str:
+        """Strip matching outer quotes from an argument.
+
+        This handles args that were preserved by shlex.split(posix=False),
+        which keeps quotes as part of the token on Windows.
+        """
+        if len(arg) >= 2:
+            if (arg.startswith('"') and arg.endswith('"')) or \
+               (arg.startswith("'") and arg.endswith("'")):
+                return arg[1:-1]
+        return arg
+
     def _build_full_cmd(self, command: str, args: list) -> str:
         """Build the full shell command string, quoting args properly."""
         if self._is_windows():
             quoted_args = []
             for arg in args:
-                if ' ' in arg or '"' in arg:
-                    quoted_args.append('"' + arg.replace('"', '\\"') + '"')
+                # First strip any existing outer quotes (from shlex.split posix=False)
+                clean_arg = self._strip_outer_quotes(arg)
+                # Then apply proper Windows quoting if needed
+                if ' ' in clean_arg or '"' in clean_arg or not clean_arg:
+                    # Escape internal quotes and wrap in quotes
+                    quoted_args.append('"' + clean_arg.replace('"', '\\"') + '"')
                 else:
-                    quoted_args.append(arg)
+                    quoted_args.append(clean_arg)
             return f"{command} {' '.join(quoted_args)}"
         else:
             quoted_args = [shlex.quote(arg) for arg in args]
