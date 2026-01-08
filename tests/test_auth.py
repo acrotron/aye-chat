@@ -135,6 +135,21 @@ key=value
             self.assertIsNotNone(token)
             self.assertTrue(token.startswith("aye_demo_"))
 
+    def test_get_token_regenerates_demo_if_token_empty(self):
+        """When token exists but is empty, a demo token should be generated (TC-DEM-010)."""
+        # Write an empty token value
+        self.token_path.write_text("[default]\ntoken=\n", encoding="utf-8")
+        os.environ.pop("AYE_TOKEN", None)
+
+        with patch("pathlib.Path.chmod"):
+            token = auth.get_token()
+            self.assertIsNotNone(token)
+            self.assertTrue(token.startswith("aye_demo_"))
+
+            # Verify the empty token was replaced
+            text = self.token_path.read_text(encoding="utf-8")
+            self.assertIn(f"token={token}", text)
+
     def test_is_valid_token_accepts_valid_formats(self):
         """Valid tokens should pass validation."""
         self.assertTrue(auth._is_valid_token("aye_demo_abc123def"))
