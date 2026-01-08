@@ -154,7 +154,9 @@ class TestModelApi(TestCase):
         result = api.cli_invoke(message="test", dry_run=False)
         self.assertEqual(result, {"final": "response"})
         self.assertEqual(mock_get.call_count, 2)
-        mock_get.assert_called_with("https://fake.url", timeout=api.TIMEOUT)
+        from aye.model.auth import get_user_config
+        current = "on" == get_user_config("verbose", "off")
+        mock_get.assert_called_with("https://fake.url", timeout=api.TIMEOUT, verify=current)
 
     @patch("aye.model.api.time")
     @patch("httpx.get")

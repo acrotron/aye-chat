@@ -30,6 +30,27 @@ def _is_stream_debug():
     return os.environ.get("AYE_STREAM_DEBUG", "").lower() in ("1", "true", "on")
 
 
+def _ssl_verify() -> bool:
+    """Undocumented: control TLS certificate verification for API calls.
+
+    Sources (in priority order):
+      1) env var AYE_SSLVERIFY (via get_user_config)
+      2) ~/.ayecfg [default] sslverify=on|off
+
+    Defaults to True.
+    """
+    raw = get_user_config("sslverify", "on")
+    val = str(raw).strip().lower()
+
+    if val in ("0", "false", "off", "no"):
+        return False
+    if val in ("1", "true", "on", "yes"):
+        return True
+
+    # Be conservative: default to verify enabled.
+    return True
+
+
 def _auth_headers() -> Dict[str, str]:
     token = get_token()
     if not token:
@@ -185,7 +206,9 @@ def cli_invoke(
         print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
         print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
 
-    with httpx.Client(timeout=TIMEOUT, verify=True) as client:
+    verify = _ssl_verify()
+
+    with httpx.Client(timeout=TIMEOUT, verify=verify) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
         if _is_debug():
             print(f"[DEBUG] Initial response status: {resp.status_code}")
@@ -214,7 +237,7 @@ def cli_invoke(
             poll_count += 1
             if _is_debug():
                 print(f"[DEBUG] Poll attempt {poll_count}, status: {last_status}")
-            r = httpx.get(response_url, timeout=TIMEOUT)
+            r = httpx.get(response_url, timeout=TIMEOUT, verify=verify)
             last_status = r.status_code
             if _is_debug():
                 print(f"[DEBUG] Poll response status: {r.status_code}")
@@ -296,7 +319,9 @@ def fetch_plugin_manifest(dry_run: bool = False):
         print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
         print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
 
-    with httpx.Client(timeout=TIMEOUT, verify=True) as client:
+    verify = _ssl_verify()
+
+    with httpx.Client(timeout=TIMEOUT, verify=verify) as client:
         resp = client.post(url, json=payload, headers=_auth_headers())
         if _is_debug():
             print(f"[DEBUG] Response status: {resp.status_code}")
@@ -314,7 +339,9 @@ def fetch_server_time(dry_run: bool = False) -> int:
         print(f"[DEBUG] Sending request to {url}")
         print(f"[DEBUG] Query params: {json.dumps(params, indent=2)}")
 
-    with httpx.Client(timeout=TIMEOUT, verify=True) as client:
+    verify = _ssl_verify()
+
+    with httpx.Client(timeout=TIMEOUT, verify=verify) as client:
         resp = client.get(url, params=params)
         if _is_debug():
             print(f"[DEBUG] Response status: {resp.status_code}")
@@ -347,8 +374,10 @@ def send_feedback(feedback_text: str, chat_id: int = 0, telemetry: Optional[Dict
         print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
         print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
 
+    verify = _ssl_verify()
+
     try:
-        with httpx.Client(timeout=10.0, verify=True) as client:
+        with httpx.Client(timeout=10.0, verify=verify) as client:
             resp = client.post(url, json=payload, headers=_auth_headers())
             if _is_debug():
                 print(f"[DEBUG] Response status: {resp.status_code}")

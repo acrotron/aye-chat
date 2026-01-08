@@ -36,6 +36,7 @@ from aye.controller.command_handlers import (
     handle_cd_command,
     handle_model_command,
     handle_verbose_command,
+    handle_sslverify_command,
     handle_debug_command,
     handle_completion_command,
     handle_with_command,
@@ -343,6 +344,9 @@ def chat_repl(conf: Any) -> None:
                     telemetry.record_command("verbose", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_verbose_command(tokens)
                     conf.verbose = get_user_config("verbose", "off").lower() == "on"
+                elif lowered_first == "sslverify":
+                    telemetry.record_command("sslverify", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
+                    handle_sslverify_command(tokens)
                 elif lowered_first == "debug":
                     telemetry.record_command("debug", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_debug_command(tokens)
