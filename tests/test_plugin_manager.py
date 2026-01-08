@@ -61,7 +61,7 @@ class TestPluginManager(TestCase):
         mock_plugin_module = MagicMock()
         mock_plugin_module.TestPlugin = TestPlugin  # Attach the test class
         mock_module.return_value = mock_plugin_module
-        
+
         # Mock spec.loader.exec_module
         mock_loader = MagicMock()
         mock_loader.exec_module.return_value = None
@@ -69,13 +69,45 @@ class TestPluginManager(TestCase):
         mock_spec_obj.loader = mock_loader
         mock_spec.return_value = mock_spec_obj
 
-        # 3. Run discovery
+        # 3. Run discovery with verbose=True to see "Plugins loaded" message
+        self.plugin_manager.verbose = True
         self.plugin_manager.discover()
 
         # 4. Assert plugin was registered
         self.assertIn('test_plugin', self.plugin_manager.registry)
         self.assertIsInstance(self.plugin_manager.registry['test_plugin'], TestPlugin)
         mock_rprint.assert_called_once_with("[bold cyan]Plugins loaded: test_plugin[/]")
+
+    @patch('importlib.util.spec_from_file_location')
+    @patch('importlib.util.module_from_spec')
+    @patch('pathlib.Path.glob')
+    @patch('pathlib.Path.is_dir', return_value=True)
+    @patch('aye.controller.plugin_manager.rprint')
+    def test_discover_with_plugins_no_message_when_not_verbose(self, mock_rprint, mock_is_dir, mock_glob, mock_module, mock_spec):
+        """When verbose is False, 'Plugins loaded' message should not be printed."""
+        # 1. Mock the file system scan
+        mock_file_path = MagicMock(spec=os.PathLike)
+        mock_file_path.name = 'test_plugin.py'
+        mock_file_path.stem = 'test_plugin'
+        mock_glob.return_value = [mock_file_path]
+
+        # 2. Mock the import machinery
+        mock_plugin_module = MagicMock()
+        mock_plugin_module.TestPlugin = TestPlugin
+        mock_module.return_value = mock_plugin_module
+
+        mock_loader = MagicMock()
+        mock_loader.exec_module.return_value = None
+        mock_spec_obj = MagicMock()
+        mock_spec_obj.loader = mock_loader
+        mock_spec.return_value = mock_spec_obj
+
+        # 3. Run discovery with verbose=False (default)
+        self.plugin_manager.discover()
+
+        # 4. Plugin should be registered but no "Plugins loaded" message
+        self.assertIn('test_plugin', self.plugin_manager.registry)
+        mock_rprint.assert_not_called()
 
     @patch('importlib.util.spec_from_file_location', side_effect=ImportError("Module load failed"))
     @patch('pathlib.Path.glob')
