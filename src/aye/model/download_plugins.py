@@ -7,11 +7,41 @@ plugin manifest.
 import hashlib
 import json
 import shutil
+import socket
 import time
 from pathlib import Path
 
+import httpx
+
 from aye.model.auth import get_token
 from aye.model.api import fetch_plugin_manifest
+
+
+def _is_network_error(exc: Exception) -> bool:
+    """Check if an exception is a network-related error."""
+    # httpx network errors
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException)):
+        return True
+    # Socket errors (DNS failures, connection refused, etc.)
+    if isinstance(exc, (socket.gaierror, socket.timeout, OSError)):
+        # Check for common network-related errno values
+        if hasattr(exc, 'errno') and exc.errno in (
+            11001,  # getaddrinfo failed (Windows)
+            -2,     # Name or service not known (Linux)
+            -3,     # Temporary failure in name resolution
+            110,    # Connection timed out
+            111,    # Connection refused
+            113,    # No route to host
+        ):
+            return True
+        # Check error message for network-related keywords
+        err_str = str(exc).lower()
+        if any(keyword in err_str for keyword in ('getaddrinfo', 'name resolution', 'network', 'connection')):
+            return True
+    # Check if the exception wraps a network error
+    if exc.__cause__ and _is_network_error(exc.__cause__):
+        return True
+    return False
 
 PLUGIN_ROOT = Path.home() / ".aye" / "plugins"
 MANIFEST_FILE = PLUGIN_ROOT / "manifest.json"
@@ -80,7 +110,10 @@ def fetch_plugins(dry_run: bool = True) -> None:  # pylint: disable=too-many-loc
         MANIFEST_FILE.write_text(json.dumps(sorted_manifest, indent=4), encoding="utf-8")
 
     except Exception as e:
-        raise RuntimeError(f"{e}") from e
+        # Translate network errors to user-friendly messages
+        if _is_network_error(e):
+            raise RuntimeError("Could not download plugins - Network error. Please check your internet connection.") from e
+        raise RuntimeError(f"Could not download plugins - {e}") from e
 
 
 def driver() -> None:
