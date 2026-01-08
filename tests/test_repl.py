@@ -1203,6 +1203,52 @@ def test_chat_repl_keep_without_arg_defaults_to_10():
         mock_cli_ui.print_prune_feedback.assert_called_once_with(["001"], 10)
 
 
+def test_chat_repl_keep_with_invalid_arg_shows_error():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.commands") as mock_commands,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+        patch("aye.controller.repl.rprint") as mock_rprint,
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["keep abc", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        # prune_snapshots should NOT be called when input is invalid
+        mock_commands.prune_snapshots.assert_not_called()
+
+        # rprint should have been called with the error message
+        mock_rprint.assert_any_call(
+            "[red]Error:[/] 'abc' is not a valid number. Please provide a positive integer."
+        )
+
+
 def test_chat_repl_at_references_verbose_prints_and_llm_called_with_explicit_source_files():
     with (
         patch("aye.controller.repl.PromptSession") as mock_session_cls,
