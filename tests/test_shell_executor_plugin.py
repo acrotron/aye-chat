@@ -31,19 +31,63 @@ class TestShellExecutorPlugin(TestCase):
             mock_which.assert_called_with('nonexistentcommand')
             mock_run.assert_called_once()
 
-    @patch('shutil.which', return_value=None)
-    @patch('subprocess.run')
+    @patch('aye.plugins.shell_executor.shutil.which', return_value=None)
+    @patch('aye.plugins.shell_executor.subprocess.run')
     def test_is_valid_command_windows(self, mock_run, mock_which):
         with patch.object(self.plugin, '_is_windows', return_value=True):
-            # Command is not found
-            mock_run.return_value = MagicMock(stderr="is not recognized")
+            # Command is not found (non-zero returncode, no stdout)
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="some error")
             self.assertFalse(self.plugin._is_valid_command('badcmd'))
-            # Command is found (no 'not recognized' error)
-            mock_run.return_value = MagicMock(stderr="")
+            # Command is found (returncode 0)
+            mock_run.return_value = MagicMock(returncode=0, stdout="help text", stderr="")
             self.assertTrue(self.plugin._is_valid_command('goodcmd'))
-            # Command check fails
+            # Command is found but doesn't support /? (non-zero returncode but has stdout)
+            mock_run.return_value = MagicMock(returncode=1, stdout="some output", stderr="")
+            self.assertTrue(self.plugin._is_valid_command('cmdwithoutput'))
+            # Command check fails due to timeout
             mock_run.side_effect = subprocess.TimeoutExpired('cmd', 1)
             self.assertFalse(self.plugin._is_valid_command('timeoutcmd'))
+
+    def test_is_valid_command_windows_builtins(self):
+        """Test that Windows shell built-in commands are recognized."""
+        with patch.object(self.plugin, '_is_windows', return_value=True):
+            with patch('aye.plugins.shell_executor.shutil.which', return_value=None):
+                # Known Windows built-ins should be recognized without running subprocess
+                self.assertTrue(self.plugin._is_valid_command('dir'))
+                self.assertTrue(self.plugin._is_valid_command('DIR'))  # Case insensitive
+                self.assertTrue(self.plugin._is_valid_command('cd'))
+                self.assertTrue(self.plugin._is_valid_command('cls'))
+                self.assertTrue(self.plugin._is_valid_command('echo'))
+                self.assertTrue(self.plugin._is_valid_command('set'))
+
+    @patch('aye.plugins.shell_executor.shutil.which', return_value=None)
+    @patch('aye.plugins.shell_executor.subprocess.run')
+    def test_is_valid_command_windows_localized_error(self, mock_run, mock_which):
+        """Test that non-English Windows error messages don't break command detection."""
+        with patch.object(self.plugin, '_is_windows', return_value=True):
+            # German Windows error message - should still detect as invalid via returncode
+            mock_run.return_value = MagicMock(
+                returncode=1,
+                stdout="",
+                stderr="'badcmd' ist nicht erkannt als interner oder externer Befehl"
+            )
+            self.assertFalse(self.plugin._is_valid_command('badcmd'))
+
+            # French Windows error message
+            mock_run.return_value = MagicMock(
+                returncode=1,
+                stdout="",
+                stderr="'badcmd' n'est pas reconnu en tant que commande interne"
+            )
+            self.assertFalse(self.plugin._is_valid_command('badcmd'))
+
+            # Spanish Windows error message
+            mock_run.return_value = MagicMock(
+                returncode=1,
+                stdout="",
+                stderr="'badcmd' no se reconoce como comando interno o externo"
+            )
+            self.assertFalse(self.plugin._is_valid_command('badcmd'))
 
     def test_is_interactive(self):
         self.assertTrue(self.plugin._is_interactive('vim'))
