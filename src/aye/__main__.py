@@ -22,11 +22,9 @@ app = typer.Typer(help="Aye: AI‑powered coding assistant for the terminal")
 # ----------------------------------------------------------------------
 
 def _get_package_version() -> str:
-    try:
-        from importlib.metadata import version, PackageNotFoundError
-        return version("ayechat")
-    except (ImportError, PackageNotFoundError):
-        return "0.0.0"
+    """Get the version of the installed package (ayechat or ayechat-dev)."""
+    from aye.model.version_checker import get_current_version
+    return get_current_version()
 
 def _version_callback(value: bool):
     if value:

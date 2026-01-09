@@ -1,0 +1,103 @@
+name: Feature Request
+description: Suggest a new feature or improvement for Aye Chat
+title: "[Feature]: "
+labels: ["enhancement"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please fill out the form below to help us understand your idea.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Motivation
+      description: Is your feature request related to a problem? Please describe.
+      placeholder: |
+        A clear description of what the problem is.
+        Ex. I'm always frustrated when [...]
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like to see.
+      placeholder: A clear description of what you want to happen...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or features you've considered.
+      placeholder: Other approaches you've thought about...
+    validations:
+      required: false
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Usage Examples
+      description: If applicable, provide examples of how this feature would be used.
+      placeholder: |
+        ```bash
+        # Example command or workflow
+        aye chat --new-flag
+        ```
+      render: markdown
+    validations:
+      required: false
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: What area of Aye Chat does this feature relate to?
+      options:
+        - Chat / REPL
+        - File handling (with, @file)
+        - Snapshots / Undo
+        - Models / AI
+        - Plugins
+        - Installation / Setup
+        - Documentation
+        - Performance
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: How important is this feature to you?
+      options:
+        - Nice to have
+        - Would significantly improve my workflow
+        - Critical - blocking my use of Aye Chat
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context, screenshots, or references about the feature request here.
+      placeholder: Any additional information...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      description: Please confirm the following
+      options:
+        - label: I have searched existing issues to make sure this feature hasn't already been requested
+          required: true
+        - label: I would be willing to help implement this feature
+          required: false

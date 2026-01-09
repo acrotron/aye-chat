@@ -1,0 +1,130 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Aye Chat
+title: "[Bug]: "
+labels: ["bug", "triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the form below to help us understand and fix the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe the bug...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Run `aye chat`
+        2. Type '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: Describe what you expected...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: Describe what actually happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: error-output
+    attributes:
+      label: Error Output / Logs
+      description: If applicable, paste any error messages or relevant log output.
+      placeholder: Paste error messages here...
+      render: shell
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: What operating system are you using?
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Ubuntu/Debian
+        - Fedora/RHEL
+        - Arch Linux
+        - Other Linux
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      description: "Run `python --version` to find out"
+      placeholder: "e.g., 3.11.4"
+    validations:
+      required: true
+
+  - type: input
+    id: aye-version
+    attributes:
+      label: Aye Chat Version
+      description: "Run `aye --version` to find out"
+      placeholder: "e.g., 0.29.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation Method
+      description: How did you install Aye Chat?
+      options:
+        - pip install ayechat
+        - Windows Installer (.exe)
+        - From source (git clone)
+        - pipx
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here (screenshots, related issues, etc.)
+      placeholder: Any additional information...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      description: Please confirm the following
+      options:
+        - label: I have searched existing issues to make sure this bug hasn't already been reported
+          required: true
+        - label: I am using the latest version of Aye Chat
+          required: false

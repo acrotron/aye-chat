@@ -415,7 +415,13 @@ def chat_repl(conf: Any) -> None:
                     set_user_config("has_used_restore", "on")
                 elif lowered_first == "keep":
                     telemetry.record_command("keep", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
-                    keep_count = int(tokens[1]) if len(tokens) > 1 and tokens[1].isdigit() else 10
+                    if len(tokens) > 1:
+                        if not tokens[1].isdigit():
+                            rprint(f"[red]Error:[/] '{tokens[1]}' is not a valid number. Please provide a positive integer.")
+                            continue
+                        keep_count = int(tokens[1])
+                    else:
+                        keep_count = 10
                     deleted = commands.prune_snapshots(keep_count)
                     cli_ui.print_prune_feedback(deleted, keep_count)
                 elif lowered_first == "new":

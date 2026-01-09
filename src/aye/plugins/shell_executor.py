@@ -10,7 +10,7 @@ from rich import print as rprint
 
 class ShellExecutorPlugin(Plugin):
     name = "shell_executor"
-    version = "1.0.0"
+    version = "1.0.2"  # Fixed Windows localization bug in command detection
     premium = "free"
 
     # Known interactive commands that require a TTY (add more as needed)
@@ -18,6 +18,17 @@ class ShellExecutorPlugin(Plugin):
         'vi', 'vim', 'nano', 'emacs', 'top', 'htop', 'less', 'more',
         'hx', # helix editor
         'man', 'git-log', 'git-diff'  # git subcmds may need TTY for paging
+    }
+
+    # Windows shell built-in commands that can't be detected via shutil.which
+    # These are always valid on Windows and don't have corresponding .exe files
+    WINDOWS_BUILTINS = {
+        'assoc', 'break', 'call', 'cd', 'chcp', 'chdir', 'cls', 'color',
+        'copy', 'date', 'del', 'dir', 'dpath', 'echo', 'endlocal', 'erase',
+        'exit', 'for', 'ftype', 'goto', 'if', 'keys', 'md', 'mkdir', 'mklink',
+        'move', 'path', 'pause', 'popd', 'prompt', 'pushd', 'rd', 'rem',
+        'ren', 'rename', 'rmdir', 'set', 'setlocal', 'shift', 'start',
+        'time', 'title', 'type', 'ver', 'verify', 'vol'
     }
 
     def init(self, cfg: Dict[str, Any]) -> None:
@@ -37,10 +48,15 @@ class ShellExecutorPlugin(Plugin):
             return True
 
         if self._is_windows():
+            # Check if it's a known Windows shell built-in command
+            if command.lower() in self.WINDOWS_BUILTINS:
+                return True
             for ext in ['.exe', '.cmd', '.bat']:
                 if shutil.which(command + ext):
                     return True
             try:
+                # Try running the command with /? to check if it exists
+                # Use return code instead of stderr text to avoid localization issues
                 result = subprocess.run(
                     f"{command} /?",
                     shell=True,
@@ -48,9 +64,14 @@ class ShellExecutorPlugin(Plugin):
                     timeout=2,
                     text=True
                 )
-                if result.stderr and "is not recognized" in result.stderr:
-                    return False
-                return True
+                # If returncode is 0, command exists and supports /?
+                if result.returncode == 0:
+                    return True
+                # If there's stdout content, command likely exists but may not support /?
+                if result.stdout and result.stdout.strip():
+                    return True
+                # Command not found or doesn't produce output
+                return False
             except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
                 return False
         else:
@@ -61,15 +82,31 @@ class ShellExecutorPlugin(Plugin):
             except (subprocess.CalledProcessError, FileNotFoundError):
                 return False
 
+    def _strip_outer_quotes(self, arg: str) -> str:
+        """Strip matching outer quotes from an argument.
+
+        This handles args that were preserved by shlex.split(posix=False),
+        which keeps quotes as part of the token on Windows.
+        """
+        if len(arg) >= 2:
+            if (arg.startswith('"') and arg.endswith('"')) or \
+               (arg.startswith("'") and arg.endswith("'")):
+                return arg[1:-1]
+        return arg
+
     def _build_full_cmd(self, command: str, args: list) -> str:
         """Build the full shell command string, quoting args properly."""
         if self._is_windows():
             quoted_args = []
             for arg in args:
-                if ' ' in arg or '"' in arg:
-                    quoted_args.append('"' + arg.replace('"', '\\"') + '"')
+                # First strip any existing outer quotes (from shlex.split posix=False)
+                clean_arg = self._strip_outer_quotes(arg)
+                # Then apply proper Windows quoting if needed
+                if ' ' in clean_arg or '"' in clean_arg or not clean_arg:
+                    # Escape internal quotes and wrap in quotes
+                    quoted_args.append('"' + clean_arg.replace('"', '\\"') + '"')
                 else:
-                    quoted_args.append(arg)
+                    quoted_args.append(clean_arg)
             return f"{command} {' '.join(quoted_args)}"
         else:
             quoted_args = [shlex.quote(arg) for arg in args]

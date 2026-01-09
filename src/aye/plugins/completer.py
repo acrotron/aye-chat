@@ -2,10 +2,24 @@ import os
 import sys
 import threading
 from prompt_toolkit.document import Document
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Set
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from .plugin_base import Plugin
 from rich import print as rprint
+
+# Windows shell built-in commands (cmd.exe internals, not files on disk)
+_WINDOWS_BUILTINS: Set[str] = {
+    "assoc", "break", "call", "cd", "chdir", "cls", "color", "copy", "date",
+    "del", "dir", "echo", "endlocal", "erase", "exit", "for", "ftype", "goto",
+    "if", "md", "mkdir", "mklink", "move", "path", "pause", "popd", "prompt",
+    "pushd", "rd", "rem", "ren", "rename", "rmdir", "set", "setlocal", "shift",
+    "start", "time", "title", "type", "ver", "verify", "vol",
+}
+
+# Windows executable file extensions
+_WINDOWS_EXECUTABLE_EXTENSIONS: Set[str] = {
+    ".exe", ".bat", ".cmd", ".com", ".ps1", ".vbs", ".js", ".msc",
+}
 
 
 class DynamicAutoCompleteCompleter(Completer):
@@ -158,15 +172,36 @@ class CmdPathCompleter(Completer):
         # Fallback: no known separator found; treat as a single entry.
         return [path_value]
 
+    def _is_windows_executable(self, entry) -> bool:
+        """Check if a file is an executable on Windows based on extension."""
+        if not entry.is_file():
+            return False
+        _, ext = os.path.splitext(entry.name)
+        return ext.lower() in _WINDOWS_EXECUTABLE_EXTENSIONS
+
+    def _get_command_name(self, filename: str) -> str:
+        """Get command name from filename, stripping extension on Windows."""
+        if sys.platform == "win32":
+            name, ext = os.path.splitext(filename)
+            if ext.lower() in _WINDOWS_EXECUTABLE_EXTENSIONS:
+                return name
+        return filename
+
     def _get_system_commands(self) -> List[str]:
         """Get list of available system commands.
 
         Skips directories that are slow to access (Windows paths on WSL).
+        On Windows, includes shell built-in commands and uses extension-based
+        executable detection.
         """
         try:
             path_value = os.environ.get("PATH", "")
             path_dirs = self._split_path_env(path_value)
-            commands = set()
+            commands: Set[str] = set()
+
+            # On Windows, add shell built-in commands (dir, mkdir, etc.)
+            if sys.platform == "win32":
+                commands.update(_WINDOWS_BUILTINS)
 
             for directory in path_dirs:
                 # Skip Windows paths on WSL - they're extremely slow
@@ -182,8 +217,13 @@ class CmdPathCompleter(Completer):
                     with os.scandir(directory) as entries:
                         for entry in entries:
                             try:
-                                if entry.is_file() and os.access(entry.path, os.X_OK):
-                                    commands.add(entry.name)
+                                # On Windows, check by extension; on Unix, check executable bit
+                                if sys.platform == "win32":
+                                    if self._is_windows_executable(entry):
+                                        commands.add(self._get_command_name(entry.name))
+                                else:
+                                    if entry.is_file() and os.access(entry.path, os.X_OK):
+                                        commands.add(entry.name)
                             except (OSError, IOError):
                                 continue
                 except (OSError, IOError, PermissionError):
@@ -240,7 +280,7 @@ class CmdPathCompleter(Completer):
 
 class CompleterPlugin(Plugin):
     name = "completer"
-    version = "1.0.6"  # Version bump for completion_style parameter
+    version = "1.0.7"  # Windows command completion support
     premium = "free"
 
     def init(self, cfg: Dict[str, Any]) -> None:

@@ -101,7 +101,7 @@ This document outlines user acceptance tests (UATs) for snapshot-related command
 #### UAT-3.4: Error Handling for Invalid Keep Count
 - **Given**: The user is in an Aye chat session.
 - **When**: The user types `keep abc` (invalid number) and presses Enter.
-- **Then**: The system displays an error message (e.g., `[red]Error:[/] invalid literal for int() with base 10: 'abc'`), and no pruning occurs.
+- **Then**: The system displays an error message (e.g., `[red]Error:[/] 'abc' is not a valid number. Please provide a positive integer.`), and no pruning occurs.
 
 ## Notes
 - Tests assume the underlying snapshot functions in `aye/model/snapshot.py` work correctly, as the REPL delegates to them.

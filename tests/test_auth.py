@@ -108,6 +108,64 @@ key=value
             text = self.token_path.read_text(encoding="utf-8")
             self.assertIn(f"token={token}", text)
 
+    def test_get_token_regenerates_demo_if_token_corrupted(self):
+        """When token exists but is corrupted/invalid, a demo token should be generated."""
+        # Write a corrupted token (contains invalid characters)
+        self.token_path.write_text("[default]\ntoken=valid_token!!!\n", encoding="utf-8")
+        os.environ.pop("AYE_TOKEN", None)
+
+        with patch("pathlib.Path.chmod"):
+            token = auth.get_token()
+            self.assertIsNotNone(token)
+            self.assertTrue(token.startswith("aye_demo_"))
+
+            # Verify the corrupted token was replaced
+            text = self.token_path.read_text(encoding="utf-8")
+            self.assertNotIn("valid_token!!!", text)
+            self.assertIn(f"token={token}", text)
+
+    def test_get_token_regenerates_demo_if_token_too_short(self):
+        """When token exists but is too short, a demo token should be generated."""
+        # Write a token that's too short (less than 8 characters)
+        self.token_path.write_text("[default]\ntoken=abc\n", encoding="utf-8")
+        os.environ.pop("AYE_TOKEN", None)
+
+        with patch("pathlib.Path.chmod"):
+            token = auth.get_token()
+            self.assertIsNotNone(token)
+            self.assertTrue(token.startswith("aye_demo_"))
+
+    def test_get_token_regenerates_demo_if_token_empty(self):
+        """When token exists but is empty, a demo token should be generated (TC-DEM-010)."""
+        # Write an empty token value
+        self.token_path.write_text("[default]\ntoken=\n", encoding="utf-8")
+        os.environ.pop("AYE_TOKEN", None)
+
+        with patch("pathlib.Path.chmod"):
+            token = auth.get_token()
+            self.assertIsNotNone(token)
+            self.assertTrue(token.startswith("aye_demo_"))
+
+            # Verify the empty token was replaced
+            text = self.token_path.read_text(encoding="utf-8")
+            self.assertIn(f"token={token}", text)
+
+    def test_is_valid_token_accepts_valid_formats(self):
+        """Valid tokens should pass validation."""
+        self.assertTrue(auth._is_valid_token("aye_demo_abc123def"))
+        self.assertTrue(auth._is_valid_token("valid_personal_access_token"))
+        self.assertTrue(auth._is_valid_token("my-token-123"))
+        self.assertTrue(auth._is_valid_token("UPPERCASE_TOKEN"))
+        self.assertTrue(auth._is_valid_token("12345678"))
+
+    def test_is_valid_token_rejects_invalid_formats(self):
+        """Invalid tokens should fail validation."""
+        self.assertFalse(auth._is_valid_token(""))
+        self.assertFalse(auth._is_valid_token("short"))  # Too short
+        self.assertFalse(auth._is_valid_token("has spaces"))
+        self.assertFalse(auth._is_valid_token("has!special@chars"))
+        self.assertFalse(auth._is_valid_token("token\nwith\nnewlines"))
+
     # ------------------------------- delete_token ------------------------------
     def test_delete_token_preserves_other_settings(self):
         # Prepare a config with token and another key

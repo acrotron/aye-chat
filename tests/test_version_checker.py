@@ -10,18 +10,30 @@ from aye.model import version_checker
 class TestVersionChecker(TestCase):
     """Test suite for version checking functionality."""
 
-    def test_get_current_version_success(self):
-        """Test getting current version when package is installed."""
-        with patch("importlib.metadata.version") as mock_version:
+    def test_get_current_version_ayechat(self):
+        """Test getting current version when ayechat is installed."""
+        with patch("importlib.metadata.packages_distributions") as mock_pkg_dist, \
+             patch("importlib.metadata.version") as mock_version:
+            mock_pkg_dist.return_value = {'aye': ['ayechat']}
             mock_version.return_value = "0.26.0"
             result = version_checker.get_current_version()
             self.assertEqual(result, "0.26.0")
+            mock_version.assert_called_once_with("ayechat")
+
+    def test_get_current_version_ayechat_dev(self):
+        """Test getting current version when ayechat-dev is installed."""
+        with patch("importlib.metadata.packages_distributions") as mock_pkg_dist, \
+             patch("importlib.metadata.version") as mock_version:
+            mock_pkg_dist.return_value = {'aye': ['ayechat-dev']}
+            mock_version.return_value = "0.36.5.20260108214830"
+            result = version_checker.get_current_version()
+            self.assertEqual(result, "0.36.5.20260108214830")
+            mock_version.assert_called_once_with("ayechat-dev")
 
     def test_get_current_version_package_not_found(self):
-        """Test fallback when package is not found."""
-        from importlib.metadata import PackageNotFoundError
-        with patch("importlib.metadata.version") as mock_version:
-            mock_version.side_effect = PackageNotFoundError()
+        """Test fallback to 0.0.0 when aye package is not in distributions."""
+        with patch("importlib.metadata.packages_distributions") as mock_pkg_dist:
+            mock_pkg_dist.return_value = {}
             result = version_checker.get_current_version()
             self.assertEqual(result, "0.0.0")
 

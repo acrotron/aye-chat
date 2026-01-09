@@ -16,6 +16,24 @@ def test_version_callback():
     assert "." in result.stdout
 
 
+@patch("aye.__main__._get_package_version")
+def test_version_callback_ayechat(mock_get_version):
+    """Test --version reports correct version for ayechat package."""
+    mock_get_version.return_value = "1.2.3"
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert "1.2.3" in result.stdout
+
+
+@patch("aye.__main__._get_package_version")
+def test_version_callback_ayechat_dev(mock_get_version):
+    """Test --version reports correct version for ayechat-dev package."""
+    mock_get_version.return_value = "0.36.5.20260108214830"
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert "0.36.5.20260108214830" in result.stdout
+
+
 def test_main_no_command():
     result = runner.invoke(app)
     assert result.exit_code == 0
