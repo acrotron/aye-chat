@@ -184,9 +184,10 @@ class TestRepl(TestCase):
         self.assertFalse(repl._prompt_for_telemetry_consent_if_needed())
         mock_set.assert_called_once_with(repl._TELEMETRY_OPT_IN_KEY, "off")
 
+    @patch("aye.controller.repl._is_feedback_prompt_enabled", return_value=True)
     @patch("aye.controller.repl.send_feedback")
     @patch("aye.controller.repl.PromptSession")
-    def test_collect_and_send_feedback(self, mock_session_cls, mock_send_feedback):
+    def test_collect_and_send_feedback(self, mock_session_cls, mock_send_feedback, mock_enabled):
         mock_session_cls.return_value.prompt.return_value = "Great tool!"
         repl.collect_and_send_feedback(chat_id=123)
         mock_send_feedback.assert_called_once_with("Great tool!", chat_id=123, telemetry=None)
@@ -207,14 +208,16 @@ class TestRepl(TestCase):
         repl.collect_and_send_feedback(chat_id=123)
         mock_send_feedback.assert_not_called()
 
+    @patch("aye.controller.repl._is_feedback_prompt_enabled", return_value=True)
     @patch("aye.controller.repl.send_feedback", side_effect=Exception("API down"))
     @patch("aye.controller.repl.PromptSession")
-    def test_collect_and_send_feedback_api_error(self, mock_session_cls, mock_send_feedback):
+    def test_collect_and_send_feedback_api_error(self, mock_session_cls, mock_send_feedback, mock_enabled):
         # New implementation does not swallow send_feedback exceptions.
         mock_session_cls.return_value.prompt.return_value = "feedback"
         with self.assertRaises(Exception):
             repl.collect_and_send_feedback(chat_id=123)
 
+    @patch("aye.controller.repl._is_feedback_prompt_enabled", return_value=True)
     @patch("aye.controller.repl.telemetry.reset")
     @patch("aye.controller.repl.telemetry.build_payload", return_value={"x": 1})
     @patch("aye.controller.repl.telemetry.is_enabled", return_value=True)
@@ -227,6 +230,7 @@ class TestRepl(TestCase):
         mock_is_enabled,
         mock_build,
         mock_reset,
+        mock_enabled,
     ):
         mock_session_cls.return_value.prompt.return_value = "hello"
         repl.collect_and_send_feedback(chat_id=5)
