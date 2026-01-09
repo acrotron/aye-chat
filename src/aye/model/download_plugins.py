@@ -85,7 +85,7 @@ def fetch_plugins(dry_run: bool = True) -> None:  # pylint: disable=too-many-loc
 
             source_text = entry["content"]
 
-            computed_hash = hashlib.sha256(source_text.encode("utf‑8")).hexdigest()
+            computed_hash = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
 
             if not (dest.is_file() and computed_hash == expected_hash):
                 dest.write_text(entry["content"], encoding="utf-8")
