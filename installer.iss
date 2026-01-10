@@ -29,6 +29,14 @@ AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={userpf}\AyeChat
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
+; Upgrade support - preserve user choices from previous install
+UsePreviousAppDir=yes
+UsePreviousGroup=yes
+UsePreviousTasks=yes
+; Handle running instances during upgrade
+CloseApplications=yes
+CloseApplicationsFilter=aye.exe
+RestartApplications=yes
 ; Output settings
 OutputDir=Output
 OutputBaseFilename=aye-chat-setup
