@@ -8,6 +8,6 @@ contact_links:
     url: https://github.com/acrotron/aye-chat#readme
     about: Check the README for usage instructions and examples
 
-  - name: Ask a Question
-    url: https://github.com/acrotron/aye-chat/discussions
-    about: Use GitHub Discussions for questions and community help
+  - name: Ask a Question / Discord
+    url: https://discord.gg/PKwFMkEh
+    about: Join our Discord for questions and community help
