@@ -4,6 +4,7 @@ This module provides the StreamingResponseDisplay class which handles
 real-time display of LLM responses in a styled Rich panel with
 word-by-word animation and stall detection.
 """
+from aye.presenter.repl_ui import deep_ocean_theme
 
 import os
 import time
@@ -20,14 +21,8 @@ from rich.text import Text
 from rich.theme import Theme
 
 
-# Theme matching repl_ui.py for consistent styling
-_STREAMING_THEME = Theme({
-    "ui.response_symbol.name": "bold cornflower_blue",
-    "ui.response_symbol.waves": "steel_blue",
-    "ui.response_symbol.pulse": "bold pale_turquoise1",
-    "ui.border": "dim slate_blue3",
-    "ui.stall_spinner": "dim yellow",
-})
+# Instead of manually trying to make the theme consistent I just directly used the theme from repl_ui.py
+_STREAMING_THEME = deep_ocean_theme
 
 
 def _get_env_float(env_var: str, default: float) -> float:
