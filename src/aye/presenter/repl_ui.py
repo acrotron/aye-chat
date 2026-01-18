@@ -28,29 +28,23 @@ from rich.theme import Theme
 from rich.markdown import Markdown
 from rich.table import Table
 
-# Theme used by the REPL.
-#
-# This is duplicated (or mirrored) across other presenter modules so that the
-# CLI and REPL look consistent.
-#
-# The `markdown.*` keys are used by Rich's Markdown renderer. The `ui.*` keys are
-# used by our own markup in print_* helpers below.
+# Updated some colors of specific elements to make those elements more legible on a dark background 
 deep_ocean_theme = Theme({
     # Markdown mappings
     "markdown.h1": "bold cornflower_blue",
     "markdown.h1.border": "bold cornflower_blue",
-    "markdown.h2": "bold slate_blue1",
-    "markdown.h3": "bold dodger_blue2",
+    "markdown.h2": "bold deep_sky_blue1",
+    "markdown.h3": "bold turquoise2",
     "markdown.strong": "bold light_steel_blue",
-    "markdown.em": "italic slate_blue1",
+    "markdown.em": "italic orchid1",
     "markdown.code": "bold sky_blue3",
     "markdown.block_quote": "dim slate_blue3",
     "markdown.list": "steel_blue",
     "markdown.item": "steel_blue",
     "markdown.item.bullet": "bold yellow",  # Bullets and numbers
     "markdown.item.number": "bold yellow",  # Ordered list numbers
-    "markdown.link": "underline dodger_blue3",
-    "markdown.link_url": "underline dodger_blue3",
+    "markdown.link": "underline aquamarine1",
+    "markdown.link_url": "underline aquamarine1",
 
     # Custom UI mappings
     "ui.welcome": "bold cornflower_blue",
@@ -64,6 +58,7 @@ deep_ocean_theme = Theme({
     "ui.warning": "bold khaki1",
     "ui.error": "bold indian_red1",
     "ui.border": "dim slate_blue3",
+    "ui.stall_spinner": "dim yellow",
 })
 
 # Shared console used by the REPL.
