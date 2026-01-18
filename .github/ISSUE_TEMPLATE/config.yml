@@ -1,0 +1,13 @@
+# Configuration for the issue template chooser
+# https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository
+
+blank_issues_enabled: true
+
+contact_links:
+  - name: Documentation
+    url: https://github.com/acrotron/aye-chat#readme
+    about: Check the README for usage instructions and examples
+
+  - name: Ask a Question / Discord
+    url: https://discord.gg/PKwFMkEh
+    about: Join our Discord for questions and community help

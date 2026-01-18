@@ -2,8 +2,11 @@
 import os
 import json
 import hashlib
+import socket
 from unittest import TestCase
 from unittest.mock import patch, MagicMock, call
+
+import httpx
 
 import aye.model.download_plugins as dl
 from aye.model.auth import get_token
@@ -183,3 +186,88 @@ class TestDownloadPlugins(TestCase):
         dl.driver()
         mock_fetch_plugins.assert_called_once()
         mock_print.assert_called_with("Error fetching plugins: Network Error")
+
+    @patch('aye.model.download_plugins.get_token')
+    @patch('aye.model.download_plugins.fetch_plugin_manifest')
+    @patch('aye.model.download_plugins.shutil.rmtree')
+    @patch('pathlib.Path.mkdir')
+    @patch('pathlib.Path.read_text', return_value='{}')
+    def test_fetch_plugins_network_error_dns_failure(self, mock_read, mock_mkdir, mock_rmtree, mock_manifest, mock_get_token):
+        """Network error (DNS failure) should show user-friendly message."""
+        mock_get_token.return_value = 'fake_token'
+        # Simulate DNS failure (getaddrinfo failed)
+        mock_manifest.side_effect = httpx.ConnectError("[Errno 11001] getaddrinfo failed")
+
+        with self.assertRaises(RuntimeError) as cm:
+            dl.fetch_plugins(dry_run=True)
+
+        error_msg = str(cm.exception)
+        self.assertIn("Network error", error_msg)
+        self.assertIn("check your internet connection", error_msg)
+        # Should NOT contain technical details
+        self.assertNotIn("getaddrinfo", error_msg)
+        self.assertNotIn("11001", error_msg)
+
+    @patch('aye.model.download_plugins.get_token')
+    @patch('aye.model.download_plugins.fetch_plugin_manifest')
+    @patch('aye.model.download_plugins.shutil.rmtree')
+    @patch('pathlib.Path.mkdir')
+    @patch('pathlib.Path.read_text', return_value='{}')
+    def test_fetch_plugins_network_error_timeout(self, mock_read, mock_mkdir, mock_rmtree, mock_manifest, mock_get_token):
+        """Network timeout should show user-friendly message."""
+        mock_get_token.return_value = 'fake_token'
+        mock_manifest.side_effect = httpx.TimeoutException("Connection timed out")
+
+        with self.assertRaises(RuntimeError) as cm:
+            dl.fetch_plugins(dry_run=True)
+
+        error_msg = str(cm.exception)
+        self.assertIn("Network error", error_msg)
+
+    @patch('aye.model.download_plugins.get_token')
+    @patch('aye.model.download_plugins.fetch_plugin_manifest')
+    @patch('aye.model.download_plugins.shutil.rmtree')
+    @patch('pathlib.Path.mkdir')
+    @patch('pathlib.Path.read_text', return_value='{}')
+    def test_fetch_plugins_non_network_error_preserves_message(self, mock_read, mock_mkdir, mock_rmtree, mock_manifest, mock_get_token):
+        """Non-network errors should preserve original error message."""
+        mock_get_token.return_value = 'fake_token'
+        mock_manifest.side_effect = ValueError("Invalid JSON response")
+
+        with self.assertRaises(RuntimeError) as cm:
+            dl.fetch_plugins(dry_run=True)
+
+        error_msg = str(cm.exception)
+        self.assertIn("Invalid JSON response", error_msg)
+        self.assertNotIn("Network error", error_msg)
+
+
+class TestIsNetworkError(TestCase):
+    """Tests for the _is_network_error helper function."""
+
+    def test_httpx_connect_error(self):
+        """httpx.ConnectError should be detected as network error."""
+        exc = httpx.ConnectError("Connection refused")
+        self.assertTrue(dl._is_network_error(exc))
+
+    def test_httpx_timeout_error(self):
+        """httpx.TimeoutException should be detected as network error."""
+        exc = httpx.TimeoutException("Timed out")
+        self.assertTrue(dl._is_network_error(exc))
+
+    def test_socket_gaierror(self):
+        """socket.gaierror should be detected as network error."""
+        exc = socket.gaierror(11001, "getaddrinfo failed")
+        self.assertTrue(dl._is_network_error(exc))
+
+    def test_regular_exception_not_network_error(self):
+        """Regular exceptions should not be detected as network errors."""
+        exc = ValueError("Some value error")
+        self.assertFalse(dl._is_network_error(exc))
+
+    def test_wrapped_network_error(self):
+        """Exception wrapping a network error should be detected."""
+        inner = httpx.ConnectError("DNS failure")
+        outer = RuntimeError("Wrapped error")
+        outer.__cause__ = inner
+        self.assertTrue(dl._is_network_error(outer))

@@ -32,11 +32,16 @@ def _ssl_verify() -> bool:
 
 
 def get_current_version() -> str:
-    """Get the current installed version of ayechat."""
+    """Get the current installed version of the aye package."""
     try:
-        from importlib.metadata import version, PackageNotFoundError
-        return version("ayechat")
-    except (ImportError, PackageNotFoundError):
+        from importlib.metadata import version, packages_distributions
+        # Find which distribution provides the 'aye' package
+        pkg_map = packages_distributions()
+        if 'aye' in pkg_map:
+            dist_name = pkg_map['aye'][0]
+            return version(dist_name)
+        return "0.0.0"
+    except Exception:
         return "0.0.0"
 
 

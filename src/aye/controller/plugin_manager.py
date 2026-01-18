@@ -58,7 +58,7 @@ class PluginManager:
                 continue
             self._load(f)
 
-        if self.registry:
+        if self.registry and self.verbose:
             plugins = ", ".join(self.registry.keys())
             rprint(f"[bold cyan]Plugins loaded: {plugins}[/]")
 

@@ -1,5 +1,6 @@
 # auth.py
 import os
+import re
 import typer
 from typing import Any, Optional
 from pathlib import Path
@@ -63,12 +64,34 @@ def store_token(token: str) -> None:
     set_user_config("token", token)
 
 
+# Token validation pattern: alphanumeric, underscores, hyphens only
+_TOKEN_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+_MIN_TOKEN_LENGTH = 8
+
+
+def _is_valid_token(token: str) -> bool:
+    """Check if a token has a valid format.
+
+    Valid tokens must:
+    - Be at least 8 characters long
+    - Contain only alphanumeric characters, underscores, and hyphens
+    """
+    if not token or len(token) < _MIN_TOKEN_LENGTH:
+        return False
+    return bool(_TOKEN_PATTERN.match(token))
+
+
+def _generate_demo_token() -> str:
+    """Generate a new demo token."""
+    demo_hash = hashlib.md5(str(time.time()).encode()).hexdigest()[:10]
+    return "aye_demo_" + demo_hash
+
+
 def get_token() -> Optional[str]:
-    """Return the stored token (env → file). If None, generate a demo token."""
+    """Return the stored token (env → file). If None or invalid, generate a demo token."""
     token = get_user_config("token")
-    if token is None:
-        demo_hash = hashlib.md5(str(time.time()).encode()).hexdigest()[:10]
-        demo_token = "aye_demo_" + demo_hash
+    if token is None or not _is_valid_token(token):
+        demo_token = _generate_demo_token()
         set_user_config("token", demo_token)
         return demo_token
     return token

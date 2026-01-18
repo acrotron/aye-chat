@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "dev" ]
   release:
-    types:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -75,7 +75,7 @@ jobs:
 
       - name: Setup Software Trust Manager (new)
         id: stm-setup
-        uses: digicert/code-signing-software-trust-action@v1.0.0
+        uses: digicert/code-signing-software-trust-action@v1.0.1
 
       - name: Check PKCS11 config file
         run: |
@@ -399,5 +399,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: "*.zip"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
