@@ -33,6 +33,11 @@ def test_index_config_properties_and_from_params(monkeypatch, tmp_path):
     assert cfg.hash_index_path == tmp_path / ".aye" / "file_index.json"
 
 
+def test_index_config_chroma_db_path(tmp_path):
+    cfg = state.IndexConfig(root_path=tmp_path, file_mask="*.py")
+    assert cfg.chroma_db_path == tmp_path / ".aye" / "chroma_db"
+
+
 def test_safe_state_update_get_update_many_get_many_increment():
     ss = state.SafeState()
 
@@ -126,6 +131,76 @@ def test_progress_tracker_get_display_returns_indexing_when_lock_unavailable():
     finally:
         pt._lock.release()
 
+
+# =============================================================================
+# Tests for _is_corruption_error
+# =============================================================================
+
+class TestIsCorruptionError:
+    """Tests for the _is_corruption_error helper function."""
+
+    def test_returns_false_for_generic_error(self):
+        err = RuntimeError("something went wrong")
+        assert state._is_corruption_error(err) is False
+
+    def test_returns_false_for_value_error(self):
+        err = ValueError("invalid value")
+        assert state._is_corruption_error(err) is False
+
+    @pytest.mark.parametrize("message", [
+        "database disk image is malformed",
+        "file is not a database",
+        "no such table: embeddings",
+        "database is locked",
+        "unable to open database file",
+        "corrupt header",
+        "The database file is corrupt",
+    ])
+    def test_returns_true_for_corruption_message_indicators(self, message):
+        err = Exception(message)
+        assert state._is_corruption_error(err) is True
+
+    def test_returns_true_for_corruption_message_case_insensitive(self):
+        err = Exception("DATABASE DISK IMAGE IS MALFORMED")
+        assert state._is_corruption_error(err) is True
+
+    def test_returns_true_for_operational_error_type(self):
+        # Create a custom exception class with the name OperationalError
+        class OperationalError(Exception):
+            pass
+        err = OperationalError("some error")
+        assert state._is_corruption_error(err) is True
+
+    def test_returns_true_for_database_error_type(self):
+        class DatabaseError(Exception):
+            pass
+        err = DatabaseError("connection failed")
+        assert state._is_corruption_error(err) is True
+
+    def test_returns_true_for_integrity_error_type(self):
+        class IntegrityError(Exception):
+            pass
+        err = IntegrityError("constraint violation")
+        assert state._is_corruption_error(err) is True
+
+    def test_returns_true_for_sqlite_in_message(self):
+        err = Exception("sqlite3.OperationalError: disk I/O error")
+        assert state._is_corruption_error(err) is True
+
+    def test_returns_true_for_sqlite_in_type_name(self):
+        class Sqlite3Error(Exception):
+            pass
+        err = Sqlite3Error("something")
+        assert state._is_corruption_error(err) is True
+
+    def test_returns_true_for_operationalerror_in_message(self):
+        err = RuntimeError("got OperationalError from database")
+        assert state._is_corruption_error(err) is True
+
+
+# =============================================================================
+# Tests for InitializationCoordinator recovery logic
+# =============================================================================
 
 def test_initialization_coordinator_ready_path_success(monkeypatch, tmp_path):
     cfg = state.IndexConfig(root_path=tmp_path, file_mask="*.py", debug=True)
@@ -223,6 +298,289 @@ def test_initialization_coordinator_lock_not_acquired_nonblocking(monkeypatch, t
         coord._lock.release()
 
 
+class TestInitializationCoordinatorRecovery:
+    """Tests for corruption detection and recovery in InitializationCoordinator."""
+
+    def test_corruption_triggers_recovery_and_succeeds(self, monkeypatch, tmp_path):
+        """When corruption is detected, recovery is attempted and succeeds."""
+        cfg = state.IndexConfig(root_path=tmp_path, file_mask="*.py")
+        coord = state.InitializationCoordinator(cfg)
+
+        # Create the .aye directory structure
+        aye_dir = tmp_path / ".aye"
+        aye_dir.mkdir()
+        chroma_dir = aye_dir / "chroma_db"
+        chroma_dir.mkdir()
+        (chroma_dir / "data.db").write_text("corrupt")
+        hash_index = aye_dir / "file_index.json"
+        hash_index.write_text('{"files": {}}')
+
+        import aye.model as aye_model
+
+        fake_onnx = SimpleNamespace(get_model_status=lambda: "READY")
+
+        call_count = [0]
+
+        def init_index_with_corruption(_root):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise Exception("database disk image is malformed")
+            return "RECOVERED_COLLECTION"
+
+        fake_vector = SimpleNamespace(initialize_index=init_index_with_corruption)
+
+        monkeypatch.setattr(aye_model, "onnx_manager", fake_onnx, raising=False)
+        monkeypatch.setattr(aye_model, "vector_db", fake_vector, raising=False)
+
+        rprint = MagicMock()
+        monkeypatch.setattr(state, "rprint", rprint, raising=True)
+
+        ok = coord.initialize(blocking=True)
+
+        assert ok is True
+        assert coord.is_initialized is True
+        assert coord.collection == "RECOVERED_COLLECTION"
+        assert coord._recovery_attempted is True
+
+        # Original chroma_db should be quarantined
+        assert not chroma_dir.exists()
+        quarantined = [p for p in aye_dir.iterdir() if "chroma_db.corrupt" in p.name]
+        assert len(quarantined) == 1
+
+        # Hash index should be quarantined
+        assert not hash_index.exists()
+        quarantined_index = [p for p in aye_dir.iterdir() if "file_index.json.corrupt" in p.name]
+        assert len(quarantined_index) == 1
+
+        # Check recovery messages
+        messages = [str(c.args[0]) for c in rprint.call_args_list]
+        assert any("Detected possible index corruption" in m for m in messages)
+        assert any("Attempting automatic recovery" in m for m in messages)
+        assert any("Recovery successful" in m for m in messages)
+
+    def test_corruption_triggers_recovery_and_fails(self, monkeypatch, tmp_path):
+        """When corruption is detected and recovery also fails."""
+        cfg = state.IndexConfig(root_path=tmp_path, file_mask="*.py")
+        coord = state.InitializationCoordinator(cfg)
+
+        # Create the .aye directory structure
+        aye_dir = tmp_path / ".aye"
+        aye_dir.mkdir()
+        chroma_dir = aye_dir / "chroma_db"
+        chroma_dir.mkdir()
+
+        import aye.model as aye_model
+
+        fake_onnx = SimpleNamespace(get_model_status=lambda: "READY")
+
+        def always_corrupt(_root):
+            raise Exception("database disk image is malformed")
+
+        fake_vector = SimpleNamespace(initialize_index=always_corrupt)
+
+        monkeypatch.setattr(aye_model, "onnx_manager", fake_onnx, raising=False)
+        monkeypatch.setattr(aye_model, "vector_db", fake_vector, raising=False)
+
+        rprint = MagicMock()
+        monkeypatch.setattr(state, "rprint", rprint, raising=True)
+
+        ok = coord.initialize(blocking=True)
+
+        assert ok is False
+        assert coord.is_initialized is True
+        assert coord.collection is None
+        assert coord._recovery_attempted is True
+
+        # Check failure messages
+        messages = [str(c.args[0]) for c in rprint.call_args_list]
+        assert any("Recovery failed" in m for m in messages)
+        assert any("Code search will be disabled" in m for m in messages)
+
+    def test_recovery_not_attempted_twice(self, monkeypatch, tmp_path):
+        """If recovery was already attempted, don't try again."""
+        cfg = state.IndexConfig(root_path=tmp_path, file_mask="*.py")
+        coord = state.InitializationCoordinator(cfg)
+        coord._recovery_attempted = True  # Simulate previous recovery attempt
+
+        import aye.model as aye_model
+
+        fake_onnx = SimpleNamespace(get_model_status=lambda: "READY")
+
+        def raise_corruption(_root):
+            raise Exception("database disk image is malformed")
+
+        fake_vector = SimpleNamespace(initialize_index=raise_corruption)
+
+        monkeypatch.setattr(aye_model, "onnx_manager", fake_onnx, raising=False)
+        monkeypatch.setattr(aye_model, "vector_db", fake_vector, raising=False)
+
+        rprint = MagicMock()
+        monkeypatch.setattr(state, "rprint", rprint, raising=True)
+
+        ok = coord.initialize(blocking=True)
+
+        assert ok is False
+        assert coord.is_initialized is True
+        assert coord.collection is None
+
+        # Should not see recovery attempt messages
+        messages = [str(c.args[0]) for c in rprint.call_args_list]
+        assert not any("Attempting automatic recovery" in m for m in messages)
+        assert any("Failed to initialize local code search" in m for m in messages)
+
+    def test_non_corruption_error_does_not_trigger_recovery(self, monkeypatch, tmp_path):
+        """Generic errors should not trigger recovery."""
+        cfg = state.IndexConfig(root_path=tmp_path, file_mask="*.py")
+        coord = state.InitializationCoordinator(cfg)
+
+        import aye.model as aye_model
+
+        fake_onnx = SimpleNamespace(get_model_status=lambda: "READY")
+
+        def raise_generic(_root):
+            raise RuntimeError("network timeout")
+
+        fake_vector = SimpleNamespace(initialize_index=raise_generic)
+
+        monkeypatch.setattr(aye_model, "onnx_manager", fake_onnx, raising=False)
+        monkeypatch.setattr(aye_model, "vector_db", fake_vector, raising=False)
+
+        rprint = MagicMock()
+        monkeypatch.setattr(state, "rprint", rprint, raising=True)
+
+        ok = coord.initialize(blocking=True)
+
+        assert ok is False
+        assert coord._recovery_attempted is False
+
+        messages = [str(c.args[0]) for c in rprint.call_args_list]
+        assert not any("Attempting automatic recovery" in m for m in messages)
+
+    def test_recovery_handles_move_failure_with_delete(self, monkeypatch, tmp_path):
+        """If quarantine move fails, fallback to delete."""
+        cfg = state.IndexConfig(root_path=tmp_path, file_mask="*.py")
+        coord = state.InitializationCoordinator(cfg)
+
+        # Create the .aye directory structure
+        aye_dir = tmp_path / ".aye"
+        aye_dir.mkdir()
+        chroma_dir = aye_dir / "chroma_db"
+        chroma_dir.mkdir()
+        (chroma_dir / "data.db").write_text("corrupt")
+
+        import aye.model as aye_model
+        import shutil as real_shutil
+
+        fake_onnx = SimpleNamespace(get_model_status=lambda: "READY")
+
+        call_count = [0]
+
+        def init_index_with_corruption(_root):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise Exception("database disk image is malformed")
+            return "RECOVERED_COLLECTION"
+
+        fake_vector = SimpleNamespace(initialize_index=init_index_with_corruption)
+
+        monkeypatch.setattr(aye_model, "onnx_manager", fake_onnx, raising=False)
+        monkeypatch.setattr(aye_model, "vector_db", fake_vector, raising=False)
+
+        # Make shutil.move fail
+        original_move = real_shutil.move
+        original_rmtree = real_shutil.rmtree
+
+        def failing_move(src, dst):
+            raise OSError("Permission denied")
+
+        monkeypatch.setattr(state.shutil, "move", failing_move)
+        monkeypatch.setattr(state.shutil, "rmtree", original_rmtree)
+
+        rprint = MagicMock()
+        monkeypatch.setattr(state, "rprint", rprint, raising=True)
+
+        ok = coord.initialize(blocking=True)
+
+        assert ok is True
+        assert coord.collection == "RECOVERED_COLLECTION"
+
+        # Chroma dir should be deleted (rmtree fallback)
+        assert not chroma_dir.exists()
+
+        messages = [str(c.args[0]) for c in rprint.call_args_list]
+        assert any("Could not quarantine DB" in m for m in messages)
+
+    def test_recovery_with_no_existing_chroma_dir(self, monkeypatch, tmp_path):
+        """Recovery handles case where chroma_db doesn't exist."""
+        cfg = state.IndexConfig(root_path=tmp_path, file_mask="*.py")
+        coord = state.InitializationCoordinator(cfg)
+
+        # Create .aye but NOT chroma_db
+        aye_dir = tmp_path / ".aye"
+        aye_dir.mkdir()
+
+        import aye.model as aye_model
+
+        fake_onnx = SimpleNamespace(get_model_status=lambda: "READY")
+
+        call_count = [0]
+
+        def init_index_with_corruption(_root):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise Exception("no such table: embeddings")
+            return "RECOVERED_COLLECTION"
+
+        fake_vector = SimpleNamespace(initialize_index=init_index_with_corruption)
+
+        monkeypatch.setattr(aye_model, "onnx_manager", fake_onnx, raising=False)
+        monkeypatch.setattr(aye_model, "vector_db", fake_vector, raising=False)
+
+        rprint = MagicMock()
+        monkeypatch.setattr(state, "rprint", rprint, raising=True)
+
+        ok = coord.initialize(blocking=True)
+
+        assert ok is True
+        assert coord.collection == "RECOVERED_COLLECTION"
+
+    def test_recovery_with_no_existing_hash_index(self, monkeypatch, tmp_path):
+        """Recovery handles case where hash index doesn't exist."""
+        cfg = state.IndexConfig(root_path=tmp_path, file_mask="*.py")
+        coord = state.InitializationCoordinator(cfg)
+
+        # Create .aye and chroma_db but NOT file_index.json
+        aye_dir = tmp_path / ".aye"
+        aye_dir.mkdir()
+        chroma_dir = aye_dir / "chroma_db"
+        chroma_dir.mkdir()
+
+        import aye.model as aye_model
+
+        fake_onnx = SimpleNamespace(get_model_status=lambda: "READY")
+
+        call_count = [0]
+
+        def init_index_with_corruption(_root):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise Exception("database is locked")
+            return "RECOVERED_COLLECTION"
+
+        fake_vector = SimpleNamespace(initialize_index=init_index_with_corruption)
+
+        monkeypatch.setattr(aye_model, "onnx_manager", fake_onnx, raising=False)
+        monkeypatch.setattr(aye_model, "vector_db", fake_vector, raising=False)
+
+        rprint = MagicMock()
+        monkeypatch.setattr(state, "rprint", rprint, raising=True)
+
+        ok = coord.initialize(blocking=True)
+
+        assert ok is True
+        assert coord.collection == "RECOVERED_COLLECTION"
+
+
 def test_error_handler_debug_and_verbose_output(monkeypatch):
     rprint = MagicMock()
     monkeypatch.setattr(state, "rprint", rprint, raising=True)
@@ -253,3 +611,19 @@ def test_error_handler_debug_and_verbose_output(monkeypatch):
 
     # Verbose prints warn but not info.
     rprint.assert_called_once_with("[yellow]warn[/yellow]")
+
+
+def test_error_handler_handle_silent(monkeypatch):
+    rprint = MagicMock()
+    monkeypatch.setattr(state, "rprint", rprint, raising=True)
+
+    # Silent handler should not print in non-debug mode
+    eh = state.ErrorHandler(verbose=True, debug=False)
+    eh.handle_silent(RuntimeError("silent error"), context="ctx")
+    assert rprint.call_count == 0
+
+    # But should print in debug mode
+    eh = state.ErrorHandler(verbose=False, debug=True)
+    eh.handle_silent(RuntimeError("silent error"), context="ctx")
+    assert rprint.call_count == 1
+    assert "Error in ctx" in str(rprint.call_args_list[0].args[0])
