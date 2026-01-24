@@ -117,6 +117,20 @@ def handle_verbose_command(tokens: list):
         rprint(f"[yellow]Verbose mode is {current.title()}[/]")
 
 
+def handle_sslverify_command(tokens: list):
+    """Handle the undocumented 'sslverify' command (TLS cert verification for API calls)."""
+    if len(tokens) > 1:
+        val = tokens[1].lower()
+        if val in ("on", "off"):
+            set_user_config("sslverify", val)
+            rprint(f"[green]SSL verify set to {val.title()}[/]")
+        else:
+            rprint("[red]Usage: sslverify on|off[/]")
+    else:
+        current = get_user_config("sslverify", "on")
+        rprint(f"[yellow]SSL verify is {str(current).title()}[/]")
+
+
 def handle_debug_command(tokens: list):
     """Handle the 'debug' command."""
     if len(tokens) > 1:

@@ -5,12 +5,8 @@ from typing import Optional
 from aye.controller import commands, repl
 from aye.presenter import cli_ui
 from aye.presenter.diff_presenter import show_diff
-from aye.model.config import load_config
 from aye.model.version_checker import check_version_and_print_warning
 from aye.model.auth import set_user_config
-
-# Load configuration at startup
-load_config()
 
 # Check for newer version on startup
 check_version_and_print_warning()
@@ -130,40 +126,6 @@ def cleanup(days: int = typer.Option(30, "--days", "-d", help="Delete snapshots 
         cli_ui.print_cleanup_feedback(deleted_count, days)
     except Exception as e:
         cli_ui.print_generic_message(f"Error cleaning up snapshots: {e}", is_error=True)
-
-# ----------------------------------------------------------------------
-# Config commands
-# ----------------------------------------------------------------------
-@app.command()
-def config(
-    action: str = typer.Argument(..., help="Action: list, get, set, delete"),
-    key: str = typer.Argument(None, help="Configuration key"),
-    value: str = typer.Argument(None, help="Configuration value (for set)"),
-):
-    """Manage local configuration."""
-    try:
-        if action == "list":
-            cfg = commands.get_all_config()
-            cli_ui.print_config_list(cfg)
-        elif action == "get":
-            if not key: raise typer.BadParameter("Key is required for get action.")
-            val = commands.get_config_value(key)
-            cli_ui.print_config_value(key, val)
-        elif action == "set":
-            if not key or value is None: raise typer.BadParameter("Key and value are required for set action.")
-            commands.set_config_value(key, value)
-            cli_ui.print_generic_message(f"Configuration '{key}' set.")
-        elif action == "delete":
-            if not key: raise typer.BadParameter("Key is required for delete action.")
-            if commands.delete_config_value(key):
-                cli_ui.print_generic_message(f"Configuration '{key}' deleted.")
-            else:
-                cli_ui.print_generic_message(f"Configuration key '{key}' not found.", is_error=True)
-        else:
-            raise typer.BadParameter(f"Invalid action '{action}'. Use: list, get, set, delete")
-    except Exception as e:
-        cli_ui.print_generic_message(str(e), is_error=True)
-        raise typer.Exit(code=1)
 
 if __name__ == "__main__":
     app()

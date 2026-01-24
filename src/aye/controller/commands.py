@@ -1,11 +1,10 @@
-import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from types import SimpleNamespace
 
 from rich import print as rprint
 
-from aye.model import auth, config, snapshot, download_plugins, vector_db, onnx_manager
+from aye.model import auth, snapshot, download_plugins, vector_db, onnx_manager
 from aye.controller.plugin_manager import PluginManager
 from aye.controller.util import find_project_root
 from aye.model.index_manager.index_manager import IndexManager
@@ -196,32 +195,6 @@ def get_diff_paths(file_name: str, snap_id1: Optional[str] = None, snap_id2: Opt
     return (file_path, str(latest_snap_path), False)
 
 
-# --- Config Commands ---
-
-def get_all_config() -> Dict[str, Any]:
-    """Get all configuration values."""
-    return config.list_config()
-
-
-def set_config_value(key: str, value: str) -> None:
-    """Set a configuration value."""
-    try:
-        parsed_value = json.loads(value)
-    except json.JSONDecodeError:
-        parsed_value = value
-    config.set_value(key, parsed_value)
-
-
-def get_config_value(key: str) -> Any:
-    """Get a specific configuration value."""
-    return config.get_value(key)
-
-
-def delete_config_value(key: str) -> bool:
-    """Delete a configuration value."""
-    return config.delete_value(key)
-
-
 # --- Context and Indexing Commands ---
 
 def _calculate_total_file_size(files: List[Path]) -> int:
@@ -318,18 +291,13 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str], g
     plugin_manager.discover()
     conf.plugin_manager = plugin_manager
 
-    # 3. Determine file mask: CLI arg > project config > auto-detect
+    # 3. Determine file mask: CLI arg > auto-detect
     if file_mask:
         conf.file_mask = file_mask
     else:
-        # Check project config first
-        project_file_mask = config.get_value("file_mask")
-        if project_file_mask:
-            conf.file_mask = project_file_mask
-        else:
-            # Auto-detect as fallback
-            response = plugin_manager.handle_command("auto_detect_mask", {"project_root": str(conf.root)})
-            conf.file_mask = response["mask"] if response and response.get("mask") else "*.py"
+        # Auto-detect as fallback
+        response = plugin_manager.handle_command("auto_detect_mask", {"project_root": str(conf.root)})
+        conf.file_mask = response["mask"] if response and response.get("mask") else "*.py"
 
     # 4. Fast project size check to determine if we need RAG
     is_small, discovered_files = _is_small_project(conf.root, conf.file_mask, conf.verbose)
@@ -354,11 +322,7 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str], g
             rprint(f"[red]Error during project scan: {e}[/]")
             rprint("[yellow]Proceeding without index updates.[/]")
 
-    # 7. Load other configs: project config > user config > default
-    conf.selected_model = (
-        config.get_value("selected_model")
-        or get_user_config("selected_model")
-        or DEFAULT_MODEL_ID
-    )
+    # 7. Load selected model: user config > default
+    conf.selected_model = get_user_config("selected_model") or DEFAULT_MODEL_ID
 
     return conf

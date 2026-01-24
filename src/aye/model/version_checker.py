@@ -6,6 +6,30 @@ from typing import Optional
 from packaging import version as pkg_version
 from rich import print as rprint
 
+from aye.model.auth import get_user_config
+
+
+def _ssl_verify() -> bool:
+    """Undocumented: control TLS certificate verification for outbound HTTP calls.
+
+    This mirrors the behavior used for API calls.
+
+    Sources (in priority order):
+      1) env var AYE_SSLVERIFY (via get_user_config)
+      2) ~/.ayecfg [default] sslverify=on|off
+
+    Defaults to True.
+    """
+    raw = get_user_config("sslverify", "on")
+    val = str(raw).strip().lower()
+
+    if val in ("0", "false", "off", "no"):
+        return False
+    if val in ("1", "true", "on", "yes"):
+        return True
+
+    return True
+
 
 def get_current_version() -> str:
     """Get the current installed version of the aye package."""
@@ -33,7 +57,8 @@ def get_latest_stable_version_info() -> Optional[tuple[str, Optional[str]]]:
         response = httpx.get(
             "https://pypi.org/pypi/ayechat/json",
             timeout=3.0,
-            follow_redirects=True
+            follow_redirects=True,
+            verify=_ssl_verify(),
         )
         response.raise_for_status()
         data = response.json()

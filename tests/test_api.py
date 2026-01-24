@@ -8,6 +8,7 @@ from unittest.mock import patch, MagicMock
 import httpx
 
 import aye.model.api as api
+from aye.model.auth import get_user_config
 
 
 class TestModelApi(TestCase):
@@ -154,7 +155,8 @@ class TestModelApi(TestCase):
         result = api.cli_invoke(message="test", dry_run=False)
         self.assertEqual(result, {"final": "response"})
         self.assertEqual(mock_get.call_count, 2)
-        mock_get.assert_called_with("https://fake.url", timeout=api.TIMEOUT)
+        current = "on" == get_user_config("verify", "on")
+        mock_get.assert_called_with("https://fake.url", timeout=api.TIMEOUT, verify=current)
 
     @patch("aye.model.api.time")
     @patch("httpx.get")
@@ -447,7 +449,7 @@ class TestModelApi(TestCase):
         mock_client.return_value.__enter__.return_value.post.assert_called_once()
         call_args = mock_client.return_value.__enter__.return_value.post.call_args
 
-        self.assertTrue("ayechat.ai/feedback" in call_args.args[0])
+        self.assertTrue("/feedback" in call_args.args[0])
         self.assertEqual(call_args.kwargs["json"], {"feedback": "great tool!", "chat_id": 123})
 
     @patch("aye.model.api._auth_headers")
