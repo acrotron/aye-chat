@@ -9,7 +9,9 @@ This module contains:
 - ErrorHandler: Centralized error handling
 """
 
+import shutil
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -58,6 +60,11 @@ class IndexConfig:
     def hash_index_path(self) -> Path:
         """Get the hash index file path."""
         return self.index_dir / "file_index.json"
+    
+    @property
+    def chroma_db_path(self) -> Path:
+        """Get the ChromaDB directory path."""
+        return self.index_dir / "chroma_db"
 
 
 # =============================================================================
@@ -249,11 +256,54 @@ class ProgressTracker:
 # Initialization Coordinator
 # =============================================================================
 
+# Exception types that indicate ChromaDB corruption
+_CORRUPTION_INDICATORS = (
+    "database disk image is malformed",
+    "file is not a database",
+    "no such table",
+    "database is locked",
+    "unable to open database",
+    "corrupt",
+    "OperationalError",
+    "DatabaseError",
+    "IntegrityError",
+)
+
+
+def _is_corruption_error(error: Exception) -> bool:
+    """
+    Check if an exception indicates ChromaDB corruption.
+    
+    Args:
+        error: The exception to check
+        
+    Returns:
+        True if the error looks like DB corruption
+    """
+    error_str = str(error).lower()
+    error_type = type(error).__name__
+    
+    # Check error message for corruption indicators
+    for indicator in _CORRUPTION_INDICATORS:
+        if indicator.lower() in error_str:
+            return True
+    
+    # Check exception type name
+    if error_type in ("OperationalError", "DatabaseError", "IntegrityError"):
+        return True
+    
+    # SQLite errors often indicate corruption
+    if "sqlite" in error_str or "sqlite" in error_type.lower():
+        return True
+    
+    return False
+
+
 class InitializationCoordinator:
     """
     Coordinates vector DB initialization.
     
-    Handles initialization state, locking, and retry logic.
+    Handles initialization state, locking, retry logic, and corruption recovery.
     """
     
     def __init__(self, config: IndexConfig):
@@ -261,6 +311,7 @@ class InitializationCoordinator:
         self.collection: Optional[Any] = None
         self._is_initialized = False
         self._in_progress = False
+        self._recovery_attempted = False
         self._lock = threading.Lock()
     
     @property
@@ -324,7 +375,7 @@ class InitializationCoordinator:
             self._lock.release()
     
     def _do_initialize(self) -> bool:
-        """Perform the actual initialization."""
+        """Perform the actual initialization with corruption recovery."""
         from aye.model import vector_db
         
         try:
@@ -334,7 +385,76 @@ class InitializationCoordinator:
                 rprint("[bold cyan]Code lookup is now active.[/]")
             return True
         except Exception as e:
+            # Check if this looks like corruption
+            if _is_corruption_error(e) and not self._recovery_attempted:
+                rprint(f"[yellow]Detected possible index corruption: {e}[/]")
+                return self._attempt_recovery()
+            
+            # Not corruption or recovery already attempted
             rprint(f"[red]Failed to initialize local code search: {e}[/red]")
+            self._is_initialized = True
+            self.collection = None
+            return False
+    
+    def _attempt_recovery(self) -> bool:
+        """
+        Attempt to recover from ChromaDB corruption.
+        
+        Strategy:
+        1. Quarantine the corrupt chroma_db directory
+        2. Invalidate the hash index (so files get re-indexed)
+        3. Retry initialization with fresh DB
+        
+        Returns:
+            True if recovery succeeded, False otherwise
+        """
+        from aye.model import vector_db
+        
+        self._recovery_attempted = True
+        timestamp = int(time.time())
+        
+        rprint("[yellow]Attempting automatic recovery...[/]")
+        
+        # Step 1: Quarantine corrupt ChromaDB
+        chroma_path = self.config.chroma_db_path
+        if chroma_path.exists():
+            corrupt_path = chroma_path.parent / f"chroma_db.corrupt.{timestamp}"
+            try:
+                shutil.move(str(chroma_path), str(corrupt_path))
+                rprint(f"[cyan]Quarantined corrupt DB to: {corrupt_path.name}[/]")
+            except Exception as move_err:
+                # If move fails, try to delete
+                rprint(f"[yellow]Could not quarantine DB ({move_err}), attempting delete...[/]")
+                try:
+                    shutil.rmtree(str(chroma_path), ignore_errors=True)
+                except Exception:
+                    pass
+        
+        # Step 2: Invalidate hash index (so all files get re-indexed)
+        hash_index_path = self.config.hash_index_path
+        if hash_index_path.exists():
+            corrupt_index_path = hash_index_path.parent / f"file_index.json.corrupt.{timestamp}"
+            try:
+                shutil.move(str(hash_index_path), str(corrupt_index_path))
+                rprint(f"[cyan]Quarantined hash index to: {corrupt_index_path.name}[/]")
+            except Exception:
+                # If move fails, just delete
+                try:
+                    hash_index_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        
+        # Step 3: Retry initialization
+        try:
+            rprint("[cyan]Reinitializing code search index...[/]")
+            self.collection = vector_db.initialize_index(self.config.root_path)
+            self._is_initialized = True
+            rprint("[green]Recovery successful! Index will be rebuilt in the background.[/]")
+            return True
+        except Exception as retry_err:
+            rprint(f"[red]Recovery failed: {retry_err}[/red]")
+            rprint("[yellow]Code search will be disabled for this session.[/]")
+            rprint("[yellow]You can manually delete .aye/chroma_db and restart to try again.[/]")
             self._is_initialized = True
             self.collection = None
             return False
