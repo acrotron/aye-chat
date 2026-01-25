@@ -98,40 +98,48 @@ jobs:
           Write-Host "Updated PATH:"
           $env:Path -split ';' | Where-Object { $_ -like "*AyeChat*" -or $_ -like "*aye*" }
 
-      - name: Verify aye is in PATH
+      - name: Find aye executable
+        id: find-aye
         shell: pwsh
         run: |
-          $ayePath = Get-Command aye -ErrorAction SilentlyContinue
-          if ($ayePath) {
-            Write-Host "aye found at: $($ayePath.Source)"
+          # Try to find aye in PATH first
+          $ayeCmd = Get-Command aye -ErrorAction SilentlyContinue
+          if ($ayeCmd) {
+            $ayePath = $ayeCmd.Source
+            Write-Host "aye found in PATH at: $ayePath"
           } else {
-            # Try to find it manually in common locations
+            # Try common installation locations
             $possiblePaths = @(
               "$env:LOCALAPPDATA\Programs\AyeChat\aye.exe",
               "$env:USERPROFILE\AppData\Local\Programs\AyeChat\aye.exe"
             )
 
+            $ayePath = $null
             foreach ($path in $possiblePaths) {
               if (Test-Path $path) {
-                Write-Host "Found aye at: $path"
-                # Add to PATH for this session
-                $dir = Split-Path $path -Parent
-                $env:Path = "$dir;$env:Path"
+                $ayePath = $path
+                Write-Host "Found aye at: $ayePath"
                 break
               }
             }
+
+            if (-not $ayePath) {
+              Write-Error "Could not find aye.exe in PATH or common locations"
+              Write-Host "Searched locations:"
+              $possiblePaths | ForEach-Object { Write-Host "  - $_" }
+              exit 1
+            }
           }
 
-          # Verify we can find aye now
-          $ayePath = Get-Command aye -ErrorAction Stop
-          Write-Host "aye executable: $($ayePath.Source)"
+          echo "AYE_PATH=$ayePath" >> $env:GITHUB_OUTPUT
 
       - name: Test aye --version
         id: version-check
         shell: pwsh
         run: |
-          Write-Host "Running: aye --version"
-          $versionOutput = & aye --version 2>&1
+          $ayePath = "${{ steps.find-aye.outputs.AYE_PATH }}"
+          Write-Host "Running: $ayePath --version"
+          $versionOutput = & $ayePath --version 2>&1
           $exitCode = $LASTEXITCODE
 
           Write-Host "Output: $versionOutput"
@@ -175,8 +183,9 @@ jobs:
       - name: Test aye --help
         shell: pwsh
         run: |
-          Write-Host "Running: aye --help"
-          & aye --help
+          $ayePath = "${{ steps.find-aye.outputs.AYE_PATH }}"
+          Write-Host "Running: $ayePath --help"
+          & $ayePath --help
 
           if ($LASTEXITCODE -ne 0) {
             Write-Error "aye --help failed"
