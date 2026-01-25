@@ -1,0 +1,186 @@
+name: Test Windows Installer
+
+on:
+  workflow_run:
+    workflows: ["Build Windows Installer"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run ID of Build Windows Installer workflow to test (leave empty for latest)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  test-installer:
+    name: Test Windows Installer
+    runs-on: windows-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Get workflow run ID
+        id: get-run-id
+        shell: pwsh
+        run: |
+          if ("${{ github.event.inputs.run_id }}" -ne "") {
+            $runId = "${{ github.event.inputs.run_id }}"
+          } elseif ("${{ github.event.workflow_run.id }}" -ne "") {
+            $runId = "${{ github.event.workflow_run.id }}"
+          } else {
+            Write-Error "No workflow run ID available"
+            exit 1
+          }
+          echo "RUN_ID=$runId" >> $env:GITHUB_OUTPUT
+          Write-Host "Using workflow run ID: $runId"
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: aye-chat-installer-*
+          run-id: ${{ steps.get-run-id.outputs.RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          merge-multiple: true
+
+      - name: List downloaded files
+        shell: pwsh
+        run: |
+          Write-Host "Downloaded files:"
+          Get-ChildItem -Recurse | Select-Object FullName, Length
+
+      - name: Find installer executable
+        id: find-installer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Filter "*.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "No installer executable found"
+            exit 1
+          }
+          echo "INSTALLER_PATH=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          Write-Host "Found installer: $($exe.FullName)"
+
+      - name: Run installer silently
+        shell: pwsh
+        run: |
+          $installerPath = "${{ steps.find-installer.outputs.INSTALLER_PATH }}"
+          Write-Host "Running installer: $installerPath"
+
+          # Run Inno Setup installer in very silent mode
+          $process = Start-Process -FilePath $installerPath -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=install.log" -Wait -PassThru
+
+          Write-Host "Installer exit code: $($process.ExitCode)"
+
+          if (Test-Path "install.log") {
+            Write-Host "=== Installation Log ==="
+            Get-Content "install.log" -Tail 50
+          }
+
+          if ($process.ExitCode -ne 0) {
+            Write-Error "Installer failed with exit code $($process.ExitCode)"
+            exit 1
+          }
+
+          Write-Host "Installation completed successfully"
+
+      - name: Refresh PATH environment
+        shell: pwsh
+        run: |
+          # The installer modifies the user PATH in the registry
+          # We need to refresh the PATH to include the new installation
+          $userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+          $machinePath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
+          $env:Path = "$userPath;$machinePath"
+
+          Write-Host "Updated PATH:"
+          $env:Path -split ';' | Where-Object { $_ -like "*AyeChat*" -or $_ -like "*aye*" }
+
+      - name: Verify aye is in PATH
+        shell: pwsh
+        run: |
+          $ayePath = Get-Command aye -ErrorAction SilentlyContinue
+          if ($ayePath) {
+            Write-Host "aye found at: $($ayePath.Source)"
+          } else {
+            # Try to find it manually in common locations
+            $possiblePaths = @(
+              "$env:LOCALAPPDATA\Programs\AyeChat\aye.exe",
+              "$env:USERPROFILE\AppData\Local\Programs\AyeChat\aye.exe"
+            )
+
+            foreach ($path in $possiblePaths) {
+              if (Test-Path $path) {
+                Write-Host "Found aye at: $path"
+                # Add to PATH for this session
+                $dir = Split-Path $path -Parent
+                $env:Path = "$dir;$env:Path"
+                break
+              }
+            }
+          }
+
+          # Verify we can find aye now
+          $ayePath = Get-Command aye -ErrorAction Stop
+          Write-Host "aye executable: $($ayePath.Source)"
+
+      - name: Test aye --version
+        id: version-check
+        shell: pwsh
+        run: |
+          Write-Host "Running: aye --version"
+          $versionOutput = & aye --version 2>&1
+          $exitCode = $LASTEXITCODE
+
+          Write-Host "Output: $versionOutput"
+          Write-Host "Exit code: $exitCode"
+
+          if ($exitCode -ne 0) {
+            Write-Error "aye --version failed with exit code $exitCode"
+            exit 1
+          }
+
+          echo "VERSION_OUTPUT=$versionOutput" >> $env:GITHUB_OUTPUT
+
+      - name: Verify version is not 0.0.0
+        shell: pwsh
+        run: |
+          $versionOutput = "${{ steps.version-check.outputs.VERSION_OUTPUT }}"
+          Write-Host "Version output: $versionOutput"
+
+          # Extract version number from output (handles formats like "aye 0.29.1" or just "0.29.1")
+          if ($versionOutput -match '(\d+\.\d+\.\d+)') {
+            $version = $Matches[1]
+            Write-Host "Extracted version: $version"
+
+            if ($version -eq "0.0.0") {
+              Write-Error "FAILURE: Version is 0.0.0 - this indicates a version detection problem"
+              Write-Host ""
+              Write-Host "The installer was built without proper version information."
+              Write-Host "This typically happens when:"
+              Write-Host "  - setuptools-scm cannot find git tags"
+              Write-Host "  - The version_info.txt was not generated correctly"
+              Write-Host "  - The PyInstaller build did not embed version metadata"
+              exit 1
+            }
+
+            Write-Host "SUCCESS: Version $version is valid (not 0.0.0)"
+          } else {
+            Write-Error "FAILURE: Could not extract version number from output: $versionOutput"
+            exit 1
+          }
+
+      - name: Test aye --help
+        shell: pwsh
+        run: |
+          Write-Host "Running: aye --help"
+          & aye --help
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "aye --help failed"
+            exit 1
+          }
+
+          Write-Host "aye --help completed successfully"
