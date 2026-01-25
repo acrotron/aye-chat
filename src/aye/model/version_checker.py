@@ -32,7 +32,23 @@ def _ssl_verify() -> bool:
 
 
 def get_current_version() -> str:
-    """Get the current installed version of the aye package."""
+    """Get the current installed version of the aye package.
+
+    For PyInstaller frozen builds, reads from the baked-in _frozen_version module.
+    For normal pip installs, uses importlib.metadata.
+    """
+    import sys
+
+    # Check if running as a PyInstaller frozen executable
+    if getattr(sys, 'frozen', False):
+        try:
+            from aye._frozen_version import __version__
+            return __version__
+        except ImportError:
+            # Frozen build without version file - shouldn't happen in CI builds
+            return "0.0.0"
+
+    # Normal pip install - use importlib.metadata
     try:
         from importlib.metadata import version, packages_distributions
         # Find which distribution provides the 'aye' package

@@ -5,6 +5,9 @@ bak/
 tmp/
 .aye*
 
+# Generated version file for PyInstaller builds
+src/aye/_frozen_version.py
+
 # Secrets / credentials (never commit!)
 *.pem
 *.key

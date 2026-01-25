@@ -12,6 +12,8 @@ block_cipher = None
 
 # Collect hidden imports for complex dependencies
 hiddenimports = [
+    # Frozen version module (generated at build time)
+    'aye._frozen_version',
     # Jaraco namespace packages (required by pkg_resources/setuptools)
     'jaraco.text',
     'jaraco.functools',
