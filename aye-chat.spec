@@ -34,6 +34,7 @@ hiddenimports = [
     'rich.markdown',
     'rich.syntax',
     'rich.table',
+    'rich._unicode_data',
     # HTTPX
     'httpx',
     'httpcore',
@@ -62,6 +63,7 @@ hiddenimports += collect_submodules('chromadb')
 hiddenimports += collect_submodules('onnxruntime')
 hiddenimports += collect_submodules('jaraco')
 hiddenimports += collect_submodules('tokenizers')
+hiddenimports += collect_submodules('rich')  # Includes dynamic unicode data modules
 
 # Collect data files needed at runtime
 datas = []
