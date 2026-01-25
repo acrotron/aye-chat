@@ -24,6 +24,9 @@ jobs:
       # Ensure Python uses UTF-8 encoding for console output
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: 1
+      # Disable rich formatting to avoid Unicode issues on Windows CI
+      NO_COLOR: 1
+      TERM: dumb
 
     steps:
       - name: Get workflow run ID
