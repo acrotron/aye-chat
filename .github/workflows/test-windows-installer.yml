@@ -20,6 +20,10 @@ jobs:
     name: Test Windows Installer
     runs-on: windows-latest
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    env:
+      # Ensure Python uses UTF-8 encoding for console output
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: 1
 
     steps:
       - name: Get workflow run ID
@@ -137,6 +141,10 @@ jobs:
         id: version-check
         shell: pwsh
         run: |
+          # Set console to UTF-8 code page
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          chcp 65001 > $null
+
           $ayePath = "${{ steps.find-aye.outputs.AYE_PATH }}"
           Write-Host "Running: $ayePath --version"
           $versionOutput = & $ayePath --version 2>&1
@@ -183,6 +191,10 @@ jobs:
       - name: Test aye --help
         shell: pwsh
         run: |
+          # Set console to UTF-8 code page
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          chcp 65001 > $null
+
           $ayePath = "${{ steps.find-aye.outputs.AYE_PATH }}"
           Write-Host "Running: $ayePath --help"
           & $ayePath --help
