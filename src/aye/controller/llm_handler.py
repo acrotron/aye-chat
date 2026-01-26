@@ -15,6 +15,11 @@ from aye.model.snapshot import apply_updates
 from aye.model.file_processor import filter_unchanged_files, make_paths_relative
 from aye.model.models import LLMResponse
 from aye.model.auth import get_user_config
+from aye.model.write_validator import (
+    check_files_against_ignore_patterns,
+    is_strict_mode_enabled,
+    format_ignored_files_warning,
+)
 
 
 _HAS_USED_RESTORE_KEY = "has_used_restore"
@@ -91,16 +96,36 @@ def process_llm_response(
     if not updated_files:
         print_no_files_changed(console)
     else:
-        # Apply updates to the model (Model update)
-        try:
-            apply_updates(updated_files, prompt)
-            file_names = [item.get("file_name") for item in updated_files if "file_name" in item]
-            if file_names:
-                # Update the view
-                print_files_updated(console, file_names)
-                _maybe_print_restore_tip(conf, console)
-        except Exception as e:
-            rprint(f"[red]Error applying updates:[/] {e}")
+        # Check files against ignore patterns (issue #50)
+        root_path = Path(conf.root) if hasattr(conf, 'root') else Path.cwd()
+        allowed_files, ignored_files = check_files_against_ignore_patterns(
+            updated_files, root_path
+        )
+
+        # Handle ignored files
+        strict_mode = is_strict_mode_enabled()
+        if ignored_files:
+            warning_msg = format_ignored_files_warning(ignored_files, strict_mode)
+            console.print(Padding(warning_msg, (1, 4, 0, 4)))
+
+            if strict_mode:
+                # In strict mode, only write allowed files
+                updated_files = allowed_files
+            # In non-strict mode, continue with all files (just warned)
+
+        if not updated_files:
+            print_no_files_changed(console)
+        else:
+            # Apply updates to the model (Model update)
+            try:
+                apply_updates(updated_files, prompt)
+                file_names = [item.get("file_name") for item in updated_files if "file_name" in item]
+                if file_names:
+                    # Update the view
+                    print_files_updated(console, file_names)
+                    _maybe_print_restore_tip(conf, console)
+            except Exception as e:
+                rprint(f"[red]Error applying updates:[/] {e}")
 
     return new_chat_id
 
