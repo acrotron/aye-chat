@@ -267,6 +267,13 @@ _CORRUPTION_INDICATORS = (
     "OperationalError",
     "DatabaseError",
     "IntegrityError",
+    # HNSW-related errors (ChromaDB internal index corruption)
+    # See: https://github.com/acrotron/aye-chat/issues/203
+    "hnsw",
+    "segment reader",
+    "compactor",
+    "executing plan",
+    "backfill",
 )
 
 
@@ -399,22 +406,22 @@ class InitializationCoordinator:
     def _attempt_recovery(self) -> bool:
         """
         Attempt to recover from ChromaDB corruption.
-        
+
         Strategy:
         1. Quarantine the corrupt chroma_db directory
         2. Invalidate the hash index (so files get re-indexed)
         3. Retry initialization with fresh DB
-        
+
         Returns:
             True if recovery succeeded, False otherwise
         """
         from aye.model import vector_db
-        
+
         self._recovery_attempted = True
         timestamp = int(time.time())
-        
+
         rprint("[yellow]Attempting automatic recovery...[/]")
-        
+
         # Step 1: Quarantine corrupt ChromaDB
         chroma_path = self.config.chroma_db_path
         if chroma_path.exists():
@@ -429,7 +436,7 @@ class InitializationCoordinator:
                     shutil.rmtree(str(chroma_path), ignore_errors=True)
                 except Exception:
                     pass
-        
+
         # Step 2: Invalidate hash index (so all files get re-indexed)
         hash_index_path = self.config.hash_index_path
         if hash_index_path.exists():
@@ -443,7 +450,7 @@ class InitializationCoordinator:
                     hash_index_path.unlink(missing_ok=True)
                 except Exception:
                     pass
-        
+
         # Step 3: Retry initialization
         try:
             rprint("[cyan]Reinitializing code search index...[/]")
@@ -458,6 +465,26 @@ class InitializationCoordinator:
             self._is_initialized = True
             self.collection = None
             return False
+
+    def reset_and_recover(self) -> bool:
+        """
+        Reset state and attempt recovery from corruption detected during operations.
+
+        This is called when corruption is detected during query/update operations
+        (not during initialization). It resets the initialization state and
+        attempts recovery.
+
+        Returns:
+            True if recovery succeeded, False otherwise
+        """
+        with self._lock:
+            # Reset state to allow re-initialization
+            self._is_initialized = False
+            self._recovery_attempted = False
+            self.collection = None
+
+            # Now attempt recovery
+            return self._attempt_recovery()
 
 
 # =============================================================================
