@@ -411,3 +411,70 @@ class TestSnapshot(TestCase):
     def test_driver(self, mock_list_snapshots):
         snapshot.driver()
         mock_list_snapshots.assert_called_once()
+
+    def test_restore_works_for_gitignored_files(self):
+        """
+        Verify that files matching .gitignore patterns can still be restored.
+
+        This tests the scenario from issue #50 where a user might overwrite
+        a file that was in .gitignore (and thus not read into context).
+        The snapshot mechanism should still capture and restore such files
+        because it operates at the filesystem level, not based on .gitignore.
+
+        See: https://github.com/acrotron/aye-chat/issues/50
+        """
+        # Create a .gitignore that ignores .jsx files
+        gitignore_path = Path(self.tmpdir.name) / ".gitignore"
+        gitignore_path.write_text("*.jsx\n")
+
+        # Create a file that matches the ignore pattern
+        ignored_file = self.test_dir / "app.jsx"
+        original_content = "export default function App() { return <div>Original</div>; }"
+        ignored_file.write_text(original_content)
+
+        # Create a snapshot (simulating what apply_updates does before writing)
+        with patch('aye.model.snapshot._get_next_ordinal', return_value=1):
+            snapshot.create_snapshot([ignored_file], prompt="overwrite ignored file")
+
+        # Overwrite the file (simulating what the AI would do)
+        new_content = "export default function App() { return <div>New Content</div>; }"
+        ignored_file.write_text(new_content)
+
+        # Verify file was overwritten
+        self.assertEqual(ignored_file.read_text(), new_content)
+
+        # Restore the file
+        snapshot.restore_snapshot(ordinal="001")
+
+        # Verify the original content is restored
+        self.assertEqual(ignored_file.read_text(), original_content)
+
+    def test_apply_updates_snapshots_existing_ignored_files(self):
+        """
+        Verify that apply_updates creates a snapshot of existing files
+        before overwriting them, even if those files would match .gitignore.
+
+        This ensures users can recover ignored files that get overwritten.
+
+        See: https://github.com/acrotron/aye-chat/issues/50
+        """
+        # Create a file that would typically be ignored
+        ignored_file = self.test_dir / "config.env"
+        original_content = "SECRET_KEY=original_secret_123"
+        ignored_file.write_text(original_content)
+
+        # Apply updates (this should snapshot the original before overwriting)
+        new_content = "SECRET_KEY=new_secret_456"
+        updated_files = [
+            {"file_name": str(ignored_file), "file_content": new_content}
+        ]
+
+        with patch('aye.model.snapshot._get_next_ordinal', return_value=1):
+            snapshot.apply_updates(updated_files, prompt="update config")
+
+        # Verify file was overwritten
+        self.assertEqual(ignored_file.read_text(), new_content)
+
+        # Restore and verify original content is recovered
+        snapshot.restore_snapshot(ordinal="001")
+        self.assertEqual(ignored_file.read_text(), original_content)

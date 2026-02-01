@@ -28,6 +28,7 @@ from .index_manager_state import (
     ProgressTracker,
     InitializationCoordinator,
     ErrorHandler,
+    _is_corruption_error,
 )
 from .index_manager_executor import PhaseExecutor
 
@@ -242,7 +243,15 @@ class IndexManager:  # pylint: disable=too-many-instance-attributes
         deleted = get_deleted_files(current_paths, old_index)
         if deleted:
             self._error_handler.info(f"Deleted: {len(deleted)} file(s) from index.")
-            vector_db.delete_from_index(self._init_coordinator.collection, deleted)
+            try:
+                vector_db.delete_from_index(self._init_coordinator.collection, deleted)
+            except Exception as e:
+                if _is_corruption_error(e):
+                    rprint(f"[yellow]Detected index corruption during delete: {e}[/]")
+                    self._init_coordinator.reset_and_recover()
+                    # Don't re-raise, recovery will rebuild the index
+                else:
+                    raise
 
     def _update_state_after_categorization(
         self,
@@ -549,9 +558,21 @@ class IndexManager:  # pylint: disable=too-many-instance-attributes
         if not self._init_coordinator.collection:
             return []
 
-        return vector_db.query_index(
-            collection=self._init_coordinator.collection,
-            query_text=query_text,
-            n_results=n_results,
-            min_relevance=min_relevance
-        )
+        try:
+            return vector_db.query_index(
+                collection=self._init_coordinator.collection,
+                query_text=query_text,
+                n_results=n_results,
+                min_relevance=min_relevance
+            )
+        except Exception as e:
+            if _is_corruption_error(e):
+                rprint(f"[yellow]Detected index corruption during query: {e}[/]")
+                if self._init_coordinator.reset_and_recover():
+                    # Recovery succeeded, index will rebuild in background
+                    # Return empty results for this query
+                    return []
+                # Recovery failed, code search disabled
+                return []
+            # Not a corruption error, re-raise
+            raise

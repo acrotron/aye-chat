@@ -332,6 +332,241 @@ class TestRepl(TestCase):
             mock_process.assert_called_once()
 
 
+class TestExecuteForcedShellCommand(TestCase):
+    """Tests for _execute_forced_shell_command function."""
+
+    def setUp(self):
+        repl.telemetry.reset()
+        repl.telemetry.set_enabled(False)
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_executes_with_force_flag_and_prints_stdout(self, mock_record, mock_rprint):
+        """Test that command executes with force=True and stdout is printed."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "file1.txt\nfile2.txt",
+            "stderr": "",
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("ls", ["-la"], conf)
+
+        plugin_manager.handle_command.assert_called_once_with(
+            "execute_shell_command",
+            {"command": "ls", "args": ["-la"], "force": True}
+        )
+        mock_rprint.assert_called_once_with("file1.txt\nfile2.txt")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_prints_stderr_with_yellow_formatting(self, mock_record, mock_rprint):
+        """Test that stderr is printed with yellow formatting."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "",
+            "stderr": "warning: something happened",
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("cmd", [], conf)
+
+        mock_rprint.assert_called_once_with("[yellow]warning: something happened[/]")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_prints_both_stdout_and_stderr(self, mock_record, mock_rprint):
+        """Test that both stdout and stderr are printed when present."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "output here",
+            "stderr": "warning here",
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("cmd", ["arg1"], conf)
+
+        assert mock_rprint.call_count == 2
+        mock_rprint.assert_any_call("output here")
+        mock_rprint.assert_any_call("[yellow]warning here[/]")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_prints_error_with_red_formatting(self, mock_record, mock_rprint):
+        """Test that error in response is printed with red formatting."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "partial output",
+            "stderr": "",
+            "error": "Command failed with exit code 1",
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("failing_cmd", [], conf)
+
+        assert mock_rprint.call_count == 2
+        mock_rprint.assert_any_call("partial output")
+        mock_rprint.assert_any_call("[red]Error:[/] Command failed with exit code 1")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_prints_message_for_interactive_commands(self, mock_record, mock_rprint):
+        """Test that message-only responses (e.g., interactive commands) are printed."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "message": "Interactive command 'vim' completed (exit code: 0)."
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("vim", ["file.txt"], conf)
+
+        mock_rprint.assert_called_once_with(
+            "Interactive command 'vim' completed (exit code: 0)."
+        )
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_prints_error_when_plugin_returns_none(self, mock_record, mock_rprint):
+        """Test that error is printed when plugin returns None."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = None
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("nonexistent", [], conf)
+
+        mock_rprint.assert_called_once_with("[red]Error:[/] Failed to execute shell command")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_records_telemetry_with_args(self, mock_record, mock_rprint):
+        """Test that telemetry is recorded with has_args=True when args present."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {"stdout": "ok", "stderr": ""}
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("git", ["status", "-s"], conf)
+
+        mock_record.assert_called_once_with("git", has_args=True, prefix="cmd:")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_records_telemetry_without_args(self, mock_record, mock_rprint):
+        """Test that telemetry is recorded with has_args=False when no args."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {"stdout": "ok", "stderr": ""}
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("pwd", [], conf)
+
+        mock_record.assert_called_once_with("pwd", has_args=False, prefix="cmd:")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_does_not_print_empty_stdout_or_stderr(self, mock_record, mock_rprint):
+        """Test that empty stdout/stderr strings don't result in prints."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "   ",  # whitespace only
+            "stderr": "",
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("cmd", [], conf)
+
+        mock_rprint.assert_not_called()
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_handles_stdout_stderr_and_error_together(self, mock_record, mock_rprint):
+        """Test all three outputs printed when all present."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "some output",
+            "stderr": "some warning",
+            "error": "but it failed",
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("cmd", ["arg"], conf)
+
+        assert mock_rprint.call_count == 3
+        mock_rprint.assert_any_call("some output")
+        mock_rprint.assert_any_call("[yellow]some warning[/]")
+        mock_rprint.assert_any_call("[red]Error:[/] but it failed")
+
+
+def test_chat_repl_force_shell_prefix_executes_via_forced_function():
+    """Test that ! prefix triggers _execute_forced_shell_command in REPL."""
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl._execute_forced_shell_command") as mock_forced,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["!mycommand arg1 arg2", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=None,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        mock_forced.assert_called_once_with("mycommand", ["arg1", "arg2"], conf)
+
+
+def test_chat_repl_force_shell_empty_after_bang_skips():
+    """Test that '!' alone is skipped without error."""
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl._execute_forced_shell_command") as mock_forced,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["!", "!   ", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=None,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        mock_forced.assert_not_called()
+
+
 def test_create_key_bindings_registers_two_enter_bindings_and_handlers_work():
     bindings = repl.create_key_bindings()
     enter_bindings = bindings.get_bindings_for_keys((Keys.Enter,))

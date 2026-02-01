@@ -45,7 +45,7 @@ jobs:
           Write-Host "Using workflow run ID: $runId"
 
       - name: Download installer artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: aye-chat-installer-*
           run-id: ${{ steps.get-run-id.outputs.RUN_ID }}
