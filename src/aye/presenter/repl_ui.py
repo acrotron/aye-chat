@@ -87,7 +87,7 @@ def print_help_message():
     commands = [
         # Some commands are intentionally undocumented: keep them as such.
         ("@filename", "Include a file in your prompt inline (e.g., \"explain @main.py\"). Supports wildcards (e.g., @*.py, @src/*.js)."),
-        ("blog <intent>", "Generate a technical deep-dive blog post derived from the current chat session and write it to blog.md."),
+        ("!command", "Force shell execution (e.g., \"!echo hello\")."),
         ("model", "Select a different model. Selection will persist between sessions."),
         (r"verbose \[on|off]", "Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)"),
         (r"completion \[readline|multi]", "Switch auto-completion style (readline or multi, persists between sessions)"),

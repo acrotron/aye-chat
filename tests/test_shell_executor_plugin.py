@@ -153,7 +153,7 @@ class TestShellExecutorPlugin(TestCase):
     @patch('subprocess.run', side_effect=FileNotFoundError)
     def test_execute_non_interactive_file_not_found(self, mock_run):
         result = self.plugin._execute_non_interactive('badcmd', [])
-        self.assertIsNone(result)
+        self.assertEqual(result, {'error': 'Command not found: badcmd', 'stdout': '', 'stderr': '', 'returncode': 127})
 
     @patch.object(ShellExecutorPlugin, '_is_valid_command', return_value=True)
     @patch.object(ShellExecutorPlugin, '_execute_non_interactive')

@@ -10,7 +10,7 @@ from rich import print as rprint
 
 class ShellExecutorPlugin(Plugin):
     name = "shell_executor"
-    version = "1.0.2"  # Fixed Windows localization bug in command detection
+    version = "1.0.3"  # Added force parameter for ! prefix execution
     premium = "free"
 
     # Known interactive commands that require a TTY (add more as needed)
@@ -143,15 +143,17 @@ class ShellExecutorPlugin(Plugin):
                 "returncode": e.returncode
             }
         except FileNotFoundError:
-            return None  # Command not found
+            return {"error": f"Command not found: {command}", "stdout": "", "stderr": "", "returncode": 127}
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Handle shell command execution through plugin system."""
         if command_name == "execute_shell_command":
             command = params.get("command", "")
             args = params.get("args", [])
+            force = params.get("force", False)
             
-            if not self._is_valid_command(command):
+            # If force is False, validate the command exists first
+            if not force and not self._is_valid_command(command):
                 return None  # Command not found or not executable
             
             full_cmd_str = self._build_full_cmd(command, args)

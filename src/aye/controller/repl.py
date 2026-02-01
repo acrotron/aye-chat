@@ -1,7 +1,7 @@
 import os
 import json
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, List
 import shlex
 import threading
 import glob
@@ -252,6 +252,34 @@ def create_prompt_session(completer: Any, completion_style: str = "readline") ->
     )
 
 
+def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> None:
+    """Execute a shell command with force flag (bypasses command validation).
+    
+    Used when user prefixes input with '!' to force shell execution.
+    
+    Args:
+        command: The command to execute
+        args: List of arguments to pass to the command
+        conf: Configuration object with plugin_manager
+    """
+    telemetry.record_command(command, has_args=len(args) > 0, prefix=_CMD_PREFIX)
+    shell_response = conf.plugin_manager.handle_command(
+        "execute_shell_command", 
+        {"command": command, "args": args, "force": True}
+    )
+    if shell_response is not None:
+        if "stdout" in shell_response or "stderr" in shell_response:
+            if shell_response.get("stdout", "").strip():
+                rprint(shell_response["stdout"])
+            if shell_response.get("stderr", "").strip():
+                rprint(f"[yellow]{shell_response['stderr']}[/]")
+            if "error" in shell_response:
+                rprint(f"[red]Error:[/] {shell_response['error']}")
+        elif "message" in shell_response:
+            rprint(shell_response["message"])
+    else:
+        rprint(f"[red]Error:[/] Failed to execute shell command")
+
 
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
@@ -327,6 +355,14 @@ def chat_repl(conf: Any) -> None:
                         chat_id = new_chat_id
                     continue
 
+                # Check for '!' prefix - force shell execution
+                force_shell = False
+                if prompt.strip().startswith('!'):
+                    force_shell = True
+                    prompt = prompt.strip()[1:]  # Remove the '!'
+                    if not prompt.strip():
+                        continue  # Nothing after the '!', skip
+
                 if not prompt.strip():
                     continue
                 tokens = shlex.split(prompt.strip(), posix=False)
@@ -339,6 +375,11 @@ def chat_repl(conf: Any) -> None:
                 continue
 
             original_first, lowered_first = tokens[0], tokens[0].lower()
+
+            # If force_shell is True, execute as shell command directly and skip all other checks
+            if force_shell:
+                _execute_forced_shell_command(original_first, tokens[1:], conf)
+                continue
 
             # Normalize slash-prefixed commands: /restore -> restore, /model -> model, etc.
             if lowered_first.startswith('/'):
