@@ -7,7 +7,7 @@ from prompt_toolkit import PromptSession
 from rich import print as rprint
 from rich.console import Console
 
-from aye.model.auth import get_user_config, set_user_config
+from aye.model.auth import get_user_config, set_user_config, delete_user_config
 from aye.model.config import MODELS
 from aye.presenter.repl_ui import print_error
 from aye.controller.llm_invoker import invoke_llm
@@ -37,7 +37,7 @@ def handle_model_command(session: Optional[PromptSession], models: list, conf: A
             num = int(tokens[1])
             if 1 <= num <= len(models):
                 selected_id = models[num - 1]["id"]
-                
+
                 # Check if this is an offline model and trigger download if needed
                 selected_model = models[num - 1]
                 if selected_model.get("type") == "offline":
@@ -49,7 +49,7 @@ def handle_model_command(session: Optional[PromptSession], models: list, conf: A
                     if download_response and not download_response.get("success", True):
                         rprint(f"[red]Failed to download model: {download_response.get('error', 'Unknown error')}[/]")
                         return
-                
+
                 conf.selected_model = selected_id
                 set_user_config("selected_model", selected_id)
                 rprint(f"[green]Selected model: {models[num - 1]['name']}[/]")
@@ -81,7 +81,7 @@ def handle_model_command(session: Optional[PromptSession], models: list, conf: A
             num = int(choice)
             if 1 <= num <= len(models):
                 selected_id = models[num - 1]["id"]
-                
+
                 # Check if this is an offline model and trigger download if needed
                 selected_model = models[num - 1]
                 if selected_model.get("type") == "offline":
@@ -93,7 +93,7 @@ def handle_model_command(session: Optional[PromptSession], models: list, conf: A
                     if download_response and not download_response.get("success", True):
                         rprint(f"[red]Failed to download model: {download_response.get('error', 'Unknown error')}[/]")
                         return
-                
+
                 conf.selected_model = selected_id
                 set_user_config("selected_model", selected_id)
                 rprint(f"[green]Selected: {models[num - 1]['name']}[/]")
@@ -147,7 +147,7 @@ def handle_debug_command(tokens: list):
 
 def handle_completion_command(tokens: list) -> Optional[str]:
     """Handle the 'completion' command for switching completion styles.
-    
+
     Returns:
         The new completion style if changed ('readline' or 'multi'), None otherwise.
     """
@@ -169,25 +169,125 @@ def handle_completion_command(tokens: list) -> Optional[str]:
         return None
 
 
+def handle_llm_command(session: Optional[PromptSession], tokens: list[str]) -> None:
+    """Handle the 'llm' command for configuring OpenAI-compatible local model endpoint.
+
+    Usage:
+        llm         - Interactively configure URL, key, and model
+        llm clear   - Remove all LLM config values
+
+    Config keys stored in ~/.ayecfg:
+        llm_api_url
+        llm_api_key
+        llm_model
+    """
+    # Handle 'llm clear' subcommand
+    if len(tokens) > 1 and tokens[1].lower() == "clear":
+        delete_user_config("llm_api_url")
+        delete_user_config("llm_api_key")
+        delete_user_config("llm_model")
+        rprint("[green]LLM config cleared.[/]")
+        return
+
+    # Interactive configuration
+    current_url = get_user_config("llm_api_url", "")
+    current_key = get_user_config("llm_api_key", "")
+    current_model = get_user_config("llm_model", "")
+
+    # Show current status
+    rprint("\n[bold cyan]LLM Endpoint Configuration[/]")
+    rprint("[dim]Press Enter to keep current value, or type a new value.[/]\n")
+
+    if not session:
+        rprint("[red]Error: Interactive session not available.[/]")
+        return
+
+    try:
+        # Prompt for URL (explicitly non-password; some prompt_toolkit versions may reuse app state)
+        url_display = current_url if current_url else "not set"
+        new_url = session.prompt(
+            f"LLM API URL (current: {url_display}): ",
+            is_password=False,
+        ).strip()
+        final_url = new_url if new_url else current_url
+
+        # Prompt for API key (hidden input)
+        key_display = "set" if current_key else "not set"
+        new_key = session.prompt(
+            f"LLM API KEY (current: {key_display}): ",
+            is_password=True,
+        ).strip()
+        final_key = new_key if new_key else current_key
+
+        # Prompt for model (explicitly non-password)
+        model_display = current_model if current_model else "not set"
+        new_model = session.prompt(
+            f"LLM MODEL (current: {model_display}): ",
+            is_password=False,
+        ).strip()
+        final_model = new_model if new_model else current_model
+
+    except (EOFError, KeyboardInterrupt):
+        rprint("\n[yellow]Configuration cancelled.[/]")
+        return
+
+    # Save values (only if they have content)
+    if final_url:
+        set_user_config("llm_api_url", final_url)
+    elif current_url and not new_url:
+        # Keep existing
+        pass
+    else:
+        delete_user_config("llm_api_url")
+
+    if final_key:
+        set_user_config("llm_api_key", final_key)
+    elif current_key and not new_key:
+        # Keep existing
+        pass
+    else:
+        delete_user_config("llm_api_key")
+
+    if final_model:
+        set_user_config("llm_model", final_model)
+    elif current_model and not new_model:
+        # Keep existing
+        pass
+    else:
+        delete_user_config("llm_model")
+
+    # Print confirmation
+    rprint("\n[bold cyan]LLM Configuration Updated[/]")
+    rprint(f"  URL:   {final_url if final_url else '[dim]not set[/]'}")
+    rprint(f"  KEY:   {'[dim]set (hidden)[/]' if final_key else '[dim]not set[/]'}")
+    rprint(f"  MODEL: {final_model if final_model else '[dim]not set[/]'}")
+
+    # Show status message
+    if final_url and final_key:
+        rprint("\n[green] OpenAI-compatible endpoint is configured and active.[/]")
+    else:
+        rprint("\n[yellow] Both URL and KEY are required for the local LLM endpoint to be active.[/]")
+
+
 def _expand_file_patterns(patterns: list[str], conf: Any) -> list[str]:
     """Expand wildcard patterns and return a list of existing file paths."""
     expanded_files = []
-    
+
     for pattern in patterns:
         pattern = pattern.strip()
         if not pattern:
             continue
-            
+
         # Check if it's a direct file path first
         direct_path = conf.root / pattern
         if direct_path.is_file():
             expanded_files.append(pattern)
             continue
-            
+
         # Use glob to expand wildcards
         # Search relative to the project root
         matched_paths = list(conf.root.glob(pattern))
-        
+
         # Add relative paths of matched files
         for matched_path in matched_paths:
             if matched_path.is_file():
@@ -197,26 +297,26 @@ def _expand_file_patterns(patterns: list[str], conf: Any) -> list[str]:
                 except ValueError:
                     # If we can't make it relative, use the original pattern
                     expanded_files.append(pattern)
-    
+
     return expanded_files
 
 
 def handle_with_command(
-    prompt: str, 
-    conf: Any, 
-    console: Console, 
-    chat_id: int, 
+    prompt: str,
+    conf: Any,
+    console: Console,
+    chat_id: int,
     chat_id_file: Path
 ) -> Optional[int]:
     """Handle the 'with' command for file-specific prompts with wildcard support.
-    
+
     Args:
         prompt: The full prompt string starting with 'with'
         conf: Configuration object
         console: Rich console for output
         chat_id: Current chat ID
         chat_id_file: Path to chat ID file
-        
+
     Returns:
         New chat_id if available, None otherwise
     """
@@ -234,16 +334,16 @@ def handle_with_command(
 
         # Parse file patterns (can include wildcards)
         file_patterns = [f.strip() for f in file_list_str.replace(",", " ").split() if f.strip()]
-        
+
         # Expand wildcards to get actual file paths
         expanded_files = _expand_file_patterns(file_patterns, conf)
-        
+
         if not expanded_files:
             rprint("[red]Error: No files found matching the specified patterns.[/red]")
             return None
-        
+
         explicit_source_files = {}
-        
+
         for file_name in expanded_files:
             file_path = conf.root / file_name
             if not file_path.is_file():
@@ -254,11 +354,11 @@ def handle_with_command(
             except Exception as e:
                 rprint(f"[red]Could not read file '{file_name}': {e}[/red]")
                 continue  # Continue with other files instead of breaking
-        
+
         if not explicit_source_files:
             rprint("[red]Error: No readable files found.[/red]")
             return None
-        
+
         # Show which files were included
         if conf.verbose or len(explicit_source_files) != len(expanded_files):
             rprint(f"[cyan]Including {len(explicit_source_files)} file(s): {', '.join(explicit_source_files.keys())}[/cyan]")
@@ -272,20 +372,20 @@ def handle_with_command(
             verbose=conf.verbose,
             explicit_source_files=explicit_source_files
         )
-        
+
         if llm_response:
             new_chat_id = process_llm_response(
-                response=llm_response, 
-                conf=conf, 
-                console=console, 
-                prompt=new_prompt_str.strip(), 
+                response=llm_response,
+                conf=conf,
+                console=console,
+                prompt=new_prompt_str.strip(),
                 chat_id_file=chat_id_file if llm_response.chat_id else None
             )
             return new_chat_id
         else:
             rprint("[yellow]No response from LLM.[/]")
             return None
-            
+
     except Exception as exc:
         handle_llm_error(exc)
         return None

@@ -58,6 +58,27 @@ def set_user_config(key: str, value: Any) -> None:
     TOKEN_FILE.chmod(0o600)
 
 
+def delete_user_config(key: str) -> None:
+    """Delete a user config key from the [default] section.
+    
+    If the key doesn't exist, this is a no-op.
+    Preserves other settings and maintains file permissions.
+    """
+    config = _parse_user_config()
+    if key not in config:
+        return
+    config.pop(key, None)
+    if not config:
+        # If no config left, remove the file entirely
+        TOKEN_FILE.unlink(missing_ok=True)
+    else:
+        new_content = "[default]\n"
+        for k, v in config.items():
+            new_content += f"{k}={v}\n"
+        TOKEN_FILE.write_text(new_content, encoding="utf-8")
+        TOKEN_FILE.chmod(0o600)
+
+
 def store_token(token: str) -> None:
     """Persist the token in ~/.ayecfg or value from AYE_TOKEN_FILE environment variable (unless AYE_TOKEN is set)."""
     token = token.strip()
@@ -122,4 +143,3 @@ def login_flow() -> None:
     token = typer.prompt("Paste your token", hide_input=True)
     store_token(token.strip())
     typer.secho("✅ Token saved.", fg=typer.colors.GREEN)
-

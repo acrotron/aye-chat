@@ -89,6 +89,7 @@ def print_help_message():
         ("@filename", "Include a file in your prompt inline (e.g., \"explain @main.py\"). Supports wildcards (e.g., @*.py, @src/*.js)."),
         ("!command", "Force shell execution (e.g., \"!echo hello\")."),
         ("model", "Select a different model. Selection will persist between sessions."),
+        ("llm", "Configure OpenAI-compatible LLM endpoint (URL, key, model). Use 'llm clear' to reset."),
         (r"verbose \[on|off]", "Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)"),
         (r"completion \[readline|multi]", "Switch auto-completion style (readline or multi, persists between sessions)"),
         ("new", "Start a new chat session (if you want to change the subject)"),
