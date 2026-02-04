@@ -42,6 +42,7 @@ from aye.controller.command_handlers import (
     handle_with_command,
     handle_blog_command,
     handle_llm_command,
+    handle_autodiff_command,
 )
 
 DEBUG = False
@@ -285,7 +286,7 @@ def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> N
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm"]
+    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm"]
 
     # Get the completion style setting
     completion_style = get_user_config("completion_style", "readline").lower()
@@ -416,6 +417,9 @@ def chat_repl(conf: Any) -> None:
                 elif lowered_first == "debug":
                     telemetry.record_command("debug", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_debug_command(tokens)
+                elif lowered_first == "autodiff":
+                    telemetry.record_command("autodiff", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
+                    handle_autodiff_command(tokens)
                 elif lowered_first == "completion":
                     telemetry.record_command("completion", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     new_style = handle_completion_command(tokens)

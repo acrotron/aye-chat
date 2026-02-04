@@ -145,6 +145,25 @@ def handle_debug_command(tokens: list):
         rprint(f"[yellow]Debug mode is {current.title()}[/]")
 
 
+def handle_autodiff_command(tokens: list):
+    """Handle the 'autodiff' command for toggling automatic diff display.
+
+    When autodiff is enabled, diffs are automatically displayed for every
+    file modified by an LLM response.
+    """
+    if len(tokens) > 1:
+        val = tokens[1].lower()
+        if val in ("on", "off"):
+            set_user_config("autodiff", val)
+            rprint(f"[green]Autodiff set to {val.title()}[/]")
+        else:
+            rprint("[red]Usage: autodiff on|off[/]")
+    else:
+        current = get_user_config("autodiff", "off")
+        rprint(f"[yellow]Autodiff is {current.title()}[/]")
+        rprint("[dim]When on, diffs are shown automatically after each LLM file update.[/]")
+
+
 def handle_completion_command(tokens: list) -> Optional[str]:
     """Handle the 'completion' command for switching completion styles.
 
@@ -264,9 +283,9 @@ def handle_llm_command(session: Optional[PromptSession], tokens: list[str]) -> N
 
     # Show status message
     if final_url and final_key:
-        rprint("\n[green] OpenAI-compatible endpoint is configured and active.[/]")
+        rprint("\n[green] OpenAI-compatible endpoint is configured and active.[/]")
     else:
-        rprint("\n[yellow] Both URL and KEY are required for the local LLM endpoint to be active.[/]")
+        rprint("\n[yellow] Both URL and KEY are required for the local LLM endpoint to be active.[/]")
 
 
 def _expand_file_patterns(patterns: list[str], conf: Any) -> list[str]:
