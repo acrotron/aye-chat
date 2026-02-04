@@ -7,6 +7,7 @@ Note:
 - Git stash snapshots (GitStashBackend) are intentionally NOT used.
 """
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
@@ -32,6 +33,7 @@ __all__ = [
     "delete_snapshot",
     "prune_snapshots",
     "cleanup_snapshots",
+    "get_diff_base_for_file",
     # Utilities
     "get_backend",
     "reset_backend",
@@ -143,6 +145,102 @@ def prune_snapshots(keep_count: int = 10) -> int:
 def cleanup_snapshots(older_than_days: int = 30) -> int:
     """Delete snapshots older than N days. Returns number of deleted snapshots."""
     return get_backend().cleanup_snapshots(older_than_days)
+
+
+def get_diff_base_for_file(batch_id: str, file_path: Path) -> Optional[Tuple[str, bool]]:
+    """Return the snapshot reference for a file in a given batch.
+
+    This provides a backend-agnostic way to get a reference suitable for
+    diff_presenter.show_diff().
+
+    Args:
+        batch_id: The batch identifier returned by apply_updates()
+        file_path: The file path to get the snapshot reference for
+
+    Returns:
+        Tuple of (snapshot_ref, is_git_ref) where:
+        - snapshot_ref: For FileBasedBackend, a filesystem path to the snapshot file.
+                        For GitRefBackend, a 'refname:repo_rel_path' string.
+        - is_git_ref: True if snapshot_ref is a git ref format, False for filesystem path.
+        Returns None if the file is not found in the snapshot.
+    """
+    backend = get_backend()
+
+    if isinstance(backend, FileBasedBackend):
+        return _get_diff_base_file_backend(backend, batch_id, file_path)
+    elif isinstance(backend, GitRefBackend):
+        return _get_diff_base_git_backend(backend, batch_id, file_path)
+
+    return None
+
+
+def _get_diff_base_file_backend(
+    backend: FileBasedBackend, batch_id: str, file_path: Path
+) -> Optional[Tuple[str, bool]]:
+    """Get diff base for FileBasedBackend.
+
+    Reads the metadata.json from the snapshot batch directory to find
+    the snapshot path for the given file.
+    """
+    # Find the batch directory matching the batch_id
+    # batch_id format is like "001_20231201T120000"
+    batch_dir = None
+    if backend.snap_root.is_dir():
+        for dir_path in backend.snap_root.iterdir():
+            if dir_path.is_dir() and dir_path.name == batch_id:
+                batch_dir = dir_path
+                break
+
+    if batch_dir is None:
+        return None
+
+    meta_file = batch_dir / "metadata.json"
+    if not meta_file.is_file():
+        return None
+
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    # Resolve the target file path for comparison
+    file_resolved = file_path.resolve()
+
+    # Find the matching entry in metadata
+    for entry in meta.get("files", []):
+        original_path = entry.get("original")
+        snapshot_path = entry.get("snapshot")
+
+        if not original_path or not snapshot_path:
+            continue
+
+        if Path(original_path).resolve() == file_resolved:
+            # Return the snapshot path as a string, not a git ref
+            return (snapshot_path, False)
+
+    return None
+
+
+def _get_diff_base_git_backend(
+    backend: GitRefBackend, batch_id: str, file_path: Path
+) -> Optional[Tuple[str, bool]]:
+    """Get diff base for GitRefBackend.
+
+    Returns a ref:path format suitable for git show.
+    """
+    # Construct the refname from batch_id
+    refname = f"{backend.REF_NAMESPACE}/{batch_id}"
+
+    # Get repo-relative path
+    try:
+        file_resolved = file_path.resolve()
+        rel_path = file_resolved.relative_to(backend.git_root).as_posix()
+    except ValueError:
+        # File is outside git root
+        return None
+
+    # Return the git ref format
+    return (f"{refname}:{rel_path}", True)
 
 
 # ------------------------------------------------------------------

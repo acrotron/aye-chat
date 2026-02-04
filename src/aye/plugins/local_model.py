@@ -8,6 +8,7 @@ from rich import print as rprint
 
 from .plugin_base import Plugin
 from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS
+from aye.model.auth import get_user_config
 from aye.controller.util import is_truncated_json
 
 LLM_TIMEOUT = 600.0
@@ -179,9 +180,17 @@ class LocalModelPlugin(Plugin):
             return self._create_error_response(f"Error calling Databricks API: {str(e)}")
 
     def _handle_openai_compatible(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
-        api_url = os.environ.get("AYE_LLM_API_URL")
-        api_key = os.environ.get("AYE_LLM_API_KEY")
-        model_name = os.environ.get("AYE_LLM_MODEL", "gpt-3.5-turbo")
+        """Handle OpenAI-compatible API endpoints.
+        
+        Reads configuration from:
+        - get_user_config("llm_api_url") / AYE_LLM_API_URL
+        - get_user_config("llm_api_key") / AYE_LLM_API_KEY  
+        - get_user_config("llm_model") / AYE_LLM_MODEL (default: gpt-3.5-turbo)
+        """
+        # Read from config (supports both ~/.ayecfg and AYE_LLM_* env vars)
+        api_url = get_user_config("llm_api_url")
+        api_key = get_user_config("llm_api_key")
+        model_name = get_user_config("llm_model", "gpt-3.5-turbo")
         
         if not api_url or not api_key:
             return None
