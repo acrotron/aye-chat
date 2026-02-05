@@ -138,47 +138,6 @@ class TestLocalModelPlugin(TestCase):
         self.assertIsNone(self.plugin._handle_openai_compatible("p", {}))
 
     @patch('httpx.Client')
-    def test_handle_databricks_success(self, mock_client):
-        os.environ["AYE_DBX_API_URL"] = "http://fake.dbx.api"
-        os.environ["AYE_DBX_API_KEY"] = "fake_key"
-        
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": [{"type": "text", "text": json.dumps({"answer_summary": "dbx response"})}]}}]
-        }
-        mock_response.raise_for_status.return_value = None
-        mock_client.return_value.__enter__.return_value.post.return_value = mock_response
-        
-        result = self.plugin._handle_databricks("prompt", {})
-        
-        self.assertIsNotNone(result)
-        self.assertEqual(result["summary"], "dbx response")
-
-    @patch('httpx.Client')
-    def test_handle_databricks_http_error(self, mock_client):
-        os.environ["AYE_DBX_API_URL"] = "http://fake.dbx.api"
-        os.environ["AYE_DBX_API_KEY"] = "fake_key"
-        mock_response = MagicMock(status_code=500, text="Server Error")
-        mock_response.json.side_effect = json.JSONDecodeError("", "", 0)
-        mock_client.return_value.__enter__.return_value.post.side_effect = httpx.HTTPStatusError(
-            "Error", request=MagicMock(), response=mock_response
-        )
-        result = self.plugin._handle_databricks("prompt", {})
-        self.assertIn("DBX API error: 500 - Server Error", result["summary"])
-
-    @patch('httpx.Client')
-    def test_handle_databricks_generic_error(self, mock_client):
-        os.environ["AYE_DBX_API_URL"] = "http://fake.dbx.api"
-        os.environ["AYE_DBX_API_KEY"] = "fake_key"
-        mock_client.return_value.__enter__.return_value.post.side_effect = Exception("Network down")
-        result = self.plugin._handle_databricks("prompt", {})
-        self.assertIn("Error calling Databricks API: Network down", result["summary"])
-
-    def test_handle_databricks_no_key(self):
-        self.assertIsNone(self.plugin._handle_databricks("p", {}))
-
-    @patch('httpx.Client')
     def test_handle_gemini_success(self, mock_client):
         os.environ["GEMINI_API_KEY"] = "fake_key"
         
@@ -248,25 +207,8 @@ class TestLocalModelPlugin(TestCase):
         self.assertEqual(result, {"summary": "openai handled"})
 
     @patch.object(LocalModelPlugin, '_handle_openai_compatible', return_value=None)
-    @patch.object(LocalModelPlugin, '_handle_databricks')
-    def test_on_command_invoke_falls_back_to_dbx(self, mock_handle_dbx, mock_handle_openai):
-        mock_handle_dbx.return_value = {"summary": "dbx handled"}
-        
-        params = {
-            "prompt": "test",
-            "source_files": {},
-            "root": self.root
-        }
-        result = self.plugin.on_command("local_model_invoke", params)
-        
-        mock_handle_openai.assert_called_once()
-        mock_handle_dbx.assert_called_once()
-        self.assertEqual(result, {"summary": "dbx handled"})
-
-    @patch.object(LocalModelPlugin, '_handle_openai_compatible', return_value=None)
-    @patch.object(LocalModelPlugin, '_handle_databricks', return_value=None)
     @patch.object(LocalModelPlugin, '_handle_gemini_pro_25')
-    def test_on_command_invoke_routes_to_gemini_by_id(self, mock_handle_gemini, mock_handle_dbx, mock_handle_openai):
+    def test_on_command_invoke_routes_to_gemini_by_id(self, mock_handle_gemini, mock_handle_openai):
         mock_handle_gemini.return_value = {"summary": "gemini handled"}
         
         params = {
@@ -278,7 +220,6 @@ class TestLocalModelPlugin(TestCase):
         result = self.plugin.on_command("local_model_invoke", params)
         
         mock_handle_openai.assert_called_once()
-        mock_handle_dbx.assert_called_once()
         mock_handle_gemini.assert_called_once()
         self.assertEqual(result, {"summary": "gemini handled"})
 

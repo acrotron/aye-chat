@@ -123,6 +123,7 @@ class TestLlmHandler(TestCase):
 
         mock_print_error.assert_called_once_with(exc)
 
+    @patch('aye.controller.llm_handler.is_autodiff_enabled', return_value=False)
     @patch('aye.controller.llm_handler.get_user_config', return_value='off')
     @patch('aye.controller.llm_handler.filter_unchanged_files')
     @patch('aye.controller.llm_handler.make_paths_relative')
@@ -135,6 +136,7 @@ class TestLlmHandler(TestCase):
         mock_relative,
         mock_filter,
         _mock_get_user_config,
+        _mock_autodiff,
     ):
         updated_files = [{"file_name": "file1.py", "file_content": "content"}]
         llm_resp = LLMResponse(
@@ -175,6 +177,7 @@ class TestLlmHandler(TestCase):
         # Per-session gate is stored on conf
         self.assertTrue(getattr(self.conf, "_restore_tip_shown", False))
 
+    @patch('aye.controller.llm_handler.is_autodiff_enabled', return_value=False)
     @patch('aye.controller.llm_handler.get_user_config', return_value='on')
     @patch('aye.controller.llm_handler.filter_unchanged_files')
     @patch('aye.controller.llm_handler.make_paths_relative')
@@ -187,6 +190,7 @@ class TestLlmHandler(TestCase):
         mock_relative,
         mock_filter,
         _mock_get_user_config,
+        _mock_autodiff,
     ):
         updated_files = [{"file_name": "file1.py", "file_content": "content"}]
         llm_resp = LLMResponse(
