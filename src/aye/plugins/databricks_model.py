@@ -245,7 +245,8 @@ class DatabricksModelPlugin(Plugin):
         try:
             with httpx.Client(timeout=LLM_TIMEOUT) as client:
                 response = client.post(api_url, json=payload, headers=headers)
-                if self.debug:
+                if self.verbose and response.status_code != 200:
+                    print(f"Status code: {response.status_code}")
                     print("-----------------")
                     print(response.text)
                     print("-----------------")

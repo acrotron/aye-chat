@@ -13,10 +13,14 @@ from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
 from aye.model.offline_llm_manager import is_offline_model
 from aye.controller.util import is_truncated_json
-from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB
+from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB, CONTEXT_HARD_LIMIT_KB
 from aye.model import telemetry
 
 import os
+
+
+def _is_verbose():
+    return get_user_config("verbose", "off").lower() == "on"
 
 
 def _is_debug():
@@ -77,7 +81,7 @@ def _get_context_hard_limit(model_id: str) -> int:
     model_config = _get_model_config(model_id)
     if model_config and "max_prompt_kb" in model_config:
         return model_config["max_prompt_kb"] * 1024
-    return 170 * 1024
+    return CONTEXT_HARD_LIMIT_KB * 1024
 
 
 def _filter_ground_truth(files: Dict[str, str], conf: Any, verbose: bool) -> Dict[str, str]:
@@ -134,6 +138,8 @@ def _get_rag_context_files(prompt: str, conf: Any, verbose: bool) -> Dict[str, s
 
     context_target_size = _get_context_target_size(conf.selected_model)
     context_hard_limit = _get_context_hard_limit(conf.selected_model)
+    #context_target_size = DEFAULT_CONTEXT_TARGET_KB #_get_context_target_size(conf.selected_model)
+    #context_hard_limit = CONTEXT_HARD_LIMIT_KB # _get_context_hard_limit(conf.selected_model)
 
     if _is_debug():
         rprint(f"[yellow]Context target: {context_target_size / 1024:.1f}KB, hard limit: {context_hard_limit / 1024:.1f}KB[/]")
@@ -298,50 +304,54 @@ def invoke_llm(
     model_config = _get_model_config(conf.selected_model)
     max_output_tokens = model_config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS) if model_config else DEFAULT_MAX_OUTPUT_TOKENS
 
-    # 1. Try local/offline model plugins first (no streaming UI for local models)
-    local_response = plugin_manager.handle_command("local_model_invoke", {
-        "prompt": prompt,
-        "model_id": conf.selected_model,
-        "source_files": source_files,
-        "chat_id": chat_id,
-        "root": conf.root,
-        "system_prompt": system_prompt,
-        "max_output_tokens": max_output_tokens
-    })
-
-    if local_response is not None:
-        return LLMResponse(
-            summary=local_response.get("summary", ""),
-            updated_files=local_response.get("updated_files", []),
-            chat_id=None,
-            source=LLMSource.LOCAL
-        )
-
-    # 2. API call with spinner + streaming display
-    if _is_debug():
-        print(f"[DEBUG] Processing chat message with chat_id={chat_id or -1}, model={conf.selected_model}")
-
-    telemetry_payload = telemetry.build_payload(top_n=20) if telemetry.is_enabled() else None
-
-    # Create spinner - will be stopped when streaming starts
+    # Create spinner - will be shown for ALL model types (local, databricks, API)
     spinner = StoppableSpinner(
         console,
         messages=DEFAULT_THINKING_MESSAGES,
         interval=15.0
     )
     
-    def stop_spinner():
-        """Callback to stop spinner when first content arrives."""
-        spinner.stop()
+    # For API calls, we also have streaming display
+    streaming_display: Optional[StreamingResponseDisplay] = None
     
-    # Create streaming display with callback to stop spinner on first content
-    streaming_display = StreamingResponseDisplay(on_first_content=stop_spinner)
-    stream_callback = create_streaming_callback(streaming_display)
+    def stop_spinner():
+        """Callback to stop spinner when first content arrives (for streaming API)."""
+        spinner.stop()
 
     try:
-        # Start the spinner before the API call
+        # Start the spinner before ANY LLM call (local or API)
         spinner.start()
         
+        # 1. Try local/offline model plugins first
+        local_response = plugin_manager.handle_command("local_model_invoke", {
+            "prompt": prompt,
+            "model_id": conf.selected_model,
+            "source_files": source_files,
+            "chat_id": chat_id,
+            "root": conf.root,
+            "system_prompt": system_prompt,
+            "max_output_tokens": max_output_tokens
+        })
+
+        if local_response is not None:
+            # Local model handled the request - spinner will be stopped in finally block
+            return LLMResponse(
+                summary=local_response.get("summary", ""),
+                updated_files=local_response.get("updated_files", []),
+                chat_id=None,
+                source=LLMSource.LOCAL
+            )
+
+        # 2. API call with streaming display
+        if _is_debug():
+            print(f"[DEBUG] Processing chat message with chat_id={chat_id or -1}, model={conf.selected_model}")
+
+        telemetry_payload = telemetry.build_payload(top_n=20) if telemetry.is_enabled() else None
+
+        # Create streaming display with callback to stop spinner on first content
+        streaming_display = StreamingResponseDisplay(on_first_content=stop_spinner)
+        stream_callback = create_streaming_callback(streaming_display)
+
         api_resp = cli_invoke(
             message=prompt,
             chat_id=chat_id or -1,
@@ -352,29 +362,29 @@ def invoke_llm(
             telemetry=telemetry_payload,
             on_stream_update=stream_callback
         )
+
+        if telemetry_payload is not None:
+            telemetry.reset()
+
+        if _is_debug():
+            print(f"[DEBUG] Chat message processed, response keys: {api_resp.keys() if api_resp else 'None'}")
+
+        # Check if we already displayed the response via streaming
+        streamed_summary = bool(api_resp.get("_streamed_summary")) if isinstance(api_resp, dict) else False
+
+        # 3. Parse API response
+        assistant_resp, new_chat_id = _parse_api_response(api_resp)
+
+        return LLMResponse(
+            summary="" if streamed_summary else assistant_resp.get("answer_summary", ""),
+            updated_files=assistant_resp.get("source_files", []),
+            chat_id=new_chat_id,
+            source=LLMSource.API
+        )
     finally:
-        # Ensure spinner is stopped (in case no streaming content was received)
+        # Ensure spinner is stopped for ALL code paths (local model, API, or error)
         spinner.stop()
         
-        # Always stop the streaming display when done
-        if streaming_display.is_active():
+        # Stop the streaming display if it was created and is active
+        if streaming_display is not None and streaming_display.is_active():
             streaming_display.stop()
-
-    if telemetry_payload is not None:
-        telemetry.reset()
-
-    if _is_debug():
-        print(f"[DEBUG] Chat message processed, response keys: {api_resp.keys() if api_resp else 'None'}")
-
-    # Check if we already displayed the response via streaming
-    streamed_summary = bool(api_resp.get("_streamed_summary")) if isinstance(api_resp, dict) else False
-
-    # 3. Parse API response
-    assistant_resp, new_chat_id = _parse_api_response(api_resp)
-
-    return LLMResponse(
-        summary="" if streamed_summary else assistant_resp.get("answer_summary", ""),
-        updated_files=assistant_resp.get("source_files", []),
-        chat_id=new_chat_id,
-        source=LLMSource.API
-    )

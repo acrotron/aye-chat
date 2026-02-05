@@ -136,48 +136,6 @@ class LocalModelPlugin(Plugin):
             "updated_files": []
         }
 
-    def _handle_databricks(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
-        api_url = os.environ.get("AYE_DBX_API_URL")
-        api_key = os.environ.get("AYE_DBX_API_KEY")
-        model_name = os.environ.get("AYE_DBX_MODEL", "gpt-3.5-turbo")
-        
-        if not api_url or not api_key:
-            return None
-        
-        conv_id = self._get_conversation_id(chat_id)
-        if conv_id not in self.chat_history:
-            self.chat_history[conv_id] = []
-        
-        user_message = self._build_user_message(prompt, source_files)
-        effective_system_prompt = system_prompt if system_prompt else SYSTEM_PROMPT
-        
-        messages = [{"role": "system", "content": effective_system_prompt}] + self.chat_history[conv_id] + [{"role": "user", "content": user_message}]
-        
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": max_output_tokens, "response_format": {"type": "json_object"}}
-        
-        try:
-            with httpx.Client(timeout=LLM_TIMEOUT) as client:
-                response = client.post(api_url, json=payload, headers=headers)
-                response.raise_for_status()
-                result = response.json()
-                if result.get("choices") and result["choices"][0].get("message"):
-                    generated_text = result["choices"][0]["message"]["content"][0]["text"]
-                    self.chat_history[conv_id].append({"role": "user", "content": user_message})
-                    self.chat_history[conv_id].append({"role": "assistant", "content": generated_text})
-                    self._save_history()
-                    return self._parse_llm_response(generated_text)
-                return self._create_error_response("Failed to get a valid response from the Databricks API")
-        except httpx.HTTPStatusError as e:
-            error_msg = f"DBX API error: {e.response.status_code}"
-            try:
-                error_detail = e.response.json()
-                if "error" in error_detail:
-                    error_msg += f" - {error_detail['error'].get('message', str(error_detail['error']))}"
-            except: error_msg += f" - {e.response.text[:200]}"
-            return self._create_error_response(error_msg)
-        except Exception as e:
-            return self._create_error_response(f"Error calling Databricks API: {str(e)}")
 
     def _handle_openai_compatible(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
         """Handle OpenAI-compatible API endpoints.
@@ -286,9 +244,6 @@ class LocalModelPlugin(Plugin):
             self._load_history()
 
             result = self._handle_openai_compatible(prompt, source_files, chat_id, system_prompt, max_output_tokens)
-            if result is not None: return result
-
-            result = self._handle_databricks(prompt, source_files, chat_id, system_prompt, max_output_tokens)
             if result is not None: return result
 
             if model_id == "google/gemini-2.5-pro":

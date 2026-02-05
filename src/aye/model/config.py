@@ -17,12 +17,17 @@ SMALL_PROJECT_FILE_LIMIT = 200
 # Projects smaller than this will skip RAG and include all files directly.
 # Set to match default max_prompt_kb (170KB) so all files can fit in context.
 SMALL_PROJECT_TOTAL_SIZE_LIMIT = 170 * 1024  # 170KB
+#SMALL_PROJECT_TOTAL_SIZE_LIMIT = 100 * 1024  # 170KB
 
 # Default maximum output tokens for LLM responses
 DEFAULT_MAX_OUTPUT_TOKENS = 32000
+#DEFAULT_MAX_OUTPUT_TOKENS = 16000
 
 # Default context target size in KB (used when model doesn't specify one)
 DEFAULT_CONTEXT_TARGET_KB = 150
+#DEFAULT_CONTEXT_TARGET_KB = 20
+
+CONTEXT_HARD_LIMIT_KB = 170
 
 # Shared system prompt for all LLM interactions
 SYSTEM_PROMPT = (
