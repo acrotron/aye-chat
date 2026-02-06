@@ -968,44 +968,6 @@ def test_chat_repl_invalid_chat_id_file_is_cleaned():
         chat_id_file.unlink.assert_called_once_with(missing_ok=True)
 
 
-def test_chat_repl_with_command_updates_chat_id_and_feedback_receives_it():
-    with (
-        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
-        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
-        patch("aye.controller.repl.print_startup_header"),
-        patch("aye.controller.repl.print_prompt", return_value="> "),
-        patch("aye.controller.repl.Path") as mock_path,
-        patch("aye.controller.repl.create_prompt_session") as mock_create_session,
-        patch("aye.controller.repl.Console") as mock_console_cls,
-        patch("aye.controller.repl.handle_with_command", return_value=42) as mock_with,
-        patch("aye.controller.repl.collect_and_send_feedback") as mock_feedback,
-    ):
-        session = MagicMock()
-        session.prompt.side_effect = ["with foo: bar", "exit"]
-        mock_create_session.return_value = session
-
-        _setup_mock_chat_id_path(mock_path, exists=False)
-
-        plugin_manager = MagicMock()
-        plugin_manager.handle_command.side_effect = [{"completer": None}]
-
-        conf = SimpleNamespace(
-            root=Path.cwd(),
-            file_mask="*.py",
-            plugin_manager=plugin_manager,
-            index_manager=None,
-            verbose=False,
-            selected_model="model",
-            use_rag=True,
-        )
-
-        repl.chat_repl(conf)
-
-        assert mock_with.call_count == 1
-        # collect_and_send_feedback(max(0, chat_id)) should see 42
-        mock_feedback.assert_called_once_with(42)
-
-
 def test_chat_repl_completion_command_recreates_completer_and_session():
     with (
         patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),

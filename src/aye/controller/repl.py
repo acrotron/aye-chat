@@ -39,7 +39,6 @@ from aye.controller.command_handlers import (
     handle_sslverify_command,
     handle_debug_command,
     handle_completion_command,
-    handle_with_command,
     handle_blog_command,
     handle_llm_command,
     handle_autodiff_command,
@@ -348,14 +347,6 @@ def chat_repl(conf: Any) -> None:
                 # "prompt stuck above bottom" with empty lines below.
                 # Setting this to 0 fixes the issue.
                 prompt = session.prompt(prompt_str, reserve_space_for_menu=6)
-
-                # Handle 'with' command before tokenizing. It has its own flow.
-                if prompt.strip().lower().startswith("with ") and ":" in prompt:
-                    telemetry.record_llm_prompt("LLM <with>")
-                    new_chat_id = handle_with_command(prompt, conf, console, chat_id, chat_id_file)
-                    if new_chat_id is not None:
-                        chat_id = new_chat_id
-                    continue
 
                 # Check for '!' prefix - force shell execution
                 force_shell = False
