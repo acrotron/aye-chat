@@ -3,6 +3,7 @@ import json
 from typing import Dict, Any, Optional
 import httpx
 from pathlib import Path
+import traceback
 
 from rich import print as rprint
 
@@ -35,8 +36,87 @@ def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-class LocalModelPlugin(Plugin):
-    name = "local_model"
+def _extract_json_object(raw_response: str, prefer_last: bool = True, require_keys=None):
+    """
+    Best-effort extraction of a JSON object (dict) from a raw LLM response.
+
+    Handles common failure modes where the model returns:
+    - extra commentary before/after JSON
+    - multiple JSON objects (e.g., an invalid attempt + a corrected attempt)
+
+    Args:
+        raw_response: raw LLM response string
+        prefer_last: when multiple JSON objects exist, return the last parsed object
+        require_keys: optional iterable of keys; if provided, only consider objects
+                      that contain all of these keys
+
+    Returns:
+        dict or None
+    """
+    # 1) Direct JSON parse
+    try:
+        obj = json.loads(raw_response)
+        if isinstance(obj, dict):
+            if require_keys and not all(k in obj for k in require_keys):
+                return None
+            return obj
+    except Exception:
+        pass
+
+    text = str(raw_response)
+
+    # 2) Scan for balanced JSON object candidates (string/escape-aware)
+    candidates = []
+    depth = 0
+    start = None
+    in_str = False
+    escape = False
+
+    for i, ch in enumerate(text):
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+
+        # not in string
+        if ch == '"':
+            in_str = True
+            continue
+
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}' and depth > 0:
+            depth -= 1
+            if depth == 0 and start is not None:
+                candidates.append(text[start : i + 1])
+                start = None
+
+    parsed = []
+    for cand in candidates:
+        try:
+            obj = json.loads(cand)
+            if not isinstance(obj, dict):
+                continue
+            if require_keys and not all(k in obj for k in require_keys):
+                continue
+            parsed.append(obj)
+        except Exception:
+            continue
+
+    if not parsed:
+        return None
+
+    return parsed[-1] if prefer_last else parsed[0]
+
+
+class DatabricksModelPlugin(Plugin):
+    name = "databricks_model"
     version = "1.0.0"
     premium = "free"
 
@@ -136,19 +216,10 @@ class LocalModelPlugin(Plugin):
             "updated_files": []
         }
 
-
-    def _handle_openai_compatible(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
-        """Handle OpenAI-compatible API endpoints.
-        
-        Reads configuration from:
-        - get_user_config("llm_api_url") / AYE_LLM_API_URL
-        - get_user_config("llm_api_key") / AYE_LLM_API_KEY  
-        - get_user_config("llm_model") / AYE_LLM_MODEL (default: gpt-3.5-turbo)
-        """
-        # Read from config (supports both ~/.ayecfg and AYE_LLM_* env vars)
-        api_url = get_user_config("llm_api_url")
-        api_key = get_user_config("llm_api_key")
-        model_name = get_user_config("llm_model", "gpt-3.5-turbo")
+    def _handle_databricks(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
+        api_url = os.environ.get("AYE_DBX_API_URL")
+        api_key = os.environ.get("AYE_DBX_API_KEY")
+        model_name = os.environ.get("AYE_DBX_MODEL", "gpt-3.5-turbo")
         
         if not api_url or not api_key:
             return None
@@ -159,24 +230,48 @@ class LocalModelPlugin(Plugin):
         
         user_message = self._build_user_message(prompt, source_files)
         effective_system_prompt = system_prompt if system_prompt else SYSTEM_PROMPT
-        messages = [{"role": "system", "content": effective_system_prompt}] + self.chat_history[conv_id] + [{"role": "user", "content": user_message}]
+        
+        messages_json = [{"role": "system", "content": effective_system_prompt}] + self.chat_history[conv_id] + [{"role": "user", "content": user_message}]
+        messages = messages_json # json.dumps(messages_json)
+        if self.debug:
+            print(">>>>>>>>>>>>>>>>")
+            print(self.chat_history[conv_id])
+            print(">>>>>>>>>>>>>>>>")
+        
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": max_output_tokens, "response_format": {"type": "json_object"}}
+        #payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": max_output_tokens, "response_format": {"type": "json_object"}}
+        payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": max_output_tokens}
         
         try:
             with httpx.Client(timeout=LLM_TIMEOUT) as client:
                 response = client.post(api_url, json=payload, headers=headers)
+                if self.verbose and response.status_code != 200:
+                    print(f"Status code: {response.status_code}")
+                    print("-----------------")
+                    print(response.text)
+                    print("-----------------")
                 response.raise_for_status()
                 result = response.json()
                 if result.get("choices") and result["choices"][0].get("message"):
-                    generated_text = result["choices"][0]["message"]["content"]
+                    raw_response = result["choices"][0]["message"]["content"]
+                    generated_json = _extract_json_object(raw_response)
+                    generated_text = json.dumps(generated_json)
+                    if self.debug:
+                        print("-----------------")
+                        print(response.text)
+                        print("-----------------")
+                        print(generated_text)
+                        print("-----------------")
+                    #generated_text = result["choices"][0]["message"]["content"][1]["text"]
                     self.chat_history[conv_id].append({"role": "user", "content": user_message})
                     self.chat_history[conv_id].append({"role": "assistant", "content": generated_text})
                     self._save_history()
+                    #return json.dumps(generated_text)
                     return self._parse_llm_response(generated_text)
-                return self._create_error_response("Failed to get a valid response from the OpenAI-compatible API")
+                return self._create_error_response("Failed to get a valid response from the Databricks API")
         except httpx.HTTPStatusError as e:
-            error_msg = f"OpenAI API error: {e.response.status_code}"
+            traceback.print_exc()
+            error_msg = f"DBX API error: {e.response.status_code}"
             try:
                 error_detail = e.response.json()
                 if "error" in error_detail:
@@ -184,43 +279,9 @@ class LocalModelPlugin(Plugin):
             except: error_msg += f" - {e.response.text[:200]}"
             return self._create_error_response(error_msg)
         except Exception as e:
-            return self._create_error_response(f"Error calling OpenAI-compatible API: {str(e)}")
+            traceback.print_exc()
+            return self._create_error_response(f"Error calling Databricks API: {str(e)}")
 
-    def _handle_gemini_pro_25(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            return None
-
-        conv_id = self._get_conversation_id(chat_id)
-        if conv_id not in self.chat_history:
-            self.chat_history[conv_id] = []
-
-        user_message = self._build_user_message(prompt, source_files)
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
-        headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
-        
-        contents = [{"role": "user" if msg["role"] == "user" else "model", "parts": [{"text": msg["content"]}]} for msg in self.chat_history[conv_id]]
-        contents.append({"role": "user", "parts": [{"text": user_message}]})
-        
-        effective_system_prompt = system_prompt if system_prompt else SYSTEM_PROMPT
-        payload = {"contents": contents, "systemInstruction": {"parts": [{"text": effective_system_prompt}]}, "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.95, "maxOutputTokens": max_output_tokens, "responseMimeType": "application/json"}}
-
-        try:
-            with httpx.Client(timeout=LLM_TIMEOUT) as client:
-                response = client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                result = response.json()
-                if result.get("candidates") and result["candidates"][0].get("content"):
-                    generated_text = result["candidates"][0]["content"]["parts"][0].get("text", "")
-                    self.chat_history[conv_id].append({"role": "user", "content": user_message})
-                    self.chat_history[conv_id].append({"role": "assistant", "content": generated_text})
-                    self._save_history()
-                    return self._parse_llm_response(generated_text)
-                return self._create_error_response("Failed to get a valid response from Gemini API")
-        except httpx.HTTPStatusError as e:
-            return self._create_error_response(f"Gemini API error: {e.response.status_code} - {e.response.text}")
-        except Exception as e:
-            return self._create_error_response(f"Error calling Gemini API: {str(e)}")
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if command_name == "new_chat":
@@ -243,12 +304,9 @@ class LocalModelPlugin(Plugin):
             self.history_file = Path(root) / ".aye" / "chat_history.json" if root else Path.cwd() / ".aye" / "chat_history.json"
             self._load_history()
 
-            result = self._handle_openai_compatible(prompt, source_files, chat_id, system_prompt, max_output_tokens)
+            result = self._handle_databricks(prompt, source_files, chat_id, system_prompt, max_output_tokens)
             if result is not None: return result
 
-            if model_id == "google/gemini-2.5-pro":
-                return self._handle_gemini_pro_25(prompt, source_files, chat_id, system_prompt, max_output_tokens)
-            
             return None
 
         return None
