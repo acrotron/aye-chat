@@ -12,7 +12,7 @@ from aye.presenter.ui_utils import StoppableSpinner, DEFAULT_THINKING_MESSAGES
 from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
 from aye.model.offline_llm_manager import is_offline_model
-from aye.controller.util import is_truncated_json
+from aye.controller.util import is_truncated_json, discover_agents_file
 from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB, CONTEXT_HARD_LIMIT_KB
 from aye.model import telemetry
 
@@ -279,6 +279,40 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
     return parsed, chat_id
 
 
+def _build_system_prompt(conf: Any, verbose: bool) -> str:
+    """
+    Build the full system prompt, including AGENTS.md context if available.
+
+    1. Start with ground_truth or the default SYSTEM_PROMPT.
+    2. Discover AGENTS.md (per-project repo instructions).
+    3. If found, append it verbatim inside delimiters.
+    """
+    base_prompt = (
+        conf.ground_truth
+        if hasattr(conf, 'ground_truth') and conf.ground_truth
+        else SYSTEM_PROMPT
+    )
+
+    # Discover AGENTS.md
+    cwd = Path.cwd().resolve()
+    repo_root = Path(conf.root).resolve()
+
+    agents_result = discover_agents_file(cwd, repo_root, verbose=verbose or _is_debug())
+
+    if agents_result is not None:
+        agents_path, agents_text = agents_result
+        if verbose or _is_debug():
+            rprint(f"[cyan]Using AGENTS.md system context from: {agents_path}[/]")
+        base_prompt = (
+            base_prompt
+            + "\n\n--- SYSTEM CONTEXT - AGENTS.md (repo instructions)\n\n"
+            + agents_text
+            + "\n\n--- END AGENTS.md"
+        )
+
+    return base_prompt
+
+
 def invoke_llm(
     prompt: str,
     conf: Any,
@@ -295,7 +329,7 @@ def invoke_llm(
 
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
 
-    system_prompt = conf.ground_truth if hasattr(conf, 'ground_truth') and conf.ground_truth else SYSTEM_PROMPT
+    system_prompt = _build_system_prompt(conf, verbose)
 
     model_config = _get_model_config(conf.selected_model)
     max_output_tokens = model_config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS) if model_config else DEFAULT_MAX_OUTPUT_TOKENS
