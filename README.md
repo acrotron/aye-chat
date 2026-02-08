@@ -166,13 +166,17 @@ Your input is handled in this order:
 <details>
 <summary>🤖 AGENTS.md (repo instructions)</summary>
 
-Aye Chat can automatically include **`AGENTS.md`** as extra *system context* for a repo — perfect for team conventions, architecture notes, and “how we do things here”.
+## AGENTS.md inclusion
+
+Aye Chat can automatically include **`AGENTS.md`** as extra *system context* for a repo — perfect for team conventions, architecture notes, and "how we do things here".
 
 **Discovery (first match wins):**
 - `./.aye/AGENTS.md` (highest precedence)
 - then walking up from the current directory: `.aye/AGENTS.md` or `AGENTS.md`
 
-Tip: keep it short and actionable — it’s treated as instructions for the assistant.
+Tip: keep it short and actionable — it’s treated as instructions for the assistant. 
+
+See more details on https://agents.md/
 
 </details>
 
