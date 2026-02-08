@@ -608,7 +608,7 @@ class TestHandleLlmCommand:
 
         def get_config_side_effect(key, default=""):
             mapping = {
-                "llm_api_url": "http://exists.com",
+                "llm_api_url": "EXISTS_HOST",
                 "llm_api_key": "secret123",
                 "llm_model": "gpt-4",
             }
@@ -621,7 +621,7 @@ class TestHandleLlmCommand:
 
             # Session.prompt should have been called with current values in display
             prompt_args = [c[0][0] for c in mock_session.prompt.call_args_list]
-            assert any("exists.com" in p for p in prompt_args)
+            assert any("EXISTS_HOST" in p for p in prompt_args)
             assert any("set" in p for p in prompt_args)  # key is shown as "set"
             assert any("gpt-4" in p for p in prompt_args)
 
