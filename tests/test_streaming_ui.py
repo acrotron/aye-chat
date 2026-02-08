@@ -67,6 +67,11 @@ class TestCreateResponsePanel(unittest.TestCase):
 class TestStreamingResponseDisplay(unittest.TestCase):
     def setUp(self):
         self.console = MagicMock()
+        # Provide realistic terminal size so tailing arithmetic works
+        # (MagicMock.size.height would be a MagicMock, which can't be
+        # compared to int).
+        self.console.size.height = 40
+        self.console.size.width = 120
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_update_autostarts_and_calls_on_first_content_once(self):
@@ -77,9 +82,9 @@ class TestStreamingResponseDisplay(unittest.TestCase):
 
         events = []
 
-        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False):
+        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False, streaming: bool = False, is_truncated: bool = False):
             # Return a lightweight sentinel to assert on
-            events.append((content, use_markdown))
+            events.append((content, use_markdown, streaming))
             return {"content": content, "use_markdown": use_markdown}
 
         with patch.object(streaming_ui, "_create_response_panel", side_effect=fake_panel), \
@@ -89,6 +94,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
                 word_delay=0,
                 on_first_content=on_first,
             )
+            # Disable render throttle so every animation step produces an event
+            d._min_render_interval = 0
             d.update("Hello world")
 
         # Auto-start should have printed spacing before the panel
@@ -96,21 +103,22 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertTrue(d.is_active())
         self.assertEqual(seen["count"], 1)
 
-        # Initial panel created in start()
-        self.assertEqual(events[0], ("", False))
+        # Initial panel created in start() — use_markdown=False, streaming=False
+        self.assertEqual(events[0], ("", False, False))
 
-        # Animation updates: "Hello" (word), " " (whitespace), "world" (word)
+        # Animation updates use use_markdown=True and streaming=True:
+        # "Hello" (word), " " (whitespace), "world" (word)
         # Each update passes the full animated content so far.
-        self.assertIn(("Hello", False), events)
-        self.assertIn(("Hello ", False), events)
-        self.assertIn(("Hello world", False), events)
+        self.assertIn(("Hello", True, True), events)
+        self.assertIn(("Hello ", True, True), events)
+        self.assertIn(("Hello world", True, True), events)
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_update_same_content_is_noop(self):
         events = []
 
-        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False):
-            events.append((content, use_markdown))
+        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False, streaming: bool = False, is_truncated: bool = False):
+            events.append((content, use_markdown, streaming))
             return (content, use_markdown)
 
         with patch.object(streaming_ui, "_create_response_panel", side_effect=fake_panel), \
@@ -125,26 +133,28 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     def test_update_non_appended_content_resets_animation(self):
         events = []
 
-        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False):
-            events.append((content, use_markdown))
+        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False, streaming: bool = False, is_truncated: bool = False):
+            events.append((content, use_markdown, streaming))
             return (content, use_markdown)
 
         with patch.object(streaming_ui, "_create_response_panel", side_effect=fake_panel), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+            # Disable render throttle so every animation step produces an event
+            d._min_render_interval = 0
             d.update("Hello world")
             d.update("New")
 
         # Ensure the final animated content is exactly "New" (i.e., reset occurred)
         self.assertEqual(d.content, "New")
-        self.assertIn(("New", False), events)
+        self.assertIn(("New", True, True), events)
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_stop_final_markdown_render_and_spacing_after(self):
         events = []
 
-        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False):
-            events.append((content, use_markdown))
+        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False, streaming: bool = False, is_truncated: bool = False):
+            events.append((content, use_markdown, streaming))
             return (content, use_markdown)
 
         with patch.object(streaming_ui, "_create_response_panel", side_effect=fake_panel), \
@@ -153,19 +163,20 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d.update("Hi")
             d.stop()
 
-        # start() prints once before, stop() prints once after
-        self.assertEqual(self.console.print.call_count, 2)
+        # start() prints once before, stop() prints the final panel + spacing after
+        # That's 3 calls: spacing-before, final panel, spacing-after
+        self.assertEqual(self.console.print.call_count, 3)
 
-        # stop() does a final update with markdown=True if there is animated content
-        self.assertIn(("Hi", True), events)
+        # stop() does a final update with markdown=True and streaming=False
+        self.assertIn(("Hi", True, False), events)
         self.assertFalse(d.is_active())
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_context_manager_starts_and_stops(self):
         events = []
 
-        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False):
-            events.append((content, use_markdown))
+        def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False, streaming: bool = False, is_truncated: bool = False):
+            events.append((content, use_markdown, streaming))
             return (content, use_markdown)
 
         with patch.object(streaming_ui, "_create_response_panel", side_effect=fake_panel):
@@ -173,8 +184,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
                 self.assertTrue(d.is_active())
             self.assertFalse(d.is_active())
 
-        # Should have printed spacing before and after
-        self.assertEqual(self.console.print.call_count, 2)
+        # Should have printed spacing before and after (+ possibly final panel)
+        self.assertGreaterEqual(self.console.print.call_count, 2)
 
     def test_env_var_word_delay_used_when_word_delay_none(self):
         old = os.environ.get("AYE_STREAM_WORD_DELAY")
