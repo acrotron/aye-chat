@@ -76,7 +76,7 @@ def _extract_json_object(raw_response: str, prefer_last: bool = True, require_ke
         if in_str:
             if escape:
                 escape = False
-            elif ch == '\\':
+            elif ch == "\\":
                 escape = True
             elif ch == '"':
                 in_str = False
@@ -87,11 +87,11 @@ def _extract_json_object(raw_response: str, prefer_last: bool = True, require_ke
             in_str = True
             continue
 
-        if ch == '{':
+        if ch == "{":
             if depth == 0:
                 start = i
             depth += 1
-        elif ch == '}' and depth > 0:
+        elif ch == "}" and depth > 0:
             depth -= 1
             if depth == 0 and start is not None:
                 candidates.append(text[start : i + 1])
@@ -122,15 +122,44 @@ class DatabricksModelPlugin(Plugin):
 
     def __init__(self):
         super().__init__()
+        # Keep our own writable flags. The base Plugin may expose read-only
+        # properties backed by config; tests expect these to be settable.
+        self._verbose: bool = False
+        self._debug: bool = False
+
         self.chat_history: Dict[str, list] = {}
         self.history_file: Optional[Path] = None
+
+    @property
+    def verbose(self) -> bool:  # type: ignore[override]
+        return bool(self._verbose)
+
+    @verbose.setter
+    def verbose(self, value: bool) -> None:  # type: ignore[override]
+        self._verbose = bool(value)
+
+    @property
+    def debug(self) -> bool:  # type: ignore[override]
+        return bool(self._debug)
+
+    @debug.setter
+    def debug(self, value: bool) -> None:  # type: ignore[override]
+        self._debug = bool(value)
 
     def init(self, cfg: Dict[str, Any]) -> None:
         """Initialize the local model plugin."""
         super().init(cfg)
+
+        # Ensure flags reflect cfg and remain writable.
+        if isinstance(cfg, dict):
+            if "verbose" in cfg:
+                self._verbose = bool(cfg.get("verbose"))
+            if "debug" in cfg:
+                self._debug = bool(cfg.get("debug"))
+
         if self.debug:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
-        
+
     def _load_history(self) -> None:
         """Load chat history from disk."""
         if not self.history_file:
@@ -180,31 +209,33 @@ class DatabricksModelPlugin(Plugin):
 
     def _parse_llm_response(self, generated_text: str) -> Dict[str, Any]:
         """Parse LLM response text and convert to expected format."""
+        llm_response: Any
         try:
             llm_response = json.loads(generated_text)
-        except json.JSONDecodeError:
-            # Check if this looks like a truncated response
-            #if is_truncated_json(generated_text):
-            #    return {
-            #        "summary": TRUNCATED_RESPONSE_MESSAGE,
-            #        "updated_files": []
-            #    }
-            
-            # Not truncated, just malformed - return as plain text
+        except Exception:
             llm_response = {
                 "answer_summary": generated_text,
-                "source_files": []
+                "source_files": [],
             }
-        
+
+        # If the JSON is valid but isn't an object (e.g. null, list, number),
+        # treat it as plain text.
+        if not isinstance(llm_response, dict):
+            llm_response = {
+                "answer_summary": generated_text,
+                "source_files": [],
+            }
+
         return {
             "summary": llm_response.get("answer_summary", ""),
             "updated_files": [
                 {
                     "file_name": f.get("file_name"),
-                    "file_content": f.get("file_content")
+                    "file_content": f.get("file_content"),
                 }
                 for f in llm_response.get("source_files", [])
-            ]
+                if isinstance(f, dict)
+            ],
         }
 
     def _create_error_response(self, error_msg: str) -> Dict[str, Any]:
@@ -213,35 +244,50 @@ class DatabricksModelPlugin(Plugin):
             rprint(f"[red]{error_msg}[/]")
         return {
             "summary": error_msg,
-            "updated_files": []
+            "updated_files": [],
         }
 
-    def _handle_databricks(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
+    def _handle_databricks(
+        self,
+        prompt: str,
+        source_files: Dict[str, str],
+        chat_id: Optional[int] = None,
+        system_prompt: Optional[str] = None,
+        max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+    ) -> Optional[Dict[str, Any]]:
         api_url = os.environ.get("AYE_DBX_API_URL")
         api_key = os.environ.get("AYE_DBX_API_KEY")
         model_name = os.environ.get("AYE_DBX_MODEL", "gpt-3.5-turbo")
-        
+
         if not api_url or not api_key:
             return None
-        
+
         conv_id = self._get_conversation_id(chat_id)
         if conv_id not in self.chat_history:
             self.chat_history[conv_id] = []
-        
+
         user_message = self._build_user_message(prompt, source_files)
         effective_system_prompt = system_prompt if system_prompt else SYSTEM_PROMPT
-        
-        messages_json = [{"role": "system", "content": effective_system_prompt}] + self.chat_history[conv_id] + [{"role": "user", "content": user_message}]
-        messages = messages_json # json.dumps(messages_json)
+
+        messages_json = (
+            [{"role": "system", "content": effective_system_prompt}]
+            + self.chat_history[conv_id]
+            + [{"role": "user", "content": user_message}]
+        )
+        messages = messages_json
         if self.debug:
             print(">>>>>>>>>>>>>>>>")
             print(self.chat_history[conv_id])
             print(">>>>>>>>>>>>>>>>")
-        
+
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        #payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": max_output_tokens, "response_format": {"type": "json_object"}}
-        payload = {"model": model_name, "messages": messages, "temperature": 0.7, "max_tokens": max_output_tokens}
-        
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": max_output_tokens,
+        }
+
         try:
             with httpx.Client(timeout=LLM_TIMEOUT) as client:
                 response = client.post(api_url, json=payload, headers=headers)
@@ -262,11 +308,9 @@ class DatabricksModelPlugin(Plugin):
                         print("-----------------")
                         print(generated_text)
                         print("-----------------")
-                    #generated_text = result["choices"][0]["message"]["content"][1]["text"]
                     self.chat_history[conv_id].append({"role": "user", "content": user_message})
                     self.chat_history[conv_id].append({"role": "assistant", "content": generated_text})
                     self._save_history()
-                    #return json.dumps(generated_text)
                     return self._parse_llm_response(generated_text)
                 return self._create_error_response("Failed to get a valid response from the Databricks API")
         except httpx.HTTPStatusError as e:
@@ -275,21 +319,29 @@ class DatabricksModelPlugin(Plugin):
             try:
                 error_detail = e.response.json()
                 if "error" in error_detail:
-                    error_msg += f" - {error_detail['error'].get('message', str(error_detail['error']))}"
-            except: error_msg += f" - {e.response.text[:200]}"
+                    if isinstance(error_detail["error"], dict):
+                        error_msg += f" - {error_detail['error'].get('message', str(error_detail['error']))}"
+                    else:
+                        error_msg += f" - {str(error_detail['error'])}"
+            except Exception:
+                error_msg += f" - {e.response.text[:200]}"
             return self._create_error_response(error_msg)
         except Exception as e:
             traceback.print_exc()
             return self._create_error_response(f"Error calling Databricks API: {str(e)}")
 
-
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if command_name == "new_chat":
             root = params.get("root")
-            history_file = Path(root) / ".aye" / "chat_history.json" if root else Path.cwd() / ".aye" / "chat_history.json"
+            history_file = (
+                Path(root) / ".aye" / "chat_history.json"
+                if root
+                else Path.cwd() / ".aye" / "chat_history.json"
+            )
             history_file.unlink(missing_ok=True)
             self.chat_history = {}
-            if self.verbose: rprint("[yellow]Local model chat history cleared.[/]")
+            if self.verbose:
+                rprint("[yellow]Local model chat history cleared.[/]")
             return {"status": "local_history_cleared"}
 
         if command_name == "local_model_invoke":
@@ -301,11 +353,14 @@ class DatabricksModelPlugin(Plugin):
             system_prompt = params.get("system_prompt")
             max_output_tokens = params.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)
 
-            self.history_file = Path(root) / ".aye" / "chat_history.json" if root else Path.cwd() / ".aye" / "chat_history.json"
+            self.history_file = (
+                Path(root) / ".aye" / "chat_history.json" if root else Path.cwd() / ".aye" / "chat_history.json"
+            )
             self._load_history()
 
             result = self._handle_databricks(prompt, source_files, chat_id, system_prompt, max_output_tokens)
-            if result is not None: return result
+            if result is not None:
+                return result
 
             return None
 

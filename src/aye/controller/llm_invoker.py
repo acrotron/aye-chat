@@ -138,8 +138,6 @@ def _get_rag_context_files(prompt: str, conf: Any, verbose: bool) -> Dict[str, s
 
     context_target_size = _get_context_target_size(conf.selected_model)
     context_hard_limit = _get_context_hard_limit(conf.selected_model)
-    #context_target_size = DEFAULT_CONTEXT_TARGET_KB #_get_context_target_size(conf.selected_model)
-    #context_hard_limit = CONTEXT_HARD_LIMIT_KB # _get_context_hard_limit(conf.selected_model)
 
     if _is_debug():
         rprint(f"[yellow]Context target: {context_target_size / 1024:.1f}KB, hard limit: {context_hard_limit / 1024:.1f}KB[/]")
@@ -290,9 +288,7 @@ def invoke_llm(
     verbose: bool = False,
     explicit_source_files: Optional[Dict[str, str]] = None
 ) -> LLMResponse:
-    """
-    Unified LLM invocation with streaming display and routing.
-    """
+    """Unified LLM invocation with streaming display and routing."""
     source_files, use_all_files, prompt = _determine_source_files(
         prompt, conf, verbose, explicit_source_files
     )
@@ -304,25 +300,22 @@ def invoke_llm(
     model_config = _get_model_config(conf.selected_model)
     max_output_tokens = model_config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS) if model_config else DEFAULT_MAX_OUTPUT_TOKENS
 
-    # Create spinner - will be shown for ALL model types (local, databricks, API)
     spinner = StoppableSpinner(
         console,
         messages=DEFAULT_THINKING_MESSAGES,
         interval=15.0
     )
-    
-    # For API calls, we also have streaming display
+
     streaming_display: Optional[StreamingResponseDisplay] = None
-    
+
     def stop_spinner():
         """Callback to stop spinner when first content arrives (for streaming API)."""
         spinner.stop()
 
     try:
-        # Start the spinner before ANY LLM call (local or API)
         spinner.start()
-        
-        # 1. Try local/offline model plugins first
+
+        # 1) Local/offline model plugins
         local_response = plugin_manager.handle_command("local_model_invoke", {
             "prompt": prompt,
             "model_id": conf.selected_model,
@@ -334,21 +327,20 @@ def invoke_llm(
         })
 
         if local_response is not None:
-            # Local model handled the request - spinner will be stopped in finally block
             return LLMResponse(
                 summary=local_response.get("summary", ""),
                 updated_files=local_response.get("updated_files", []),
                 chat_id=None,
-                source=LLMSource.LOCAL
+                source=LLMSource.LOCAL,
+                summary_already_printed=False,
             )
 
-        # 2. API call with streaming display
+        # 2) API call with streaming display
         if _is_debug():
             print(f"[DEBUG] Processing chat message with chat_id={chat_id or -1}, model={conf.selected_model}")
 
         telemetry_payload = telemetry.build_payload(top_n=20) if telemetry.is_enabled() else None
 
-        # Create streaming display with callback to stop spinner on first content
         streaming_display = StreamingResponseDisplay(on_first_content=stop_spinner)
         stream_callback = create_streaming_callback(streaming_display)
 
@@ -369,22 +361,25 @@ def invoke_llm(
         if _is_debug():
             print(f"[DEBUG] Chat message processed, response keys: {api_resp.keys() if api_resp else 'None'}")
 
-        # Check if we already displayed the response via streaming
+        # If streaming UI already printed the summary, the API includes a marker.
         streamed_summary = bool(api_resp.get("_streamed_summary")) if isinstance(api_resp, dict) else False
 
-        # 3. Parse API response
+        # 3) Parse API response
         assistant_resp, new_chat_id = _parse_api_response(api_resp)
+        parsed_summary = assistant_resp.get("answer_summary", "")
 
+        # IMPORTANT:
+        # - Always return the parsed summary so other features (e.g. `raw`) can use it.
+        # - Use summary_already_printed to prevent double-printing in process_llm_response.
         return LLMResponse(
-            summary="" if streamed_summary else assistant_resp.get("answer_summary", ""),
+            summary=parsed_summary,
             updated_files=assistant_resp.get("source_files", []),
             chat_id=new_chat_id,
-            source=LLMSource.API
+            source=LLMSource.API,
+            summary_already_printed=streamed_summary,
         )
     finally:
-        # Ensure spinner is stopped for ALL code paths (local model, API, or error)
         spinner.stop()
-        
-        # Stop the streaming display if it was created and is active
+
         if streaming_display is not None and streaming_display.is_active():
             streaming_display.stop()

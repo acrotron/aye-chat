@@ -14,17 +14,22 @@ class LLMSource(Enum):
 class LLMResponse:
     """
     Standardized response format for LLM interactions.
-    
+
     Attributes:
         summary: The text summary/response from the LLM
         updated_files: List of files to be updated with their content
         chat_id: Optional chat ID (only for API responses)
         source: Whether response came from local model or API
+        summary_already_printed: True if the summary text was already printed
+            to the terminal via a streaming UI (so we should not print it again).
+            This is still useful for commands like `raw` / `printraw`.
     """
     summary: str
     updated_files: List[Dict[str, Any]]
     chat_id: Optional[int] = None
     source: LLMSource = LLMSource.API
+    summary_already_printed: bool = False
+
 
 @dataclass
 class FileChanges:
@@ -39,6 +44,7 @@ class FileChanges:
     added: List[str]
     modified: List[str]
     deleted: List[str]
+
 
 @dataclass
 class VectorIndexResult:
