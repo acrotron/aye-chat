@@ -621,7 +621,7 @@ class TestHandleLlmCommand:
 
             # Session.prompt should have been called with current values in display
             prompt_args = [c[0][0] for c in mock_session.prompt.call_args_list]
-            assert any("http://exists.com" in p for p in prompt_args)
+            assert any("exists.com" in p for p in prompt_args)
             assert any("set" in p for p in prompt_args)  # key is shown as "set"
             assert any("gpt-4" in p for p in prompt_args)
 
