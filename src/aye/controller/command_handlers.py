@@ -288,6 +288,19 @@ def handle_llm_command(session: Optional[PromptSession], tokens: list[str]) -> N
         rprint("\n[yellow] Both URL and KEY are required for the local LLM endpoint to be active.[/]")
 
 
+def handle_printraw_command() -> None:
+    """Handle 'printraw' / 'raw' command: reprint last assistant response as plain text.
+
+    Reads the last assistant response directly from the UI layer
+    (captured automatically when print_assistant_response() is called).
+    This guarantees we always have the correct text regardless of
+    the LLM response object's attribute names.
+    """
+    from aye.presenter.repl_ui import get_last_assistant_response
+    from aye.presenter.raw_output import print_assistant_response_raw
+    print_assistant_response_raw(get_last_assistant_response())
+
+
 def _expand_file_patterns(patterns: list[str], conf: Any) -> list[str]:
     """Expand wildcard patterns and return a list of existing file paths."""
     expanded_files = []

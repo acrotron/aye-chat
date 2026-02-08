@@ -43,6 +43,7 @@ from aye.controller.command_handlers import (
     handle_blog_command,
     handle_llm_command,
     handle_autodiff_command,
+    handle_printraw_command,
 )
 
 DEBUG = False
@@ -286,7 +287,7 @@ def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> N
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm"]
+    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm", "printraw", "raw"]
 
     # Get the completion style setting
     completion_style = get_user_config("completion_style", "readline").lower()
@@ -341,7 +342,7 @@ def chat_repl(conf: Any) -> None:
                 # Show indexing progress only if index_manager exists and is active
                 if index_manager and index_manager.is_indexing() and conf.verbose:
                     progress = index_manager.get_progress_display()
-                    prompt_str = f"(ツ ({progress}) » "
+                    prompt_str = f"(\u30C4 ({progress}) \u00BB "
 
                 # IMPORTANT: prompt_toolkit reserves space at the bottom of the terminal
                 # for the completion menu. Default is ~8 lines, which can look like
@@ -443,6 +444,9 @@ def chat_repl(conf: Any) -> None:
                     new_chat_id = handle_blog_command(tokens, conf, console, chat_id, chat_id_file)
                     if new_chat_id is not None:
                         chat_id = new_chat_id
+                elif lowered_first in ("printraw", "raw"):
+                    telemetry.record_command("printraw", has_args=False, prefix=_AYE_PREFIX)
+                    handle_printraw_command()
                 elif lowered_first == "diff":
                     telemetry.record_command("diff", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     args = tokens[1:]
@@ -482,7 +486,7 @@ def chat_repl(conf: Any) -> None:
                     chat_id_file.unlink(missing_ok=True)
                     chat_id = -1
                     conf.plugin_manager.handle_command("new_chat", {"root": conf.root})
-                    console.print("[green]✅ New chat session started.[/]")
+                    console.print("[green]\u2705 New chat session started.[/]")
                 elif lowered_first == "help":
                     telemetry.record_command("help", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     print_help_message()
