@@ -5,7 +5,7 @@ prompt_toolkit==3.0.52
 httpx==0.28.1
 pathspec==1.0.4
 tree_sitter
-chromadb==1.4.1
+chromadb==1.5.0
 rapidfuzz
 
 # Development dependencies
