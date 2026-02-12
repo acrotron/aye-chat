@@ -43,8 +43,10 @@ from aye.controller.command_handlers import (
     handle_blog_command,
     handle_llm_command,
     handle_autodiff_command,
+    handle_shellcap_command,
     handle_printraw_command,
 )
+from aye.controller.shell_capture import capture_shell_result, maybe_attach_shell_result
 
 DEBUG = False
 plugin_manager = None # HACK: for broken test patch to work
@@ -280,6 +282,10 @@ def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> N
                 rprint(f"[red]Error:[/] {shell_response['error']}")
         elif "message" in shell_response:
             rprint(shell_response["message"])
+
+        # Capture failing command output for auto-attach to next LLM prompt
+        cmd_str = " ".join([command] + args)
+        capture_shell_result(conf, cmd=cmd_str, shell_response=shell_response)
     else:
         rprint(f"[red]Error:[/] Failed to execute shell command")
 
@@ -287,7 +293,7 @@ def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> N
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm", "printraw", "raw"]
+    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "shellcap", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm", "printraw", "raw"]
 
     # Get the completion style setting
     completion_style = get_user_config("completion_style", "readline").lower()
@@ -421,6 +427,9 @@ def chat_repl(conf: Any) -> None:
                 elif lowered_first == "autodiff":
                     telemetry.record_command("autodiff", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_autodiff_command(tokens)
+                elif lowered_first == "shellcap":
+                    telemetry.record_command("shellcap", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
+                    handle_shellcap_command(tokens)
                 elif lowered_first == "completion":
                     telemetry.record_command("completion", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     new_style = handle_completion_command(tokens)
@@ -539,6 +548,10 @@ def chat_repl(conf: Any) -> None:
                                 rprint(f"[yellow]{shell_response['stderr']}[/]")
                             if "error" in shell_response:
                                 rprint(f"[red]Error:[/] {shell_response['error']}")
+
+                        # Capture failing command output for auto-attach to next LLM prompt
+                        cmd_str = " ".join([original_first] + tokens[1:])
+                        capture_shell_result(conf, cmd=cmd_str, shell_response=shell_response)
                     else:
                         # Check for @file references before invoking LLM
                         at_response = conf.plugin_manager.handle_command("parse_at_references", {
@@ -563,6 +576,9 @@ def chat_repl(conf: Any) -> None:
                             telemetry.record_llm_prompt("LLM @")
                         else:
                             telemetry.record_llm_prompt("LLM")
+
+                        # Attach pending shell failure output (one-shot) before sending to LLM
+                        cleaned_prompt = maybe_attach_shell_result(conf, cleaned_prompt)
 
                         # DO NOT call prepare_sync() here - it blocks the main thread!
                         # The index is already being maintained in the background.

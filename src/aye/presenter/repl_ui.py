@@ -90,7 +90,7 @@ def get_last_assistant_response() -> Optional[str]:
 
 def print_welcome_message():
     """Display the welcome message for the Aye Chat REPL."""
-    console.print("Aye Chat – type `help` for available commands, `exit` or Ctrl+D to quit", style="ui.welcome")
+    console.print("Aye Chat \u2013 type `help` for available commands, `exit` or Ctrl+D to quit", style="ui.welcome")
 
 
 def print_help_message():
@@ -106,6 +106,7 @@ def print_help_message():
         (r"diff <file> \[snapshot_id]", "Show diff of file with the latest snapshot, or a specified snapshot"),
         ("model", "Select a different model. Selection will persist between sessions."),
         (r"autodiff \[on|off]", "Toggle automatic diff display after LLM file updates (off by default, persists between sessions)"),
+        (r"shellcap \[none|fail|all]", "Shell output capture: 'none' (default), 'fail' (failing commands), or 'all' (all commands)"),
         ("llm", "Configure OpenAI-compatible LLM endpoint (URL, key, model). Use 'llm clear' to reset."),
         (r"verbose \[on|off]", "Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)"),
         (r"completion \[readline|multi]", "Switch auto-completion style (readline or multi, persists between sessions)"),
@@ -124,7 +125,7 @@ def print_help_message():
 
 def print_prompt():
     """Return the prompt symbol for user input."""
-    return "(ツ» "
+    return "(\u30c4\u00bb "
 
 
 def print_assistant_response(summary: str):
@@ -133,7 +134,7 @@ def print_assistant_response(summary: str):
 
     console.print()
 
-    pulse = "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]●[/] [ui.response_symbol.waves]))[/]"
+    pulse = "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]\u25cf[/] [ui.response_symbol.waves]))[/]"
 
     grid = Table.grid(padding=(0, 1))
     grid.add_column()

@@ -12,6 +12,7 @@ from aye.model.config import MODELS
 from aye.presenter.repl_ui import print_error
 from aye.controller.llm_invoker import invoke_llm
 from aye.controller.llm_handler import process_llm_response, handle_llm_error
+from aye.controller.shell_capture import maybe_attach_shell_result, SHELLCAP_KEY
 
 
 def handle_cd_command(tokens: list[str], conf: Any) -> bool:
@@ -162,6 +163,40 @@ def handle_autodiff_command(tokens: list):
         current = get_user_config("autodiff", "off")
         rprint(f"[yellow]Autodiff is {current.title()}[/]")
         rprint("[dim]When on, diffs are shown automatically after each LLM file update.[/]")
+
+
+def handle_shellcap_command(tokens: list):
+    """Handle the 'shellcap' command for configuring shell output capture mode.
+
+    Controls when shell command output is captured and attached to the next AI prompt:
+    - 'none' (default): Do not capture any shell output
+    - 'fail': Only capture output from failing commands
+    - 'all': Capture output from all shell commands regardless of exit code
+    """
+    if len(tokens) > 1:
+        val = tokens[1].lower()
+        if val in ("none", "fail", "all"):
+            set_user_config(SHELLCAP_KEY, val)
+            if val == "none":
+                rprint("[green]Shell capture set to 'none' (disabled)[/]")
+            elif val == "fail":
+                rprint("[green]Shell capture set to 'fail' (only failing commands)[/]")
+            else:
+                rprint("[green]Shell capture set to 'all' (all commands)[/]")
+        else:
+            rprint("[red]Usage: shellcap none|fail|all[/]")
+            rprint("[dim]  none - Do not capture any shell output (default)[/]")
+            rprint("[dim]  fail - Only capture output from failing commands[/]")
+            rprint("[dim]  all  - Capture output from all shell commands[/]")
+    else:
+        current = get_user_config(SHELLCAP_KEY, "none")
+        rprint(f"[yellow]Shell capture mode is '{current}'[/]")
+        if current == "none":
+            rprint("[dim]Shell output is not captured or attached to AI prompts.[/]")
+        elif current == "fail":
+            rprint("[dim]Only failing shell commands will be captured and attached to the next AI prompt.[/]")
+        else:
+            rprint("[dim]All shell command output will be captured and attached to the next AI prompt.[/]")
 
 
 def handle_completion_command(tokens: list) -> Optional[str]:
@@ -395,8 +430,11 @@ def handle_with_command(
         if conf.verbose or len(explicit_source_files) != len(expanded_files):
             rprint(f"[cyan]Including {len(explicit_source_files)} file(s): {', '.join(explicit_source_files.keys())}[/cyan]")
 
+        # Attach pending shell failure output (one-shot) before sending to LLM
+        final_prompt = maybe_attach_shell_result(conf, new_prompt_str.strip())
+
         llm_response = invoke_llm(
-            prompt=new_prompt_str.strip(),
+            prompt=final_prompt,
             conf=conf,
             console=console,
             plugin_manager=conf.plugin_manager,
@@ -465,6 +503,9 @@ def handle_blog_command(
             f"{_BLOG_PROMPT_PREAMBLE}\n"
             f"User intent: {intent}\n"
         )
+
+        # Attach pending shell failure output (one-shot) before sending to LLM
+        llm_prompt = maybe_attach_shell_result(conf, llm_prompt)
 
         llm_response = invoke_llm(
             prompt=llm_prompt,

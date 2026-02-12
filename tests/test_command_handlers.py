@@ -746,6 +746,11 @@ class TestExpandFilePatterns:
         assert len(result) == 3
 
 
+def _passthrough_shell_result(conf, prompt):
+    """Helper that mimics maybe_attach_shell_result as a no-op passthrough."""
+    return prompt
+
+
 class TestHandleWithCommand:
     """Tests for handle_with_command function."""
 
@@ -769,7 +774,8 @@ class TestHandleWithCommand:
         chat_id = 1
         chat_id_file = tmp_path / "chat_id"
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response') as mock_process:
             mock_invoke.return_value = Mock(chat_id=2)
             mock_process.return_value = 2
@@ -787,7 +793,8 @@ class TestHandleWithCommand:
 
         prompt = "with file1.py, file2.py: analyze these files"
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response'):
             mock_invoke.return_value = Mock(chat_id=2)
 
@@ -804,7 +811,8 @@ class TestHandleWithCommand:
 
         prompt = "with *.py: analyze python files"
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response'):
             mock_invoke.return_value = Mock(chat_id=2)
 
@@ -859,7 +867,8 @@ class TestHandleWithCommand:
 
         prompt = "with file1.py, file2.py: analyze"
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response'):
             mock_invoke.return_value = Mock(chat_id=2)
 
@@ -871,7 +880,8 @@ class TestHandleWithCommand:
 
         prompt = "with test.py: explain"
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response'):
             mock_invoke.return_value = Mock(chat_id=2)
 
@@ -891,7 +901,8 @@ class TestHandleWithCommand:
         (tmp_path / "test.py").write_text("content")
         prompt = "with test.py: explain"
 
-        with patch('aye.controller.command_handlers.invoke_llm', return_value=None):
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm', return_value=None):
             result = handle_with_command(prompt, mock_conf, mock_console, 1, tmp_path / "chat_id")
 
             assert result is None
@@ -901,7 +912,8 @@ class TestHandleWithCommand:
         (tmp_path / "test.py").write_text("content")
         prompt = "with test.py: explain"
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response') as mock_process:
             mock_invoke.return_value = Mock(chat_id=None)
             mock_process.return_value = None
@@ -928,7 +940,8 @@ class TestHandleWithCommand:
         (tmp_path / "test.py").write_text("content")
         prompt = "with test.py, missing.py: explain"
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response'):
             mock_invoke.return_value = Mock(chat_id=2)
 
@@ -971,7 +984,8 @@ class TestHandleBlogCommand:
         """Test blog command with intent invokes LLM."""
         tokens = ["blog", "write", "about", "refactoring"]
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response') as mock_process:
             mock_invoke.return_value = Mock(chat_id=2)
             mock_process.return_value = 2
@@ -988,7 +1002,8 @@ class TestHandleBlogCommand:
         """Test blog command when LLM returns None."""
         tokens = ["blog", "some", "intent"]
 
-        with patch('aye.controller.command_handlers.invoke_llm', return_value=None), \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm', return_value=None), \
              patch('aye.controller.command_handlers.rprint'):
             result = handle_blog_command(tokens, mock_conf, mock_console, 1, tmp_path / "chat_id")
 
@@ -998,7 +1013,8 @@ class TestHandleBlogCommand:
         """Test blog command handles exceptions."""
         tokens = ["blog", "some", "intent"]
 
-        with patch('aye.controller.command_handlers.invoke_llm', side_effect=Exception("Network error")), \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm', side_effect=Exception("Network error")), \
              patch('aye.controller.command_handlers.handle_llm_error') as mock_error:
             result = handle_blog_command(tokens, mock_conf, mock_console, 1, tmp_path / "chat_id")
 
@@ -1010,7 +1026,8 @@ class TestHandleBlogCommand:
         tokens = ["blog", "intent"]
         chat_id_file = tmp_path / "chat_id"
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response') as mock_process:
             mock_invoke.return_value = Mock(chat_id=5)
             mock_process.return_value = 5
@@ -1025,7 +1042,8 @@ class TestHandleBlogCommand:
         tokens = ["blog", "intent"]
         chat_id_file = tmp_path / "chat_id"
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response') as mock_process:
             mock_invoke.return_value = Mock(chat_id=None)
             mock_process.return_value = None
@@ -1039,7 +1057,8 @@ class TestHandleBlogCommand:
         """Test that the blog prompt includes the preamble instruction."""
         tokens = ["blog", "deep", "dive"]
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response'):
             mock_invoke.return_value = Mock(chat_id=2)
 
@@ -1054,7 +1073,8 @@ class TestHandleBlogCommand:
         """Test that the snapshot prompt stored is concise."""
         tokens = ["blog", "our", "work"]
 
-        with patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
+        with patch('aye.controller.command_handlers.maybe_attach_shell_result', side_effect=_passthrough_shell_result), \
+             patch('aye.controller.command_handlers.invoke_llm') as mock_invoke, \
              patch('aye.controller.command_handlers.process_llm_response') as mock_process:
             mock_invoke.return_value = Mock(chat_id=2)
             mock_process.return_value = 2
