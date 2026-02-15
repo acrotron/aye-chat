@@ -15,6 +15,7 @@ from aye.model.offline_llm_manager import is_offline_model
 from aye.controller.util import is_truncated_json, discover_agents_file
 from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB, CONTEXT_HARD_LIMIT_KB
 from aye.model import telemetry
+from aye.model.skills_system import SkillsResolver
 
 import os
 
@@ -50,6 +51,10 @@ TRUNCATED_RESPONSE_MESSAGE = (
     "For example, instead of 'update all files to add logging', try:\n"
     "  `with src/main.py: add logging to this file`"
 )
+
+
+# Module-level skills resolver singleton (keeps cache across invocations)
+_skills_resolver = SkillsResolver()
 
 
 def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
@@ -158,7 +163,7 @@ def _get_rag_context_files(prompt: str, conf: Any, verbose: bool) -> Dict[str, s
             file_size = len(content.encode('utf-8'))
 
             if current_size + file_size > context_hard_limit:
-                if verbose:
+                if _is_debug():
                     rprint(f"[yellow]Skipping large file {file_path_str} ({file_size / 1024:.1f}KB) to stay within payload limits.[/]")
                 continue
 
@@ -314,6 +319,45 @@ def _build_system_prompt(conf: Any, verbose: bool) -> str:
     return base_prompt
 
 
+def _build_system_prompt_with_skills(prompt: str, conf: Any, verbose: bool) -> str:
+    """
+    Build the full system prompt with AGENTS.md and applicable skills.
+
+    Ordering:
+    1. Base prompt (ground_truth or default SYSTEM_PROMPT)
+    2. AGENTS.md block (repo instructions)
+    3. Skills blocks (user-selected behavior modifiers)
+    """
+    base_prompt = _build_system_prompt(conf, verbose)
+
+    try:
+        index = _skills_resolver.get_index(Path.cwd())
+    except Exception:
+        return base_prompt
+
+    if index is None or not index.skills:
+        return base_prompt
+
+    result = _skills_resolver.resolve_applied_skills(prompt, index)
+
+    # Verbose + debug: log unknown explicit skills
+    if result.unknown_ids and _is_debug() and (verbose or _is_verbose()):
+        rprint(f"[yellow]Ignored unknown skills: {', '.join(result.unknown_ids)}[/]")
+
+    if not result.skill_ids:
+        return base_prompt
+
+    # Verbose: log applied skills and directory
+    if verbose or _is_verbose():
+        rprint(f"[cyan]Applied skills: {', '.join(result.skill_ids)}[/]")
+        rprint(f"[cyan]Skills directory: {index.skills_dir}[/]")
+
+    skills_block = _skills_resolver.render_skills_for_system_prompt(
+        result.skill_ids, index,
+    )
+    return base_prompt + "\n\n" + skills_block
+
+
 def invoke_llm(
     prompt: str,
     conf: Any,
@@ -330,7 +374,7 @@ def invoke_llm(
 
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
 
-    system_prompt = _build_system_prompt(conf, verbose)
+    system_prompt = _build_system_prompt_with_skills(prompt, conf, verbose)
 
     model_config = _get_model_config(conf.selected_model)
     max_output_tokens = model_config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS) if model_config else DEFAULT_MAX_OUTPUT_TOKENS
