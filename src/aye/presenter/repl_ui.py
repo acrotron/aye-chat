@@ -110,9 +110,10 @@ def print_help_message():
         ("  @filename", "Include a file in your prompt inline (e.g., \"explain @main.py\"). Supports wildcards (e.g., @*.py, @src/*.js)."),
         (r"  shellcap \[none|fail|all]", "Shell output capture: 'none' (default), 'fail' (failing commands), or 'all' (all commands)"),
         # skills: multi-line
-        ("  skills", "Apply repo-local skills from the nearest (non-ignored) `skills/` directory found by walking upward. "),
+        ("  skills", "Apply repo-local skills by file name (no '.md') from the nearest (non-ignored) `skills/` directory found by walking upward. "),
         ("", "Explicit forms: `skill:foo`, `skill foo`, `foo skill`, `skills:foo,bar` (order preserved, duplicates deduped). "),
         ("", "If you mention 'skill'/'skills' without `skill:`/`skills:`, Aye may fuzzy-match phrases like `using <X> skill`."),
+        ("", "See https://github.com/acrotron/aye-chat/tree/main/skills for examples."),
         # end of skills
         ("", ""),
 
