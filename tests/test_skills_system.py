@@ -166,7 +166,10 @@ class TestFindSkillsDir:
         skills = real_dir / "skills"
         skills.mkdir()
         link = tmp_path / "link"
-        link.symlink_to(real_dir)
+        try:
+            link.symlink_to(real_dir)
+        except OSError:
+            pytest.skip("Symlink creation not supported (requires privileges on Windows)")
         result = SkillsResolver._find_skills_dir(link)
         assert result == skills
 
@@ -217,7 +220,7 @@ class TestScanSkills:
         assert "good" in idx.skills
 
     def test_subdirectories_ignored(self, tmp_path):
-        """_scan_skills is non-recursive  subdirs are skipped."""
+        """_scan_skills is non-recursive  subdirs are skipped."""
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
         nested = skills_dir / "subdir"
@@ -476,12 +479,12 @@ class TestParseExplicitBare:
         assert result is None
 
     def test_trigger_verb_after_skill_skipped(self):
-        """'skill using'  'using' is a fuzzy trigger verb, should be skipped."""
+        """'skill using'  'using' is a fuzzy trigger verb, should be skipped."""
         result = SkillsResolver._parse_explicit_bare("skill using")
         assert result is None
 
     def test_trigger_verb_before_token_skill_skipped(self):
-        """'using foo skill'  'foo' preceded by trigger verb 'using'. Should be skipped."""
+        """'using foo skill'  'foo' preceded by trigger verb 'using'. Should be skipped."""
         result = SkillsResolver._parse_explicit_bare("using foo skill")
         assert result is None
 
@@ -534,7 +537,7 @@ class TestParseFuzzy:
 
     def test_close_fuzzy_match(self):
         """A very similar token should match when above threshold."""
-        # "testin" vs "testing"  rapidfuzz ratio should be high
+        # "testin" vs "testing"  rapidfuzz ratio should be high
         result = SkillsResolver._parse_fuzzy("testin skill", {"testing"})
         # Depending on exact ratio, may or may not match.
         # Let's use a known close pair
@@ -571,7 +574,7 @@ class TestParseFuzzy:
 
     def test_ambiguous_close_scores_returns_empty(self):
         """When two skills score very close, the match is ambiguous."""
-        # Two very similar ids: "fooo" and "foob"  matching "fooa" could be ambiguous
+        # Two very similar ids: "fooo" and "foob"  matching "fooa" could be ambiguous
         result = SkillsResolver._parse_fuzzy("fooa skill", {"fooo", "foob"})
         # Depends on exact scores, but tests the code path
         assert isinstance(result, list)
@@ -741,7 +744,7 @@ class TestResolveAppliedSkills:
         """When bare tokens are all unknown, falls through to fuzzy."""
         idx = self._make_index(["style"])
         resolver = SkillsResolver()
-        # "xyzzy skill"  bare parse gets ["xyzzy"] which is unknown.
+        # "xyzzy skill"  bare parse gets ["xyzzy"] which is unknown.
         # Falls through to fuzzy: "xyzzy" vs "style" should not match.
         result = resolver.resolve_applied_skills("xyzzy skill", idx)
         assert result.skill_ids == []
@@ -885,7 +888,7 @@ class TestEdgeCases:
         assert result.unknown_ids == []
 
     def test_skill_colon_then_punctuation(self):
-        """skill: followed by punctuation  should not capture junk."""
+        """skill: followed by punctuation  should not capture junk."""
         result = SkillsResolver._parse_explicit_keyed("skill: .!@#")
         assert result is None
 
@@ -917,7 +920,7 @@ class TestEdgeCases:
         assert result == ["foo"]
 
     def test_bare_with_apply_verb_and_skill(self):
-        """'apply skill'  'apply' is trigger verb for skill token."""
+        """'apply skill'  'apply' is trigger verb for skill token."""
         result = SkillsResolver._parse_explicit_bare("apply skill mystyle")
         # 'apply' is captured by 'skill <token>' pattern but should be skipped
         # as trigger verb - only 'mystyle' should appear if captured
@@ -933,7 +936,7 @@ class TestEdgeCases:
         assert result == ["a"]
 
     def test_keyed_stops_at_sentence_punctuation(self):
-        """skill:foo. Next sentence.  the period stops capture."""
+        """skill:foo. Next sentence.  the period stops capture."""
         result = SkillsResolver._parse_explicit_keyed("Use skill:foo. Then do something else.")
         assert result is not None
         assert "foo" in result
@@ -943,7 +946,7 @@ class TestEdgeCases:
             assert token not in ["then", "do", "something", "else"]
 
     def test_bare_skills_plural_with_trigger_verbs_filtered(self):
-        """'skills using enable'  trigger verbs should be filtered."""
+        """'skills using enable'  trigger verbs should be filtered."""
         result = SkillsResolver._parse_explicit_bare("skills using enable")
         assert result is None
 
