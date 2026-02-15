@@ -111,6 +111,37 @@ def get_latest_stable_version_info() -> Optional[tuple[str, Optional[str]]]:
         return None
 
 
+def get_github_release_title(version_str: str) -> Optional[str]:
+    """
+    Fetch the release title (name) from GitHub for a given version.
+
+    Uses the tag-specific endpoint so the title always matches the version.
+    GitHub tags use the vX.Y.Z naming convention.
+
+    Args:
+        version_str: The version string from PyPI (e.g. "1.2.3").
+
+    Returns:
+        The release title (name) or None if unable to fetch.
+    """
+    try:
+        tag = f"v{version_str}"
+        url = f"https://api.github.com/repos/acrotron/aye-chat/releases/tags/{tag}"
+        response = httpx.get(
+            url,
+            timeout=3.0,
+            follow_redirects=True,
+            verify=_ssl_verify(),
+            headers={"Accept": "application/vnd.github+json"},
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("name") or None
+    except Exception:
+        # Silently fail - release title is not critical
+        return None
+
+
 def is_newer_version_available() -> tuple[bool, Optional[str], str, Optional[str]]:
     """
     Check if a newer stable version is available.
@@ -179,7 +210,10 @@ def check_version_and_print_warning() -> None:
     is_newer, latest, current, python_requires = is_newer_version_available()
 
     if is_newer and latest:
-        rprint(f"[[blue]notice[/]] A new release of Aye Chat available: [red]{current}[/] -> [green]{latest}[/]")
+        release_title = get_github_release_title(latest)
+
+        title_suffix = f" - [green]{release_title}[/]" if release_title else ""
+        rprint(f"[[blue]notice[/]] A new release of Aye Chat available: [red]{current}[/] -> [green]{latest}[/]{title_suffix}")
 
         # max_python = _parse_python_version_max(python_requires)
         # if max_python:

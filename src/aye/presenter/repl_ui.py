@@ -96,28 +96,53 @@ def print_welcome_message():
 def print_help_message():
     """Print a compact help message listing built-in chat commands."""
     console.print("Available chat commands:", style="ui.help.header")
+    console.print()
 
     commands = [
-        ("@filename", "Include a file in your prompt inline (e.g., \"explain @main.py\"). Supports wildcards (e.g., @*.py, @src/*.js)."),
-        ("!command", "Force shell execution (e.g., \"!echo hello\")."),
-        ("new", "Start a new chat session (if you want to change the subject)"),
-        (r"restore, undo \[id] \[file]", "Revert changes to the last state, a specific snapshot `id`, or for a single `file`."),
-        ("history", "Show snapshot history"),
-        (r"diff <file> \[snapshot_id]", "Show diff of file with the latest snapshot, or a specified snapshot"),
-        ("model", "Select a different model. Selection will persist between sessions."),
-        (r"autodiff \[on|off]", "Toggle automatic diff display after LLM file updates (off by default, persists between sessions)"),
-        (r"shellcap \[none|fail|all]", "Shell output capture: 'none' (default), 'fail' (failing commands), or 'all' (all commands)"),
-        ("llm", "Configure OpenAI-compatible LLM endpoint (URL, key, model). Use 'llm clear' to reset."),
-        (r"verbose \[on|off]", "Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)"),
-        (r"completion \[readline|multi]", "Switch auto-completion style (readline or multi, persists between sessions)"),
-        ("raw / printraw", "Reprint last assistant response as plain text (copy-friendly)"),
-        ("keep [N]", "Keep only N most recent snapshots (10 by default)"),
-        ("exit, quit, Ctrl+D", "Exit the chat session"),
-        ("help", "Show this help message"),
+        ("Snapshot & Undo", ""),
+        (r"  restore, undo \[id] \[file]", "Revert changes to the last state, a specific snapshot `id`, or for a single `file`."),
+        ("  history", "Show snapshot history"),
+        (r"  diff <file> \[snapshot_id]", "Show diff of file with the latest snapshot, or a specified snapshot"),
+        ("  keep [N]", "Keep only N most recent snapshots (10 by default)"),
+        ("", ""),
+
+        ("Prompt Context & Augmentation", ""),
+        ("  @filename", "Include a file in your prompt inline (e.g., \"explain @main.py\"). Supports wildcards (e.g., @*.py, @src/*.js)."),
+        (r"  shellcap \[none|fail|all]", "Shell output capture: 'none' (default), 'fail' (failing commands), or 'all' (all commands)"),
+        # skills: multi-line
+        ("  skills", "Apply repo-local skills by file name (no '.md') from the nearest (non-ignored) `skills/` directory found by walking upward. "),
+        ("", "Explicit forms: `skill:foo`, `skill foo`, `foo skill`, `skills:foo,bar` (order preserved, duplicates deduped). "),
+        ("", "If you mention 'skill'/'skills' without `skill:`/`skills:`, Aye may fuzzy-match phrases like `using <X> skill`."),
+        ("", "See https://github.com/acrotron/aye-chat/tree/main/skills for examples."),
+        # end of skills
+        ("", ""),
+
+        ("Session & Model", ""),
+        ("  new", "Start a new chat session (if you want to change the subject)"),
+        ("  model", "Select a different model. Selection will persist between sessions."),
+        ("  llm", "Configure OpenAI-compatible LLM endpoint (URL, key, model). Use 'llm clear' to reset."),
+        ("", ""),
+
+        ("Display & Preferences", ""),
+        (r"  verbose \[on|off]", "Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)"),
+        (r"  autodiff \[on|off]", "Toggle automatic diff display after LLM file updates (off by default, persists between sessions)"),
+        (r"  completion \[readline|multi]", "Switch auto-completion style (readline or multi, persists between sessions)"),
+        ("", ""),
+
+        ("Utilities", ""),
+        ("  raw / printraw", "Reprint last assistant response as plain text (copy-friendly)"),
+        ("  !command", "Force shell execution (e.g., \"!echo hello\")."),
+        ("", ""),
+
+        ("Exit & Help", ""),
+        ("  exit, quit, Ctrl+D", "Exit the chat session"),
+        ("  help", "Show this help message"),
     ]
 
     for cmd, desc in commands:
-        console.print(f"  [ui.help.command]{cmd:<28}[/]\t- [ui.help.text]{desc}[/]")
+        #console.print(f"  [ui.help.command]{cmd:<28}[/]\t- [ui.help.text]{desc}[/]")
+        sep = '-' if cmd and desc else ' '
+        console.print(f"  [ui.help.command]{cmd:<28}[/]\t{sep} [ui.help.text]{desc}[/]")
 
     console.print("")
     console.print("By default, relevant files are found using code lookup to provide context for your prompt.", style="ui.warning")
