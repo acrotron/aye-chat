@@ -99,7 +99,7 @@ class SkillsResolver:
         Detection order:
         1. Explicit keyed forms  (``skill:foo``, ``skills=foo,bar``)
         2. Explicit bare forms   (``skill foo``, ``foo skill``)
-           \ — falls through to fuzzy if all bare tokens are unknown
+           — falls through to fuzzy if all bare tokens are unknown
         3. Fuzzy matching        (only when ``skill``/``skills`` appears
            without explicit syntax)
         """
