@@ -10,8 +10,15 @@ import httpx
 import aye.plugins.local_model
 
 from aye.plugins.local_model import LocalModelPlugin
+from aye.plugins.model_plugin_utils import (
+    build_user_message,
+    parse_llm_response,
+)
 
 class TestLocalModelPlugin(TestCase):
+    # Environment variable keys we need to control
+    ENV_KEYS = ["AYE_DBX_API_URL", "AYE_DBX_API_KEY", "AYE_LLM_API_URL", "AYE_LLM_API_KEY", "GEMINI_API_KEY"]
+
     def setUp(self):
         self.plugin = LocalModelPlugin()
         self.plugin.init({"verbose": False})
@@ -20,13 +27,23 @@ class TestLocalModelPlugin(TestCase):
         self.root = Path(self.tmpdir.name)
         self.history_file = self.root / ".aye" / "chat_history.json"
         
+        # Save original env var values (None if not set)
+        self._saved_env = {key: os.environ.get(key) for key in self.ENV_KEYS}
+        
         # Clear any environment variables that might interfere
-        for key in ["AYE_DBX_API_URL", "AYE_DBX_API_KEY", "AYE_LLM_API_URL", "AYE_LLM_API_KEY", "GEMINI_API_KEY"]:
-            if key in os.environ:
-                del os.environ[key]
+        for key in self.ENV_KEYS:
+            os.environ.pop(key, None)
 
     def tearDown(self):
         self.tmpdir.cleanup()
+        
+        # Restore original env var values
+        for key in self.ENV_KEYS:
+            original_value = self._saved_env.get(key)
+            if original_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = original_value
 
     def test_init(self):
         self.assertEqual(self.plugin.name, "local_model")
@@ -82,7 +99,7 @@ class TestLocalModelPlugin(TestCase):
     def test_build_user_message(self):
         prompt = "My prompt"
         source_files = {"file1.py": "content1"}
-        message = self.plugin._build_user_message(prompt, source_files)
+        message = build_user_message(prompt, source_files)
         self.assertIn(prompt, message)
         self.assertIn("--- Source files are below. ---", message)
         self.assertIn("** file1.py **", message)
@@ -93,14 +110,14 @@ class TestLocalModelPlugin(TestCase):
             "answer_summary": "summary",
             "source_files": [{"file_name": "f1", "file_content": "c1"}]
         })
-        parsed = self.plugin._parse_llm_response(llm_text)
+        parsed = parse_llm_response(llm_text)
         self.assertEqual(parsed["summary"], "summary")
         self.assertEqual(len(parsed["updated_files"]), 1)
         self.assertEqual(parsed["updated_files"][0]["file_name"], "f1")
 
     def test_parse_llm_response_plain_text(self):
         llm_text = "just plain text"
-        parsed = self.plugin._parse_llm_response(llm_text)
+        parsed = parse_llm_response(llm_text)
         self.assertEqual(parsed["summary"], "just plain text")
         self.assertEqual(parsed["updated_files"], [])
 
@@ -168,18 +185,26 @@ class TestLocalModelPlugin(TestCase):
         self.assertIsNone(self.plugin._handle_gemini_pro_25("p", {}))
 
     def test_on_command_new_chat(self):
+        # Set env vars so _is_local_model_configured() returns True
+        os.environ["AYE_LLM_API_URL"] = "http://fake.api"
+        os.environ["AYE_LLM_API_KEY"] = "fake_key"
+        
         self.history_file.parent.mkdir(exist_ok=True)
         self.history_file.touch()
         self.assertTrue(self.history_file.exists())
         
         result = self.plugin.on_command("new_chat", {"root": self.root})
         
-        self.assertEqual(result, {"status": "local_history_cleared"})
+        self.assertEqual(result, {"status": "local_history_cleared", "handled": True})
         self.assertFalse(self.history_file.exists())
         self.assertEqual(self.plugin.chat_history, {})
 
     @patch('pathlib.Path.cwd')
     def test_on_command_new_chat_no_root(self, mock_cwd):
+        # Set env vars so _is_local_model_configured() returns True
+        os.environ["AYE_LLM_API_URL"] = "http://fake.api"
+        os.environ["AYE_LLM_API_KEY"] = "fake_key"
+        
         mock_cwd.return_value = self.root
 
         # The file that should be unlinked

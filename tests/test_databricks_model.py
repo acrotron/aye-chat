@@ -11,7 +11,13 @@ from aye.plugins.databricks_model import (
     DatabricksModelPlugin,
     _get_model_config,
     _extract_json_object,
+)
+from aye.plugins.model_plugin_utils import (
     TRUNCATED_RESPONSE_MESSAGE,
+    get_conversation_id,
+    build_user_message,
+    parse_llm_response,
+    create_error_response,
 )
 from aye.plugins.plugin_base import Plugin
 
@@ -108,6 +114,9 @@ class TestExtractJsonObject(TestCase):
 
 
 class TestDatabricksModelPlugin(TestCase):
+    # Environment variable keys we need to control
+    ENV_KEYS = ["AYE_DBX_API_URL", "AYE_DBX_API_KEY", "AYE_DBX_MODEL"]
+
     def setUp(self):
         self.plugin = DatabricksModelPlugin()
         self.plugin.init({"verbose": False})
@@ -116,14 +125,23 @@ class TestDatabricksModelPlugin(TestCase):
         self.root = Path(self.tmpdir.name)
         self.history_file = self.root / ".aye" / "chat_history.json"
 
-        # Clear env vars that might interfere
-        for key in ["AYE_DBX_API_URL", "AYE_DBX_API_KEY", "AYE_DBX_MODEL"]:
+        # Save original env var values (None if not set)
+        self._saved_env = {key: os.environ.get(key) for key in self.ENV_KEYS}
+
+        # Clear env vars for test isolation
+        for key in self.ENV_KEYS:
             os.environ.pop(key, None)
 
     def tearDown(self):
         self.tmpdir.cleanup()
-        for key in ["AYE_DBX_API_URL", "AYE_DBX_API_KEY", "AYE_DBX_MODEL"]:
-            os.environ.pop(key, None)
+
+        # Restore original env var values
+        for key in self.ENV_KEYS:
+            original_value = self._saved_env.get(key)
+            if original_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = original_value
 
     # -- init ---------------------------------------------------------------
     def test_init_defaults(self):
@@ -195,32 +213,32 @@ class TestDatabricksModelPlugin(TestCase):
         self.plugin.chat_history = {"default": []}
         self.plugin._save_history()  # should not raise, just print warning
 
-    # -- _get_conversation_id -----------------------------------------------
+    # -- get_conversation_id (now a standalone utility) ---------------------
     def test_get_conversation_id_with_id(self):
-        self.assertEqual(self.plugin._get_conversation_id(5), "5")
+        self.assertEqual(get_conversation_id(5), "5")
 
     def test_get_conversation_id_zero(self):
-        self.assertEqual(self.plugin._get_conversation_id(0), "default")
+        self.assertEqual(get_conversation_id(0), "default")
 
     def test_get_conversation_id_none(self):
-        self.assertEqual(self.plugin._get_conversation_id(None), "default")
+        self.assertEqual(get_conversation_id(None), "default")
 
     def test_get_conversation_id_negative(self):
-        self.assertEqual(self.plugin._get_conversation_id(-1), "default")
+        self.assertEqual(get_conversation_id(-1), "default")
 
-    # -- _build_user_message ------------------------------------------------
+    # -- build_user_message (now a standalone utility) ----------------------
     def test_build_user_message_no_files(self):
-        msg = self.plugin._build_user_message("hello", {})
+        msg = build_user_message("hello", {})
         self.assertEqual(msg, "hello")
 
     def test_build_user_message_with_files(self):
-        msg = self.plugin._build_user_message("prompt", {"f.py": "code"})
+        msg = build_user_message("prompt", {"f.py": "code"})
         self.assertIn("prompt", msg)
         self.assertIn("--- Source files are below. ---", msg)
         self.assertIn("** f.py **", msg)
         self.assertIn("code", msg)
 
-    # -- _parse_llm_response ------------------------------------------------
+    # -- parse_llm_response (now a standalone utility) ----------------------
     def test_parse_llm_response_valid_json(self):
         text = json.dumps(
             {
@@ -228,32 +246,31 @@ class TestDatabricksModelPlugin(TestCase):
                 "source_files": [{"file_name": "a.py", "file_content": "c"}],
             }
         )
-        parsed = self.plugin._parse_llm_response(text)
+        parsed = parse_llm_response(text)
         self.assertEqual(parsed["summary"], "summary")
         self.assertEqual(len(parsed["updated_files"]), 1)
         self.assertEqual(parsed["updated_files"][0]["file_name"], "a.py")
 
     def test_parse_llm_response_plain_text(self):
-        parsed = self.plugin._parse_llm_response("just text")
+        parsed = parse_llm_response("just text")
         self.assertEqual(parsed["summary"], "just text")
         self.assertEqual(parsed["updated_files"], [])
 
     def test_parse_llm_response_no_source_files_key(self):
         text = json.dumps({"answer_summary": "no files"})
-        parsed = self.plugin._parse_llm_response(text)
+        parsed = parse_llm_response(text)
         self.assertEqual(parsed["summary"], "no files")
         self.assertEqual(parsed["updated_files"], [])
 
-    # -- _create_error_response ---------------------------------------------
-    @patch("aye.plugins.databricks_model.rprint")
-    def test_create_error_response_verbose(self, mock_rprint):
-        self.plugin.verbose = True
-        result = self.plugin._create_error_response("boom")
+    # -- create_error_response (now a standalone utility) -------------------
+    def test_create_error_response_verbose(self):
+        # Note: We only test the return value here. Testing rprint is unreliable
+        # in multi-test scenarios due to module import caching.
+        result = create_error_response("boom", verbose=True)
         self.assertEqual(result, {"summary": "boom", "updated_files": []})
-        #mock_rprint.assert_called_with("[red]boom[/]")
 
     def test_create_error_response_quiet(self):
-        result = self.plugin._create_error_response("err")
+        result = create_error_response("err")
         self.assertEqual(result["summary"], "err")
         self.assertEqual(result["updated_files"], [])
 
@@ -530,17 +547,25 @@ class TestDatabricksModelPlugin(TestCase):
 
     # -- on_command: new_chat -----------------------------------------------
     def test_on_command_new_chat(self):
+        # Set env vars so _is_databricks_configured() returns True
+        os.environ["AYE_DBX_API_URL"] = "http://fake.api"
+        os.environ["AYE_DBX_API_KEY"] = "fake_key"
+
         self.history_file.parent.mkdir(parents=True, exist_ok=True)
         self.history_file.touch()
         self.assertTrue(self.history_file.exists())
 
         result = self.plugin.on_command("new_chat", {"root": self.root})
-        self.assertEqual(result, {"status": "local_history_cleared"})
+        self.assertEqual(result, {"status": "databricks_history_cleared", "handled": True})
         self.assertFalse(self.history_file.exists())
         self.assertEqual(self.plugin.chat_history, {})
 
     @patch("pathlib.Path.cwd")
     def test_on_command_new_chat_no_root(self, mock_cwd):
+        # Set env vars so _is_databricks_configured() returns True
+        os.environ["AYE_DBX_API_URL"] = "http://fake.api"
+        os.environ["AYE_DBX_API_KEY"] = "fake_key"
+
         mock_cwd.return_value = self.root
         self.history_file.parent.mkdir(parents=True, exist_ok=True)
         self.history_file.touch()
@@ -550,6 +575,10 @@ class TestDatabricksModelPlugin(TestCase):
 
     @patch("aye.plugins.databricks_model.rprint")
     def test_on_command_new_chat_verbose(self, mock_rprint):
+        # Set env vars so _is_databricks_configured() returns True
+        os.environ["AYE_DBX_API_URL"] = "http://fake.api"
+        os.environ["AYE_DBX_API_KEY"] = "fake_key"
+
         self.plugin.verbose = True
         self.plugin.on_command("new_chat", {"root": self.root})
         #mock_rprint.assert_called_with("[yellow]Local model chat history cleared.[/]")
@@ -557,6 +586,10 @@ class TestDatabricksModelPlugin(TestCase):
     # -- on_command: local_model_invoke -------------------------------------
     @patch.object(DatabricksModelPlugin, "_handle_databricks")
     def test_on_command_invoke_routes_to_databricks(self, mock_handle):
+        # Set env vars so _is_databricks_configured() returns True
+        os.environ["AYE_DBX_API_URL"] = "http://fake.api"
+        os.environ["AYE_DBX_API_KEY"] = "fake_key"
+
         mock_handle.return_value = {"summary": "handled"}
 
         params = {
@@ -570,6 +603,10 @@ class TestDatabricksModelPlugin(TestCase):
 
     @patch.object(DatabricksModelPlugin, "_handle_databricks", return_value=None)
     def test_on_command_invoke_no_handler(self, mock_handle):
+        # Set env vars so _is_databricks_configured() returns True
+        os.environ["AYE_DBX_API_URL"] = "http://fake.api"
+        os.environ["AYE_DBX_API_KEY"] = "fake_key"
+
         params = {
             "prompt": "test",
             "source_files": {},
@@ -580,6 +617,10 @@ class TestDatabricksModelPlugin(TestCase):
 
     @patch.object(DatabricksModelPlugin, "_handle_databricks")
     def test_on_command_invoke_with_all_params(self, mock_handle):
+        # Set env vars so _is_databricks_configured() returns True
+        os.environ["AYE_DBX_API_URL"] = "http://fake.api"
+        os.environ["AYE_DBX_API_KEY"] = "fake_key"
+
         mock_handle.return_value = {"summary": "ok"}
 
         params = {
@@ -604,6 +645,10 @@ class TestDatabricksModelPlugin(TestCase):
     @patch("pathlib.Path.cwd")
     @patch.object(DatabricksModelPlugin, "_handle_databricks", return_value=None)
     def test_on_command_invoke_no_root(self, mock_handle, mock_cwd):
+        # Set env vars so _is_databricks_configured() returns True
+        os.environ["AYE_DBX_API_URL"] = "http://fake.api"
+        os.environ["AYE_DBX_API_KEY"] = "fake_key"
+
         mock_cwd.return_value = self.root
         params = {
             "prompt": "test",
@@ -621,6 +666,10 @@ class TestDatabricksModelPlugin(TestCase):
 
     # -- on_command: new_chat when file doesn't exist -----------------------
     def test_on_command_new_chat_file_missing(self):
+        # Set env vars so _is_databricks_configured() returns True
+        os.environ["AYE_DBX_API_URL"] = "http://fake.api"
+        os.environ["AYE_DBX_API_KEY"] = "fake_key"
+
         # missing_ok=True so no error
         result = self.plugin.on_command("new_chat", {"root": self.root})
-        self.assertEqual(result, {"status": "local_history_cleared"})
+        self.assertEqual(result, {"status": "databricks_history_cleared", "handled": True})

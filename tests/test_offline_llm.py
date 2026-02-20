@@ -12,11 +12,17 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from aye.plugins.offline_llm import OfflineLLMPlugin, TRUNCATED_RESPONSE_MESSAGE
+from aye.plugins.offline_llm import OfflineLLMPlugin
+from aye.plugins.model_plugin_utils import (
+    TRUNCATED_RESPONSE_MESSAGE,
+    get_conversation_id,
+    build_user_message,
+    parse_llm_response,
+    create_error_response,
+)
 
 
 def test_build_user_message_with_sources():
-    plugin = OfflineLLMPlugin()
     prompt = "Summarize the changes"
     sources = OrderedDict(
         [
@@ -25,7 +31,7 @@ def test_build_user_message_with_sources():
         ]
     )
 
-    message = plugin._build_user_message(prompt, sources)
+    message = build_user_message(prompt, sources)
 
     assert message.startswith(prompt)
     assert "--- Source files are below. ---" in message
@@ -35,14 +41,12 @@ def test_build_user_message_with_sources():
 
 
 def test_build_user_message_without_sources():
-    plugin = OfflineLLMPlugin()
     prompt = "Explain this"
 
-    assert plugin._build_user_message(prompt, {}) == prompt
+    assert build_user_message(prompt, {}) == prompt
 
 
 def test_parse_llm_response_structured_payload():
-    plugin = OfflineLLMPlugin()
     payload = json.dumps(
         {
             "properties": {
@@ -57,7 +61,7 @@ def test_parse_llm_response_structured_payload():
         }
     )
 
-    parsed = plugin._parse_llm_response(payload)
+    parsed = parse_llm_response(payload)
 
     assert parsed["summary"] == "Done"
     assert parsed["updated_files"] == [
@@ -66,67 +70,57 @@ def test_parse_llm_response_structured_payload():
 
 
 def test_parse_llm_response_invalid_json_returns_fallback():
-    plugin = OfflineLLMPlugin()
-
-    parsed = plugin._parse_llm_response("not json")
+    parsed = parse_llm_response("not json")
 
     assert parsed["summary"] == "not json"
     assert parsed["updated_files"] == []
 
 
 def test_parse_llm_response_invalid_json_empty_string_returns_no_response():
-    plugin = OfflineLLMPlugin()
-
-    parsed = plugin._parse_llm_response("")
+    parsed = parse_llm_response("")
 
     assert parsed["summary"] == "No response"
     assert parsed["updated_files"] == []
 
 
 def test_parse_llm_response_invalid_json_truncated_returns_truncated_message(monkeypatch):
-    plugin = OfflineLLMPlugin()
-
     # Force truncated detection on malformed JSON
-    monkeypatch.setattr("aye.plugins.offline_llm.is_truncated_json", lambda _: True)
+    monkeypatch.setattr("aye.plugins.model_plugin_utils.is_truncated_json", lambda _: True)
 
-    parsed = plugin._parse_llm_response("{\"answer_summary\": \"hello\"")
+    parsed = parse_llm_response('{"answer_summary": "hello"', check_truncation=True)
 
     assert parsed["summary"] == TRUNCATED_RESPONSE_MESSAGE
     assert parsed["updated_files"] == []
 
 
 def test_parse_llm_response_without_properties():
-    plugin = OfflineLLMPlugin()
     payload = json.dumps({"answer_summary": "Simple", "source_files": []})
 
-    parsed = plugin._parse_llm_response(payload)
+    parsed = parse_llm_response(payload)
 
     assert parsed["summary"] == "Simple"
     assert parsed["updated_files"] == []
 
 
 def test_parse_llm_response_json_missing_expected_keys_returns_empty_summary():
-    plugin = OfflineLLMPlugin()
     payload = json.dumps({"properties": {"source_files": [{"file_name": "a", "file_content": "b"}]}})
 
-    parsed = plugin._parse_llm_response(payload)
+    parsed = parse_llm_response(payload)
 
     assert parsed["summary"] == ""
     assert parsed["updated_files"] == [{"file_name": "a", "file_content": "b"}]
 
 
 def test_create_error_response_verbose_logs(monkeypatch):
-    plugin = OfflineLLMPlugin()
-    plugin.verbose = True
     calls = []
 
     def fake_rprint(message):
         calls.append(message)
 
-    monkeypatch.setattr("aye.plugins.offline_llm.rprint", fake_rprint)
+    monkeypatch.setattr("aye.plugins.model_plugin_utils.rprint", fake_rprint)
 
     error_msg = "Something went wrong"
-    result = plugin._create_error_response(error_msg)
+    result = create_error_response(error_msg, verbose=True)
 
     assert result == {"summary": error_msg, "updated_files": []}
     assert calls == [f"[red]{error_msg}[/]"]
@@ -172,11 +166,9 @@ def test_save_and_load_history_round_trip(tmp_path):
 
 
 def test_get_conversation_id_variants():
-    plugin = OfflineLLMPlugin()
-
-    assert plugin._get_conversation_id(5) == "5"
-    assert plugin._get_conversation_id(0) == "default"
-    assert plugin._get_conversation_id(None) == "default"
+    assert get_conversation_id(5) == "5"
+    assert get_conversation_id(0) == "default"
+    assert get_conversation_id(None) == "default"
 
 
 def test_check_dependencies_success(monkeypatch):
@@ -320,11 +312,12 @@ def test_load_history_invalid_json_logs_warning(monkeypatch, tmp_path):
     history_file.write_text("{invalid json")
     plugin.history_file = history_file
     calls = []
-    monkeypatch.setattr("aye.plugins.offline_llm.rprint", lambda message: calls.append(message))
+    monkeypatch.setattr("aye.plugins.model_plugin_utils.rprint", lambda message: calls.append(message))
 
     plugin._load_history()
 
     assert plugin.chat_history == {}
+    assert len(calls) == 1
     assert "Could not load offline model chat history" in calls[0]
 
 
@@ -335,7 +328,7 @@ def test_save_history_handles_write_errors(monkeypatch, tmp_path):
     plugin.history_file = history_file
     plugin.chat_history = {"default": []}
     calls = []
-    monkeypatch.setattr("aye.plugins.offline_llm.rprint", lambda message: calls.append(message))
+    monkeypatch.setattr("aye.plugins.model_plugin_utils.rprint", lambda message: calls.append(message))
     original_write = Path.write_text
 
     def fake_write_text(self, *args, **kwargs):
@@ -575,7 +568,7 @@ def test_on_command_download_model_propagates_download_failure(monkeypatch):
 def test_on_command_new_chat_clears_history(monkeypatch, tmp_path):
     plugin = OfflineLLMPlugin()
     plugin.verbose = True
-    history_file = tmp_path / ".aye" / "offline_chat_history.json"
+    history_file = tmp_path / ".aye" / "chat_history.json"  # Matches HISTORY_FILENAME in plugin
     history_file.parent.mkdir(parents=True)
     history_file.write_text("{}")
     plugin.chat_history = {"default": ["old"]}
@@ -584,7 +577,7 @@ def test_on_command_new_chat_clears_history(monkeypatch, tmp_path):
 
     result = plugin.on_command("new_chat", {"root": tmp_path})
 
-    assert result == {"status": "offline_history_cleared"}
+    assert result == {"status": "offline_history_cleared", "handled": True}
     assert not history_file.exists()
     assert plugin.chat_history == {}
     assert "history cleared" in calls[0]
@@ -643,7 +636,8 @@ def test_on_command_local_model_invoke_success(monkeypatch, tmp_path):
     assert result == {"summary": "ok", "updated_files": []}
     assert captured["args"] == ("m", "Test", {"a": "b"}, 3, "custom prompt", 4096)
     assert loaded["called"] is True
-    assert plugin.history_file == tmp_path / ".aye" / "offline_chat_history.json"
+    # HISTORY_FILENAME is "chat_history.json" in the plugin
+    assert plugin.history_file == tmp_path / ".aye" / "chat_history.json"
 
 
 def test_on_command_local_model_invoke_passes_max_output_tokens(monkeypatch, tmp_path):
