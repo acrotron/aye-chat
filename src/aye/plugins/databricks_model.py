@@ -119,7 +119,7 @@ def _is_databricks_configured() -> bool:
 
 class DatabricksModelPlugin(Plugin):
     name = "databricks_model"
-    version = "1.0.1"  # Version bump for new_chat fix
+    version = "1.0.3"  # Version bump for token usage in response
     premium = "free"
 
     def __init__(self):
@@ -245,7 +245,20 @@ class DatabricksModelPlugin(Plugin):
                     self.chat_history[conv_id].append({"role": "user", "content": history_message})
                     self.chat_history[conv_id].append({"role": "assistant", "content": generated_text})
                     self._save_history()
-                    return parse_llm_response(generated_text, self.debug)
+                    
+                    # Parse the response and include token usage
+                    parsed_response = parse_llm_response(generated_text, self.debug)
+                    
+                    # Add token usage to the response if available
+                    usage = result.get("usage")
+                    if usage:
+                        parsed_response["token_usage"] = {
+                            "prompt_tokens": usage.get("prompt_tokens", 0),
+                            "completion_tokens": usage.get("completion_tokens", 0),
+                            "total_tokens": usage.get("total_tokens", 0),
+                        }
+                    
+                    return parsed_response
                 return create_error_response("Failed to get a valid response from the Databricks API", self.verbose)
         except httpx.HTTPStatusError as e:
             traceback.print_exc()
