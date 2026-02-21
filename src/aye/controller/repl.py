@@ -148,9 +148,12 @@ def collect_and_send_feedback(chat_id: int):
 
     feedback_text: str = ""
     try:
-        rprint("\n[bold cyan]Before you go, would you mind sharing some comments about your experience?")
-        rprint("[bold cyan]Include your email if you are ok with us contacting you with some questions.")
-        rprint("[bold cyan](Start typing. Press Enter for a new line. Press Ctrl+C to finish.)")
+        rprint("\n[bold cyan]Before you go:")
+        rprint()
+        rprint("[bold cyan]Has Aye Chat replaced anything in your workflow?")
+        rprint("[bold cyan]If yes, what? If not, what would need to change for it to?")
+        rprint()
+        rprint("[dim](Ctrl+C to finish.)")
         feedback = feedback_session.prompt("> ", multiline=True, key_bindings=bindings, reserve_space_for_menu=6)
         if feedback and feedback.strip():
             feedback_text = feedback.strip()
@@ -169,7 +172,7 @@ def collect_and_send_feedback(chat_id: int):
     if telemetry_payload is not None:
         telemetry.reset()
 
-    rprint("[cyan]Thank you for your feedback! Goodbye.[/cyan]")
+    rprint("[cyan]Thank you for your feedback![/cyan]")
 
 
 
