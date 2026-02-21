@@ -9,6 +9,16 @@ from rich.console import Console
 from rich.spinner import Spinner
 
 from .plugin_base import Plugin
+from .model_plugin_utils import (
+    TRUNCATED_RESPONSE_MESSAGE,
+    get_conversation_id,
+    build_user_message,
+    build_history_message,
+    create_error_response,
+    parse_llm_response,
+    load_history,
+    save_history,
+)
 from aye.model.config import SYSTEM_PROMPT
 from aye.model.offline_llm_manager import (
     download_model_sync,
@@ -17,25 +27,14 @@ from aye.model.offline_llm_manager import (
     get_model_config,
     is_offline_model
 )
-from aye.controller.util import is_truncated_json
 
-
-# Message shown when LLM response is truncated due to output token limits
-TRUNCATED_RESPONSE_MESSAGE = (
-    "It looks like my response was cut off because it exceeded the output limit. "
-    "This usually happens when you ask me to generate or modify many files at once.\n\n"
-    "**To fix this, please try:**\n"
-    "1. Break your request into smaller parts (e.g., one file at a time)\n"
-    "2. Use the `with` command to focus on specific files: `with file1.py, file2.py: your request`\n"
-    "3. Ask me to work on fewer files or smaller changes in each request\n\n"
-    "For example, instead of 'update all files to add logging', try:\n"
-    "  `with src/main.py: add logging to this file`"
-)
+# History file name for this plugin
+HISTORY_FILENAME = "chat_history.json"
 
 
 class OfflineLLMPlugin(Plugin):
     name = "offline_llm"
-    version = "1.0.0"
+    version = "1.0.1"  # Version bump for new_chat fix
     premium = "free"
 
     def __init__(self):
@@ -51,6 +50,12 @@ class OfflineLLMPlugin(Plugin):
         super().init(cfg)
         if self.debug:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
+
+    def _get_history_file_path(self, root: Optional[Any]) -> Path:
+        """Get the history file path for this plugin."""
+        if root:
+            return Path(root) / ".aye" / HISTORY_FILENAME
+        return Path.cwd() / ".aye" / HISTORY_FILENAME
 
     def _check_dependencies(self) -> bool:
         """Check if required dependencies are available."""
@@ -114,118 +119,26 @@ class OfflineLLMPlugin(Plugin):
 
     def _load_history(self) -> None:
         """Load chat history from disk."""
-        if not self.history_file:
-            self.chat_history = {}
-            return
-
-        if self.history_file.exists():
-            try:
-                data = json.loads(self.history_file.read_text(encoding="utf-8"))
-                self.chat_history = data.get("conversations", {})
-            except Exception as e:
-                if self.verbose:
-                    rprint(f"[yellow]Could not load offline model chat history: {e}[/]")
-                self.chat_history = {}
-        else:
-            self.chat_history = {}
+        self.chat_history = load_history(self.history_file, self.verbose, "offline model")
 
     def _save_history(self) -> None:
         """Save chat history to disk."""
-        if not self.history_file:
-            return
-
-        try:
-            self.history_file.parent.mkdir(parents=True, exist_ok=True)
-            data = {"conversations": self.chat_history}
-            self.history_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except Exception as e:
-            if self.verbose:
-                rprint(f"[yellow]Could not save offline model chat history: {e}[/]")
-
-    def _get_conversation_id(self, chat_id: Optional[int] = None) -> str:
-        """Get conversation ID for history tracking."""
-        return str(chat_id) if chat_id and chat_id > 0 else "default"
-
-    def _build_user_message(self, prompt: str, source_files: Dict[str, str]) -> str:
-        """Build the user message with optional source files appended."""
-        user_message = prompt
-        if source_files:
-            user_message += "\n\n--- Source files are below. ---\n"
-            for file_name, content in source_files.items():
-                user_message += f"\n** {file_name} **\n```\n{content}\n```\n"
-        return user_message
-
-    def _parse_llm_response(self, generated_text: str) -> Dict[str, Any]:
-        """Parse LLM response text and convert to expected format."""
-        empty_response = {
-                "answer_summary": "No response",
-                "source_files": []
-        }
-
-        try:
-            llm_response = json.loads(generated_text)
-        except json.JSONDecodeError as e:
-            if self.debug:
-                print(f"JSON decode error: {e}")
-            
-            # Check if this looks like a truncated response
-            if is_truncated_json(generated_text):
-                if self.debug:
-                    print(f"[DEBUG] Response appears to be truncated:")
-                    print(generated_text)
-                return {
-                    "summary": TRUNCATED_RESPONSE_MESSAGE,
-                    "updated_files": []
-                }
-            
-            # Not truncated, just malformed - return as plain text
-            return {
-                "summary": generated_text if generated_text else "No response",
-                "updated_files": []
-            }
-        
-        props = llm_response.get("properties")
-        if not props:
-            props = llm_response
-
-        res = {
-            "summary": props.get("answer_summary", ""),
-            "updated_files": [
-                {
-                    "file_name": f.get("file_name"),
-                    "file_content": f.get("file_content")
-                }
-                for f in props.get("source_files", [])
-            ]
-        }
-
-        if self.debug:
-            print("----- returning from parse_llm_resp -----")
-            print(res)
-        return res
-
-    def _create_error_response(self, error_msg: str) -> Dict[str, Any]:
-        """Create a standardized error response."""
-        if self.verbose:
-            rprint(f"[red]{error_msg}[/]")
-        return {
-            "summary": error_msg,
-            "updated_files": []
-        }
+        save_history(self.history_file, self.chat_history, self.verbose, "offline model")
 
     def _generate_response(self, model_id: str, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = 4096) -> Optional[Dict[str, Any]]:
         """Generate a response using the offline model."""
         if not self._load_model(model_id):
-            return self._create_error_response(f"Failed to load offline model '{model_id}'.")
+            return create_error_response(f"Failed to load offline model '{model_id}'.", self.verbose)
             
         if not self._llm_instance:
-            return self._create_error_response(f"Model instance for '{model_id}' not available after load attempt.")
+            return create_error_response(f"Model instance for '{model_id}' not available after load attempt.", self.verbose)
 
-        conv_id = self._get_conversation_id(chat_id)
+        conv_id = get_conversation_id(chat_id)
         if conv_id not in self.chat_history:
             self.chat_history[conv_id] = []
 
-        user_message = self._build_user_message(prompt, source_files)
+        user_message = build_user_message(prompt, source_files)
+        history_message = build_history_message(prompt, source_files)
         
         # Build conversation history
         effective_system_prompt = system_prompt if system_prompt else SYSTEM_PROMPT
@@ -255,24 +168,24 @@ class OfflineLLMPlugin(Plugin):
                     print(generated_text)
                     print("----------------")
 
-                # Update chat history
-                self.chat_history[conv_id].append({"role": "user", "content": user_message})
+                # Update chat history with lightweight message
+                self.chat_history[conv_id].append({"role": "user", "content": history_message})
                 self.chat_history[conv_id].append({"role": "assistant", "content": generated_text})
                 self._save_history()
                 
-                res = self._parse_llm_response(generated_text)
+                res = parse_llm_response(generated_text, self.debug, check_truncation=True)
 
                 if self.debug:
-                    print("----- parse_llm_resp -------")
+                    print("----- parse_llm_response -------")
                     print(res)
                     print("----------------")
                 return res
             else:
-                return self._create_error_response("No response generated from offline model")
+                return create_error_response("No response generated from offline model", self.verbose)
                 
         except Exception as e:
             print(f"Error generating response: {e}")
-            return self._create_error_response(f"Error generating response: {e}")
+            return create_error_response(f"Error generating response: {e}", self.verbose)
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Handle commands for the offline LLM plugin."""
@@ -298,13 +211,15 @@ class OfflineLLMPlugin(Plugin):
             return {"success": success}
         
         if command_name == "new_chat":
+            # Offline LLM plugin always handles new_chat to clear its history
+            # (even if no offline model is currently selected, we clean up any existing history)
             root = params.get("root")
-            history_file = Path(root) / ".aye" / "offline_chat_history.json" if root else Path.cwd() / ".aye" / "offline_chat_history.json"
+            history_file = self._get_history_file_path(root)
             history_file.unlink(missing_ok=True)
             self.chat_history = {}
             if self.verbose: 
                 rprint("[yellow]Offline model chat history cleared.[/]")
-            return {"status": "offline_history_cleared"}
+            return {"status": "offline_history_cleared", "handled": True}
 
         if command_name == "local_model_invoke":
             model_id = params.get("model_id", "")
@@ -316,7 +231,7 @@ class OfflineLLMPlugin(Plugin):
             # Check if model is ready
             if get_model_status(model_id) != "READY":
                 msg = f"Offline model '{model_id}' is not ready. Please download it via the 'model' command."
-                return self._create_error_response(msg)
+                return create_error_response(msg, self.verbose)
                 
             prompt = params.get("prompt", "").strip()
             source_files = params.get("source_files", {})
@@ -325,7 +240,7 @@ class OfflineLLMPlugin(Plugin):
             system_prompt = params.get("system_prompt")
             max_output_tokens = params.get("max_output_tokens", 4096)
 
-            self.history_file = Path(root) / ".aye" / "offline_chat_history.json" if root else Path.cwd() / ".aye" / "offline_chat_history.json"
+            self.history_file = self._get_history_file_path(root)
             self._load_history()
 
             res = self._generate_response(model_id, prompt, source_files, chat_id, system_prompt, max_output_tokens)

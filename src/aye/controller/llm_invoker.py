@@ -358,6 +358,20 @@ def _build_system_prompt_with_skills(prompt: str, conf: Any, verbose: bool) -> s
     return base_prompt + "\n\n" + skills_block
 
 
+def _print_token_usage(token_usage: Dict[str, int], verbose: bool) -> None:
+    """Print token usage information if verbose mode is enabled."""
+    if not verbose or not token_usage:
+        return
+    
+    prompt_tokens = token_usage.get("prompt_tokens", 0)
+    completion_tokens = token_usage.get("completion_tokens", 0)
+    total_tokens = token_usage.get("total_tokens", 0)
+    
+    rprint(
+        f"[dim]Tokens: {prompt_tokens} prompt + {completion_tokens} completion = {total_tokens} total[/]"
+    )
+
+
 def invoke_llm(
     prompt: str,
     conf: Any,
@@ -386,6 +400,7 @@ def invoke_llm(
     )
 
     streaming_display: Optional[StreamingResponseDisplay] = None
+    token_usage: Optional[Dict[str, int]] = None
 
     def stop_spinner():
         """Callback to stop spinner when first content arrives (for streaming API)."""
@@ -406,6 +421,9 @@ def invoke_llm(
         })
 
         if local_response is not None:
+            # Extract token usage if present (for printing after spinner stops)
+            token_usage = local_response.get("token_usage")
+            
             return LLMResponse(
                 summary=local_response.get("summary", ""),
                 updated_files=local_response.get("updated_files", []),
@@ -462,3 +480,7 @@ def invoke_llm(
 
         if streaming_display is not None and streaming_display.is_active():
             streaming_display.stop()
+        
+        # Print token usage after spinner has stopped
+        if token_usage:
+            _print_token_usage(token_usage, verbose)

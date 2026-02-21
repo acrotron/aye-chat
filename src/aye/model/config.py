@@ -150,7 +150,7 @@ MODELS = [
     {"id": "moonshotai/kimi-k2-0905", "name": "MoonshotAI: Kimi K2 0905", "max_prompt_kb": 170, "max_output_tokens": 32000, "context_target_kb": 150},
     {"id": "google/gemini-2.5-pro", "name": "Google: Gemini 2.5 Pro", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
     {"id": "google/gemini-3-pro-preview", "name": "Google: Gemini 3 Pro Preview", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
-    {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
+    {"id": "anthropic/claude-sonnet-4.6", "name": "Anthropic: Claude Sonnet 4.6", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
     {"id": "openai/gpt-5.1-codex", "name": "OpenAI: GPT-5.1-Codex", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
     {"id": "openai/gpt-5.2-codex", "name": "OpenAI: GPT-5.2-Codex", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
     {"id": "openai/gpt-5.2", "name": "OpenAI: GPT-5.2", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
