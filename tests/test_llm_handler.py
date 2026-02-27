@@ -50,9 +50,9 @@ class TestLlmHandler(TestCase):
         self.assertEqual(self.chat_id_file.read_text(), "123")
 
         mock_print_summary.assert_called_once_with("summary")
-        mock_filter.assert_called_once_with(updated_files)
+        mock_filter.assert_called_once_with(updated_files, self.conf.root)
         mock_relative.assert_called_once()
-        mock_apply.assert_called_once_with(updated_files, "prompt")
+        mock_apply.assert_called_once_with(updated_files, "prompt", root=self.conf.root)
         mock_print_files.assert_called_once_with(self.console, ["file1.py"])
 
     @patch('aye.controller.llm_handler.print_assistant_response')
@@ -214,3 +214,253 @@ class TestLlmHandler(TestCase):
         # Global gate says user has used restore -> no tip
         self.console.print.assert_not_called()
         self.assertFalse(hasattr(self.conf, "_restore_tip_shown"))
+
+    @patch('aye.controller.llm_handler.print_assistant_response')
+    @patch('aye.controller.llm_handler.filter_unchanged_files')
+    def test_process_llm_response_empty_updated_files(self, mock_filter, mock_print_summary):
+        """Empty updated_files returns early without calling filter."""
+        llm_resp = LLMResponse(
+            summary="summary",
+            updated_files=[],
+            chat_id=42,
+            source=LLMSource.API
+        )
+
+        new_chat_id = llm_handler.process_llm_response(
+            response=llm_resp,
+            conf=self.conf,
+            console=self.console,
+            prompt="prompt",
+            chat_id_file=self.chat_id_file,
+        )
+
+        self.assertEqual(new_chat_id, 42)
+        self.assertEqual(self.chat_id_file.read_text(), "42")
+        mock_print_summary.assert_called_once_with("summary")
+        mock_filter.assert_not_called()
+
+    @patch('aye.controller.llm_handler.print_assistant_response')
+    @patch('aye.controller.llm_handler.filter_unchanged_files')
+    def test_process_llm_response_none_updated_files(self, mock_filter, mock_print_summary):
+        """None updated_files is treated as empty."""
+        llm_resp = LLMResponse(
+            summary="done",
+            updated_files=None,
+            chat_id=None,
+            source=LLMSource.LOCAL
+        )
+
+        new_chat_id = llm_handler.process_llm_response(
+            response=llm_resp,
+            conf=self.conf,
+            console=self.console,
+            prompt="prompt",
+        )
+
+        self.assertIsNone(new_chat_id)
+        mock_filter.assert_not_called()
+
+    @patch('aye.controller.llm_handler.is_autodiff_enabled', return_value=False)
+    @patch('aye.controller.llm_handler.get_user_config', return_value='on')
+    @patch('aye.controller.llm_handler.rprint')
+    @patch('aye.controller.llm_handler.filter_unchanged_files')
+    @patch('aye.controller.llm_handler.make_paths_relative')
+    @patch('aye.controller.llm_handler.apply_updates')
+    @patch('aye.controller.llm_handler.print_files_updated')
+    @patch('aye.controller.llm_handler.check_files_against_ignore_patterns')
+    @patch('aye.controller.llm_handler.is_strict_mode_enabled', return_value=True)
+    @patch('aye.controller.llm_handler.format_ignored_files_warning', return_value="[yellow]Warning[/]")
+    def test_process_llm_response_ignored_files_strict_mode(
+        self,
+        _mock_format_warning,
+        _mock_strict,
+        mock_check_ignore,
+        mock_print_files,
+        mock_apply,
+        mock_relative,
+        mock_filter,
+        mock_rprint,
+        _mock_get_user_config,
+        _mock_autodiff,
+    ):
+        """In strict mode, only allowed files are written."""
+        all_files = [
+            {"file_name": "allowed.py", "file_content": "ok"},
+            {"file_name": "secret.env", "file_content": "SECRET=x"},
+        ]
+        allowed_only = [{"file_name": "allowed.py", "file_content": "ok"}]
+        ignored_only = [{"file_name": "secret.env", "file_content": "SECRET=x"}]
+
+        mock_filter.return_value = all_files
+        mock_relative.return_value = all_files
+        mock_check_ignore.return_value = (allowed_only, ignored_only)
+
+        llm_resp = LLMResponse(summary=None, updated_files=all_files)
+
+        llm_handler.process_llm_response(
+            llm_resp, self.conf, self.console, "prompt"
+        )
+
+        # Warning printed
+        mock_rprint.assert_any_call("[yellow]Warning[/]")
+        # Only allowed file passed to apply_updates
+        mock_apply.assert_called_once_with(allowed_only, "prompt", root=self.conf.root)
+        mock_print_files.assert_called_once_with(self.console, ["allowed.py"])
+
+    @patch('aye.controller.llm_handler.is_autodiff_enabled', return_value=False)
+    @patch('aye.controller.llm_handler.get_user_config', return_value='on')
+    @patch('aye.controller.llm_handler.rprint')
+    @patch('aye.controller.llm_handler.filter_unchanged_files')
+    @patch('aye.controller.llm_handler.make_paths_relative')
+    @patch('aye.controller.llm_handler.apply_updates')
+    @patch('aye.controller.llm_handler.print_files_updated')
+    @patch('aye.controller.llm_handler.check_files_against_ignore_patterns')
+    @patch('aye.controller.llm_handler.is_strict_mode_enabled', return_value=True)
+    @patch('aye.controller.llm_handler.format_ignored_files_warning', return_value="[yellow]Warning[/]")
+    def test_process_llm_response_all_files_ignored_strict_mode(
+        self,
+        _mock_format_warning,
+        _mock_strict,
+        mock_check_ignore,
+        mock_print_files,
+        mock_apply,
+        mock_relative,
+        mock_filter,
+        mock_rprint,
+        _mock_get_user_config,
+        _mock_autodiff,
+    ):
+        """In strict mode, if all files are ignored, nothing is written."""
+        files = [{"file_name": "secret.env", "file_content": "SECRET=x"}]
+
+        mock_filter.return_value = files
+        mock_relative.return_value = files
+        mock_check_ignore.return_value = ([], files)  # All ignored
+
+        llm_resp = LLMResponse(summary=None, updated_files=files)
+
+        result = llm_handler.process_llm_response(
+            llm_resp, self.conf, self.console, "prompt"
+        )
+
+        mock_rprint.assert_any_call("[yellow]Warning[/]")
+        mock_apply.assert_not_called()
+        mock_print_files.assert_not_called()
+        self.assertIsNone(result)
+
+    @patch('aye.controller.llm_handler.is_autodiff_enabled', return_value=False)
+    @patch('aye.controller.llm_handler.get_user_config', return_value='on')
+    @patch('aye.controller.llm_handler.rprint')
+    @patch('aye.controller.llm_handler.filter_unchanged_files')
+    @patch('aye.controller.llm_handler.make_paths_relative')
+    @patch('aye.controller.llm_handler.apply_updates')
+    @patch('aye.controller.llm_handler.print_files_updated')
+    @patch('aye.controller.llm_handler.check_files_against_ignore_patterns')
+    @patch('aye.controller.llm_handler.is_strict_mode_enabled', return_value=False)
+    @patch('aye.controller.llm_handler.format_ignored_files_warning', return_value="[yellow]Warning[/]")
+    def test_process_llm_response_ignored_files_non_strict_mode(
+        self,
+        _mock_format_warning,
+        _mock_strict,
+        mock_check_ignore,
+        mock_print_files,
+        mock_apply,
+        mock_relative,
+        mock_filter,
+        mock_rprint,
+        _mock_get_user_config,
+        _mock_autodiff,
+    ):
+        """In non-strict mode, ignored files are warned about but still written."""
+        files = [
+            {"file_name": "app.py", "file_content": "code"},
+            {"file_name": "secret.env", "file_content": "SECRET=x"},
+        ]
+
+        mock_filter.return_value = files
+        mock_relative.return_value = files
+        mock_check_ignore.return_value = (
+            [files[0]],  # allowed
+            [files[1]],  # ignored
+        )
+
+        llm_resp = LLMResponse(summary=None, updated_files=files)
+
+        llm_handler.process_llm_response(
+            llm_resp, self.conf, self.console, "prompt"
+        )
+
+        # Warning printed
+        mock_rprint.assert_any_call("[yellow]Warning[/]")
+        # All files still passed to apply_updates (non-strict)
+        mock_apply.assert_called_once_with(files, "prompt", root=self.conf.root)
+
+    @patch('aye.controller.llm_handler.is_autodiff_enabled', return_value=True)
+    @patch('aye.controller.llm_handler.get_user_config', return_value='on')
+    @patch('aye.controller.llm_handler.filter_unchanged_files')
+    @patch('aye.controller.llm_handler.make_paths_relative')
+    @patch('aye.controller.llm_handler.apply_updates', return_value="001_20240101T000000")
+    @patch('aye.controller.llm_handler.print_files_updated')
+    @patch('aye.controller.llm_handler.get_diff_base_for_file')
+    @patch('aye.controller.llm_handler.show_diff')
+    def test_process_llm_response_autodiff_enabled(
+        self,
+        mock_show_diff,
+        mock_get_diff_base,
+        mock_print_files,
+        mock_apply,
+        mock_relative,
+        mock_filter,
+        _mock_get_user_config,
+        _mock_autodiff,
+    ):
+        """When autodiff is enabled, show_diff is called for each updated file."""
+        updated_files = [{"file_name": "file1.py", "file_content": "content"}]
+        mock_filter.return_value = updated_files
+        mock_relative.return_value = updated_files
+        mock_get_diff_base.return_value = ("/snapshots/file1.py", False)
+
+        llm_resp = LLMResponse(summary=None, updated_files=updated_files)
+
+        llm_handler.process_llm_response(
+            llm_resp, self.conf, self.console, "prompt"
+        )
+
+        mock_get_diff_base.assert_called_once_with(
+            "001_20240101T000000", self.conf.root / "file1.py"
+        )
+        mock_show_diff.assert_called_once_with(
+            self.conf.root / "file1.py", Path("/snapshots/file1.py")
+        )
+
+    @patch('aye.controller.llm_handler.is_autodiff_enabled', return_value=True)
+    @patch('aye.controller.llm_handler.get_user_config', return_value='on')
+    @patch('aye.controller.llm_handler.filter_unchanged_files')
+    @patch('aye.controller.llm_handler.make_paths_relative')
+    @patch('aye.controller.llm_handler.apply_updates', return_value="001_20240101T000000")
+    @patch('aye.controller.llm_handler.print_files_updated')
+    @patch('aye.controller.llm_handler.get_diff_base_for_file', return_value=None)
+    @patch('aye.controller.llm_handler.show_diff')
+    def test_process_llm_response_autodiff_no_diff_base(
+        self,
+        mock_show_diff,
+        _mock_get_diff_base,
+        mock_print_files,
+        mock_apply,
+        mock_relative,
+        mock_filter,
+        _mock_get_user_config,
+        _mock_autodiff,
+    ):
+        """When diff base is None (new file), show_diff is not called."""
+        updated_files = [{"file_name": "new_file.py", "file_content": "content"}]
+        mock_filter.return_value = updated_files
+        mock_relative.return_value = updated_files
+
+        llm_resp = LLMResponse(summary=None, updated_files=updated_files)
+
+        llm_handler.process_llm_response(
+            llm_resp, self.conf, self.console, "prompt"
+        )
+
+        mock_show_diff.assert_not_called()
