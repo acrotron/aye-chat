@@ -1,7 +1,7 @@
 import os
 import time
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, call, PropertyMock
 
 from rich.console import Group
 from rich.markdown import Markdown
@@ -21,15 +21,20 @@ class FakeLive:
         console=None,
         refresh_per_second=None,
         transient=None,
+        auto_refresh=None,
+        vertical_overflow=None,
     ):
         self.initial_renderable = renderable
         self.console = console
         self.refresh_per_second = refresh_per_second
         self.transient = transient
+        self.auto_refresh = auto_refresh
+        self.vertical_overflow = vertical_overflow
 
         self.started = False
         self.stopped = False
         self.updates = []
+        self.refreshes = 0
 
     def start(self):
         self.started = True
@@ -39,6 +44,9 @@ class FakeLive:
 
     def update(self, renderable):
         self.updates.append(renderable)
+
+    def refresh(self):
+        self.refreshes += 1
 
 
 # ------------------------------------------------------------------ #
@@ -108,7 +116,6 @@ class TestSplitStreamingMarkdown(unittest.TestCase):
         self.assertEqual(self.split(""), ("", ""))
 
     def test_single_word_no_newline(self):
-        # No safe boundary => everything is tail
         self.assertEqual(self.split("hello"), ("", "hello"))
 
     def test_single_newline(self):
@@ -125,21 +132,18 @@ class TestSplitStreamingMarkdown(unittest.TestCase):
     def test_unclosed_fence(self):
         text = "before\n```python\ncode here"
         prefix, tail = self.split(text)
-        # Fence is unclosed, so everything from fence onward is tail
         self.assertIn("```python", tail)
         self.assertNotIn("```python", prefix)
 
     def test_closed_fence(self):
         text = "before\n```python\ncode\n```\nafter stuff"
         prefix, tail = self.split(text)
-        # All fences are closed; should use paragraph/newline boundary
         self.assertIn("```python", prefix)
         self.assertIn("```", prefix)
 
     def test_multiple_fences_last_unclosed(self):
         text = "A\n```\nblock1\n```\nB\n```\nblock2 still open"
         prefix, tail = self.split(text)
-        # The last ``` is unclosed
         self.assertIn("block2 still open", tail)
 
     def test_tilde_fence(self):
@@ -183,17 +187,13 @@ class TestTailContent(unittest.TestCase):
         lines = "\n".join(f"line{i}" for i in range(50))
         result, truncated = self.tail(lines, 80, 5)
         self.assertTrue(truncated)
-        # Should contain only the last few lines
         result_lines = result.split("\n")
         self.assertLessEqual(len(result_lines), 5)
         self.assertIn("line49", result)
 
     def test_long_lines_wrap_estimation(self):
-        # A single line 200 chars wide at width=80 should wrap to ~3 rows
         content = "A" * 200
         result, truncated = self.tail(content, 80, 2)
-        # The single 200-char line needs 3 wrapped rows > budget 2,
-        # but the function always includes at least the last raw line.
         self.assertIn("A" * 200, result)
 
     def test_empty_lines_count_as_one_row(self):
@@ -213,13 +213,11 @@ class TestRenderStreamingMarkdown(unittest.TestCase):
 
     def test_plain_text_returns_text(self):
         result = self.render("hello")
-        # No newline => all tail => should be a Text
         self.assertIsInstance(result, Text)
 
     def test_paragraph_returns_group_with_markdown_prefix(self):
         content = "para one\n\npara two"
         result = self.render(content)
-        # Has a prefix and a tail => Group
         self.assertIsInstance(result, Group)
 
     def test_stall_indicator_appended(self):
@@ -242,19 +240,16 @@ class TestRenderStreamingMarkdown(unittest.TestCase):
 
     def test_empty_content_with_stall(self):
         result = self.render("", show_stall_indicator=True)
-        # Empty splits produce ("", ""), parts is empty, but stall is appended
         self.assertIsInstance(result, Text)
 
     def test_content_with_only_prefix(self):
-        # Fully closed fences + paragraph boundary => non-empty prefix, possibly empty tail
         content = "para1\n\n"
         result = self.render(content)
-        # prefix="para1\n\n", tail="" => only Markdown part => single renderable
         self.assertIsInstance(result, Markdown)
 
 
 # ------------------------------------------------------------------ #
-# _create_response_panel – additional branch coverage
+# _create_response_panel
 # ------------------------------------------------------------------ #
 
 
@@ -290,7 +285,6 @@ class TestCreateResponsePanel(unittest.TestCase):
         self.assertIsInstance(panel, Panel)
         grid = panel.renderable
         cell = grid.columns[1]._cells[0]
-        # streaming markdown returns a Group (prefix + tail)
         self.assertIsInstance(cell, Group)
 
     def test_streaming_markdown_with_stall(self):
@@ -320,7 +314,6 @@ class TestCreateResponsePanel(unittest.TestCase):
         )
         grid = panel.renderable
         cell = grid.columns[1]._cells[0]
-        # When stall_indicator=True and not streaming, content is wrapped in a Group
         self.assertIsInstance(cell, Group)
 
     def test_text_mode_with_stall(self):
@@ -346,7 +339,6 @@ class TestCreateResponsePanel(unittest.TestCase):
         self.assertIn("waiting for more", cell.plain)
 
     def test_streaming_but_empty_content_falls_to_else(self):
-        # streaming=True but content="" => the `streaming and content` branch is False
         panel = streaming_ui._create_response_panel(
             "",
             use_markdown=True,
@@ -369,7 +361,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.console.size.width = 120
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_update_autostarts_and_calls_on_first_content_once(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_update_autostarts_and_calls_on_first_content_once(self, mock_signal):
         seen = {"count": 0}
 
         def on_first():
@@ -401,7 +394,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertIn(("Hello world", True, True), events)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_update_same_content_is_noop(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_update_same_content_is_noop(self, mock_signal):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -417,7 +411,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             self.assertEqual(len(events), event_count_after_first)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_update_non_appended_content_resets_animation(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_update_non_appended_content_resets_animation(self, mock_signal):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -435,7 +430,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertIn(("New", True, True), events)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_stop_final_markdown_render_and_spacing_after(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_stop_final_markdown_render_and_spacing_after(self, mock_signal):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -453,7 +449,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertFalse(d.is_active())
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_context_manager_starts_and_stops(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_context_manager_starts_and_stops(self, mock_signal):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -514,7 +511,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertFalse(d.has_received_content())
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_has_received_content_true_after_update(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_has_received_content_true_after_update(self, mock_signal):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
@@ -526,7 +524,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertEqual(d.content, "")
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_content_property_after_update(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_content_property_after_update(self, mock_signal):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
@@ -538,31 +537,30 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertFalse(d.is_active())
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_start_is_idempotent(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_start_is_idempotent(self, mock_signal):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
             d = streaming_ui.StreamingResponseDisplay(console=self.console)
             d.start()
             live1 = d._live
             d.start()
-            # Should be the same Live instance — second start() is a no-op
             self.assertIs(d._live, live1)
             d._stop_monitoring.set()
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_stop_when_not_started_is_noop(self):
         d = streaming_ui.StreamingResponseDisplay(console=self.console)
-        # Should not raise
         d.stop()
         self.assertFalse(d.is_active())
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_double_stop_is_safe(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_double_stop_is_safe(self, mock_signal):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
             d.update("data")
             d.stop()
-            # Second stop should be safe
             d.stop()
             self.assertFalse(d.is_active())
 
@@ -571,7 +569,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_update_is_final_stops_live_and_prints_full(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_update_is_final_stops_live_and_prints_full(self, mock_signal):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -585,15 +584,13 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d.update("Streaming...")
             d.update("Final content", is_final=True)
 
-        # After is_final, live should be stopped.
         self.assertFalse(d.is_active())
-        # The final render should be use_markdown=True, streaming=False, no stall
         final_events = [(e[0], e[1], e[3]) for e in events if e[0] == "Final content"]
         self.assertIn(("Final content", True, False), final_events)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_update_is_final_snaps_content(self):
-        """is_final=True should set _animated_content immediately without word-by-word."""
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_update_is_final_snaps_content(self, mock_signal):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
@@ -602,21 +599,22 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             self.assertEqual(d.content, "final!")
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_stop_after_is_final_is_safe(self):
-        """Calling stop() after update(is_final=True) should not crash."""
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_stop_after_is_final_is_safe(self, mock_signal):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
             d.update("done", is_final=True)
-            d.stop()  # Should be no-op since already stopped
+            d.stop()
             self.assertFalse(d.is_active())
 
     # -------------------------------------------------- #
-    # animate_words – newline & whitespace branches
+    # animate_words
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_animate_words_newline_forces_render(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_animate_words_newline_forces_render(self, mock_signal):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -629,12 +627,12 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d._min_render_interval = 0
             d.update("line1\nline2")
 
-        # Should contain content with the newline
         contents = [e[0] for e in events]
         self.assertTrue(any("\n" in c for c in contents))
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_animate_words_tabs_handled(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_animate_words_tabs_handled(self, mock_signal):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -650,21 +648,20 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertEqual(d._animated_content, "a\tb")
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_animate_words_empty_new_text_is_noop(self):
-        """_animate_words with empty string should not crash or produce renders."""
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_animate_words_empty_new_text_is_noop(self, mock_signal):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
             d.start()
-            d._animate_words("")  # Should return immediately
+            d._animate_words("")
             d._stop_monitoring.set()
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_animate_words_returns_early_when_no_live(self):
-        """_animate_words should return early if _live is None."""
         d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
         d._live = None
-        d._animate_words("text")  # Should not crash
+        d._animate_words("text")
         self.assertEqual(d._animated_content, "")
 
     # -------------------------------------------------- #
@@ -675,7 +672,6 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     def test_refresh_display_noop_when_no_live(self):
         d = streaming_ui.StreamingResponseDisplay(console=self.console)
         d._live = None
-        # Should not raise
         d._refresh_display()
 
     @patch.object(streaming_ui, "Live", FakeLive)
@@ -688,21 +684,139 @@ class TestStreamingResponseDisplay(unittest.TestCase):
 
         with patch.object(streaming_ui, "_create_response_panel", side_effect=fake_panel):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
-            d._min_render_interval = 1000  # Very high throttle
+            d._min_render_interval = 1000
             d._live = FakeLive(Text(""))
             d._animated_content = "test"
+            d._last_known_width = 120  # Match console width
+            d._last_known_height = 40  # Match console height
 
-            # First refresh should go through (last_render_time is 0)
             d._refresh_display(use_markdown=True, streaming=True)
             count_after_first = len(calls)
 
-            # Second refresh should be throttled
             d._refresh_display(use_markdown=True, streaming=True)
             self.assertEqual(len(calls), count_after_first)
 
-            # Force bypasses throttle
             d._refresh_display(use_markdown=True, streaming=True, force=True)
             self.assertEqual(len(calls), count_after_first + 1)
+
+    # -------------------------------------------------- #
+    # Resize detection via width polling
+    # -------------------------------------------------- #
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_width_change_suppresses_refresh(self):
+        """When terminal width changes, refresh is suppressed."""
+        with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
+            d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+            d._live = FakeLive(Text(""))
+            d._animated_content = "test"
+            d._min_render_interval = 0
+            d._last_known_width = 120
+            d._last_known_height = 40
+
+            # Simulate terminal width change (narrowing)
+            self.console.size.width = 80
+
+            d._refresh_display(use_markdown=True, streaming=True, force=True)
+
+            # No output should have been committed to Live
+            self.assertEqual(len(d._live.updates), 0)
+            self.assertEqual(d._live.refreshes, 0)
+            # Restart flag should be set
+            self.assertTrue(d._restart_live_on_resize)
+            # Width should be updated
+            self.assertEqual(d._last_known_width, 80)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_same_width_allows_refresh(self):
+        """When width hasn't changed, refresh proceeds normally."""
+        with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
+            d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+            d._live = FakeLive(Text(""))
+            d._animated_content = "test"
+            d._min_render_interval = 0
+            d._last_known_width = 120  # Same as console mock
+            d._last_known_height = 40  # Same as console mock
+
+            d._refresh_display(use_markdown=True, streaming=True, force=True)
+
+            self.assertGreater(d._live.refreshes, 0)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_detect_resize_returns_true_on_change(self):
+        """_detect_resize returns True when size changed."""
+        d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+        d._last_known_width = 120
+        d._last_known_height = 40
+
+        self.console.size.width = 80
+        result = d._detect_resize()
+
+        self.assertTrue(result)
+        self.assertTrue(d._restart_live_on_resize)
+        self.assertEqual(d._last_known_width, 80)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_detect_resize_returns_false_when_same(self):
+        """_detect_resize returns False when size is unchanged."""
+        d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+        d._last_known_width = 120
+        d._last_known_height = 40
+
+        result = d._detect_resize()
+
+        self.assertFalse(result)
+        self.assertFalse(d._restart_live_on_resize)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_height_change_also_triggers_resize(self):
+        """_detect_resize detects height changes too."""
+        d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+        d._last_known_width = 120
+        d._last_known_height = 40
+
+        self.console.size.height = 30
+        result = d._detect_resize()
+
+        self.assertTrue(result)
+        self.assertTrue(d._restart_live_on_resize)
+        self.assertEqual(d._last_known_height, 30)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_restart_flag_suppresses_all_renders(self):
+        """When restart flag is set, no renders happen."""
+        with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
+            d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+            d._live = FakeLive(Text(""))
+            d._animated_content = "test"
+            d._min_render_interval = 0
+            d._last_known_width = 120
+            d._last_known_height = 40
+
+            # Manually set the restart flag
+            d._restart_live_on_resize = True
+
+            d._refresh_display(use_markdown=True, streaming=True, force=True)
+
+            self.assertEqual(len(d._live.updates), 0)
+            self.assertEqual(d._live.refreshes, 0)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_resize_cooldown_expires_allows_refresh(self):
+        """After cooldown expires and restart completes, refresh works."""
+        with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
+            d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+            d._live = FakeLive(Text(""))
+            d._animated_content = "test"
+            d._min_render_interval = 0
+            d._last_known_width = 120
+            d._last_known_height = 40
+
+            d._resize_cooldown_until = time.time() - 1
+
+            d._refresh_display(use_markdown=True, streaming=True, force=True)
+
+            self.assertGreater(d._live.refreshes, 0)
 
     # -------------------------------------------------- #
     # Tailing during streaming
@@ -710,8 +824,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_tailing_kicks_in_for_long_content(self):
-        """When tail is enabled and content is tall, _tail_content should be called."""
-        self.console.size.height = 10  # Very small terminal
+        self.console.size.height = 10
         self.console.size.width = 80
 
         panel_args = []
@@ -729,17 +842,17 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d._live = FakeLive(Text(""))
             d._started = True
             d._animated_content = long_content
+            d._last_known_width = 80
+            d._last_known_height = 10
 
             d._refresh_display(use_markdown=True, streaming=True, force=True)
 
-        # At least one streaming render should have is_truncated=True
         streaming_renders = [a for a in panel_args if a["streaming"]]
         self.assertTrue(len(streaming_renders) > 0)
         self.assertTrue(any(r["is_truncated"] for r in streaming_renders))
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_tailing_disabled_shows_full_content(self):
-        """When tail is disabled, full content is shown."""
         self.console.size.height = 10
         self.console.size.width = 80
 
@@ -758,10 +871,11 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d._live = FakeLive(Text(""))
             d._started = True
             d._animated_content = long_content
+            d._last_known_width = 80
+            d._last_known_height = 10
 
             d._refresh_display(use_markdown=True, streaming=True, force=True)
 
-        # None should be truncated
         self.assertTrue(all(not a["is_truncated"] for a in panel_args))
 
     # -------------------------------------------------- #
@@ -772,35 +886,30 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         d = streaming_ui.StreamingResponseDisplay(console=self.console)
         self.console.size.height = 40
         result = d._compute_available_lines(show_stall=False)
-        # 40 - 2 (chrome) - 0 (no stall) - 2 (buffer) = 36
         self.assertEqual(result, 36)
 
     def test_compute_available_lines_with_stall(self):
         d = streaming_ui.StreamingResponseDisplay(console=self.console)
         self.console.size.height = 40
         result = d._compute_available_lines(show_stall=True)
-        # 40 - 2 - 2 (stall) - 2 = 34
         self.assertEqual(result, 34)
 
     def test_compute_available_lines_minimum(self):
         d = streaming_ui.StreamingResponseDisplay(console=self.console)
         self.console.size.height = 5
         result = d._compute_available_lines(show_stall=True)
-        # 5 - 2 - 2 - 2 = -1 => clamped to 3
         self.assertEqual(result, 3)
 
     def test_compute_inner_width(self):
         d = streaming_ui.StreamingResponseDisplay(console=self.console)
         self.console.size.width = 120
         result = d._compute_inner_width()
-        # 120 - 12 = 108
         self.assertEqual(result, 108)
 
     def test_compute_inner_width_minimum(self):
         d = streaming_ui.StreamingResponseDisplay(console=self.console)
         self.console.size.width = 10
         result = d._compute_inner_width()
-        # 10 - 12 = -2 => clamped to 20
         self.assertEqual(result, 20)
 
     # -------------------------------------------------- #
@@ -809,27 +918,21 @@ class TestStreamingResponseDisplay(unittest.TestCase):
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_render_final_and_stop_when_no_live(self):
-        """Should be a no-op when _live is already None."""
         d = streaming_ui.StreamingResponseDisplay(console=self.console)
         d._live = None
-        # Should not raise
         d._render_final_and_stop()
-        # console.print should NOT have been called for the panel
         self.console.print.assert_not_called()
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_render_final_and_stop_with_empty_content(self):
-        """When _animated_content is empty, no final panel should be printed."""
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_render_final_and_stop_with_empty_content(self, mock_signal):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
             d = streaming_ui.StreamingResponseDisplay(console=self.console)
             d.start()
             d._animated_content = ""
             d._render_final_and_stop()
 
-        # Only the spacing call from start() + the spacing-after from _render_final_and_stop
-        # No final panel print since content is empty
         calls = self.console.print.call_args_list
-        # start() prints once, _render_final_and_stop prints once (spacing after)
         self.assertEqual(len(calls), 2)
 
     # -------------------------------------------------- #
@@ -837,45 +940,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_monitor_stall_detects_stall(self):
-        """The stall monitor should trigger a refresh with show_stall=True."""
-        refresh_calls = []
-
-        with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
-            d = streaming_ui.StreamingResponseDisplay(
-                console=self.console,
-                word_delay=0,
-                stall_threshold=0.01,  # Very fast stall
-            )
-            d._min_render_interval = 0
-            d.start()
-
-            # Simulate content that is fully animated and caught up
-            d._current_content = "some content"
-            d._animated_content = "some content"
-            d._is_animating = False
-            d._last_receive_time = time.time() - 1.0  # 1 second ago
-            d._showing_stall_indicator = False
-
-            original_refresh = d._refresh_display
-
-            def capture_refresh(**kwargs):
-                refresh_calls.append(kwargs)
-                return original_refresh(**kwargs)
-
-            with patch.object(d, "_refresh_display", side_effect=capture_refresh):
-                # Give the monitor thread a chance to detect the stall
-                time.sleep(0.8)
-
-            d._stop_monitoring.set()
-
-        # The monitor should have called _refresh_display with show_stall=True
-        stall_refreshes = [c for c in refresh_calls if c.get("show_stall") is True]
-        self.assertTrue(len(stall_refreshes) > 0)
-
-    @patch.object(streaming_ui, "Live", FakeLive)
-    def test_monitor_stall_skips_when_animating(self):
-        """The stall monitor should NOT trigger when still animating."""
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_monitor_stall_detects_stall(self, mock_signal):
         refresh_calls = []
 
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
@@ -888,7 +954,41 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d.start()
 
             d._current_content = "some content"
-            d._animated_content = "some con"  # Not caught up
+            d._animated_content = "some content"
+            d._is_animating = False
+            d._last_receive_time = time.time() - 1.0
+            d._showing_stall_indicator = False
+
+            original_refresh = d._refresh_display
+
+            def capture_refresh(**kwargs):
+                refresh_calls.append(kwargs)
+                return original_refresh(**kwargs)
+
+            with patch.object(d, "_refresh_display", side_effect=capture_refresh):
+                time.sleep(0.8)
+
+            d._stop_monitoring.set()
+
+        stall_refreshes = [c for c in refresh_calls if c.get("show_stall") is True]
+        self.assertTrue(len(stall_refreshes) > 0)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_monitor_stall_skips_when_animating(self, mock_signal):
+        refresh_calls = []
+
+        with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
+            d = streaming_ui.StreamingResponseDisplay(
+                console=self.console,
+                word_delay=0,
+                stall_threshold=0.01,
+            )
+            d._min_render_interval = 0
+            d.start()
+
+            d._current_content = "some content"
+            d._animated_content = "some con"
             d._is_animating = True
             d._last_receive_time = time.time() - 1.0
             d._showing_stall_indicator = False
@@ -898,13 +998,12 @@ class TestStreamingResponseDisplay(unittest.TestCase):
 
             d._stop_monitoring.set()
 
-        # No stall refresh should have been triggered
         stall_refreshes = [c for c in refresh_calls if c.get("show_stall") is True]
         self.assertEqual(len(stall_refreshes), 0)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_monitor_stall_skips_when_no_content(self):
-        """The stall monitor skips when _animated_content is empty."""
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_monitor_stall_skips_when_no_content(self, mock_signal):
         refresh_calls = []
 
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
@@ -932,8 +1031,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_stall_indicator_hidden_on_new_content(self):
-        """When stall indicator is shown and new content arrives, it should hide."""
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_stall_indicator_hidden_on_new_content(self, mock_signal):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -949,15 +1048,12 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d._min_render_interval = 0
             d.start()
 
-            # Simulate stall indicator being shown
             d._showing_stall_indicator = True
             d._current_content = "original"
             d._animated_content = "original"
 
-            # New content should hide stall
             d.update("original more")
 
-        # At least one streaming render should have show_stall=False after the stall was showing
         non_stall = [e for e in events if e["streaming"] and not e["show_stall"]]
         self.assertTrue(len(non_stall) > 0)
 
@@ -966,7 +1062,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_word_delay_causes_sleep(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_word_delay_causes_sleep(self, mock_signal):
         sleep_calls = []
 
         def capture_sleep(duration):
@@ -981,7 +1078,6 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d._min_render_interval = 0
             d.update("hello world")
 
-        # There should be sleep calls for each word
         self.assertTrue(len(sleep_calls) >= 2)
         self.assertTrue(all(s == 0.1 for s in sleep_calls))
 
@@ -990,7 +1086,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_carriage_return_handled(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_carriage_return_handled(self, mock_signal):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -1010,7 +1107,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_multiple_spaces_grouped(self):
+    @patch.object(streaming_ui.signal, "signal", return_value=None)
+    def test_multiple_spaces_grouped(self, mock_signal):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -1024,7 +1122,6 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d.update("a   b")
 
         self.assertEqual(d._animated_content, "a   b")
-        # "a" -> "a   " -> "a   b"
         self.assertIn("a", events)
         self.assertIn("a   ", events)
         self.assertIn("a   b", events)

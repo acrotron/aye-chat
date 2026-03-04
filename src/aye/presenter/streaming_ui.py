@@ -18,16 +18,51 @@ Tailing (viewport follow):
 - On final render the full response is printed to terminal scrollback
   so the user can scroll back through the entire answer.
 - Controlled via the AYE_STREAM_TAIL env var (default: on).
+
+Resize handling:
+- When the terminal is resized (especially narrowed), content reflows
+  instantly to more lines at the OS/terminal level. Rich's internal
+  height tracking becomes stale, causing orphaned lines ("duplicate
+  boxes") on subsequent renders.
+
+- The fix uses **polling-based resize detection** combined with
+  SIGWINCH (on POSIX) for a cross-platform solution:
+
+  1. **Polling (all platforms, including Windows)**: Before every
+     render and at the top of each animation word, the current
+     terminal size is compared against the last known size. If
+     it changed, renders are suppressed and a debounced restart
+     is armed.
+
+  2. **SIGWINCH (POSIX only)**: On Linux/macOS, the SIGWINCH signal
+     handler provides immediate flag-setting. Not available on
+     Windows.
+
+  3. **Render suppression**: ``_refresh_display()`` returns early
+     while ``_restart_live_on_resize`` is True. The animation
+     loop continues to accumulate words in memory but produces
+     no visible output.
+
+  4. **Debounced restart**: Worker threads wait for a cooldown to
+     expire (user has stopped dragging), then stop the old Live
+     and create a fresh one with accurate geometry.
+
+  NO raw ANSI escape codes are used for screen clearing. This avoids
+  the ``[2J[H`` literal text problem on Windows terminals without
+  VT processing. Instead, Rich's own Live stop/start handles cleanup.
 """
 from aye.presenter.repl_ui import deep_ocean_theme
 
 import os
 import re
+import signal
+import sys
 import time
 import threading
 from typing import Optional, Callable, Tuple
 
 from rich import box
+from rich.box import Box
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -37,15 +72,26 @@ from rich.text import Text
 from rich.theme import Theme
 
 
-# Instead of manually trying to make the theme consistent I just directly used the theme from repl_ui.py
 _STREAMING_THEME = deep_ocean_theme
 
-# Regex to detect fenced code block markers (3+ backticks or tildes, optional leading whitespace)
+# Regex to detect fenced code block markers (3+ backticks or tildes)
 _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})", re.MULTILINE)
 
 # Truncation indicator shown at the top of tailed content
 _TRUNCATION_INDICATOR_TEXT = "  \u2191 \u00b7\u00b7\u00b7 (streaming)"
 _TRUNCATION_STYLE = "dim italic"
+
+# Custom box with only top and bottom borders (no left/right sides)
+_HORIZONTAL_ONLY_BOX = Box(
+    "\u2500\u2500\u2500\u2500\n"  # top: all horizontal lines (no corners)
+    "    \n"                    # head: spaces (no vertical borders)
+    "    \n"                    # head row separator: spaces
+    "    \n"                    # mid: spaces
+    "    \n"                    # row: spaces
+    "    \n"                    # foot row: spaces
+    "    \n"                    # foot: spaces
+    "\u2500\u2500\u2500\u2500"    # bottom: all horizontal lines (no corners)
+)
 
 
 def _get_env_float(env_var: str, default: float) -> float:
@@ -87,39 +133,31 @@ def _split_streaming_markdown(text: str) -> Tuple[str, str]:
     if not text:
         return ("", "")
 
-    # --- Step 1: Fence safety ---
     inside_fence = False
     last_open_fence_pos = 0
 
     for match in _FENCE_RE.finditer(text):
         if not inside_fence:
-            # Opening a fence
             inside_fence = True
             last_open_fence_pos = match.start()
         else:
-            # Closing a fence
             inside_fence = False
 
     if inside_fence:
-        # We are inside an unclosed fence \ cut right before it
         prefix = text[:last_open_fence_pos]
         tail = text[last_open_fence_pos:]
         return (prefix, tail)
 
-    # --- Step 2: Paragraph boundary ---
     last_blank_line = text.rfind("\n\n")
     if last_blank_line != -1:
-        # Cut after the blank line (include it in prefix)
         cut = last_blank_line + 2
         return (text[:cut], text[cut:])
 
-    # --- Step 3: Last newline ---
     last_newline = text.rfind("\n")
     if last_newline != -1:
         cut = last_newline + 1
         return (text[:cut], text[cut:])
 
-    # --- Step 4: No safe boundary \ everything is tail ---
     return ("", text)
 
 
@@ -143,10 +181,9 @@ def _tail_content(content: str, width: int, max_lines: int) -> Tuple[str, bool]:
 
     raw_lines = content.split("\n")
 
-    # Estimate the wrapped-line count for each raw line.
     def _wrapped_height(line: str) -> int:
         if not line:
-            return 1  # empty line still occupies one terminal row
+            return 1
         return max(1, -(-len(line) // width))  # ceiling division
 
     line_heights = [_wrapped_height(line) for line in raw_lines]
@@ -155,7 +192,6 @@ def _tail_content(content: str, width: int, max_lines: int) -> Tuple[str, bool]:
     if total_height <= max_lines:
         return (content, False)
 
-    # Accumulate from the end until we fill the budget.
     accumulated = 0
     start_index = len(raw_lines)
     for i in range(len(raw_lines) - 1, -1, -1):
@@ -164,7 +200,6 @@ def _tail_content(content: str, width: int, max_lines: int) -> Tuple[str, bool]:
         accumulated += line_heights[i]
         start_index = i
 
-    # Ensure at least the last raw line is included.
     if start_index >= len(raw_lines):
         start_index = len(raw_lines) - 1
 
@@ -190,7 +225,6 @@ def _render_streaming_markdown(
 
     parts = []
 
-    # Truncation indicator (shown when tailing has kicked in)
     if is_truncated:
         parts.append(Text(_TRUNCATION_INDICATOR_TEXT, style=_TRUNCATION_STYLE))
 
@@ -200,14 +234,12 @@ def _render_streaming_markdown(
     if tail:
         parts.append(Text(tail))
 
-    # Fallback: if content is non-empty but both parts are empty (shouldn't happen)
     if not parts and content:
         parts.append(Text(content))
 
     if show_stall_indicator:
         parts.append(Text("\n\u22ef waiting for more", style="ui.stall_spinner"))
 
-    # If there's only one part and no stall, return it directly (avoid Group overhead)
     if len(parts) == 1:
         return parts[0]
 
@@ -233,23 +265,19 @@ def _create_response_panel(
         is_truncated: If True, show a truncation indicator at the top of
                       the content (only relevant when *streaming* is True).
     """
-    # Decorative "sonar pulse" marker
     pulse = "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]\u25cf[/] [ui.response_symbol.waves]))[/]"
 
-    # A 2-column grid: marker + content
     grid = Table.grid(padding=(0, 1))
     grid.add_column()
     grid.add_column()
 
     if use_markdown and streaming and content:
-        # Streaming markdown: composite renderable handles stall indicator internally
         rendered_content = _render_streaming_markdown(
             content,
             show_stall_indicator=show_stall_indicator,
             is_truncated=is_truncated,
         )
     elif use_markdown and content:
-        # Final markdown render
         rendered_content = Markdown(content)
         if show_stall_indicator:
             rendered_content = Group(
@@ -263,11 +291,10 @@ def _create_response_panel(
 
     grid.add_row(pulse, rendered_content)
 
-    # Wrap in a rounded panel
     return Panel(
         grid,
         border_style="ui.border",
-        box=box.ROUNDED,
+        box=_HORIZONTAL_ONLY_BOX,
         padding=(0, 1),
         expand=True,
     )
@@ -286,34 +313,26 @@ class StreamingResponseDisplay:
         self._console = console or Console(theme=_STREAMING_THEME)
         self._live: Optional[Live] = None
 
-        self._current_content: str = ""  # Full content received so far
-        self._animated_content: str = ""  # Content that has been animated
+        self._current_content: str = ""
+        self._animated_content: str = ""
 
         self._started: bool = False
         self._first_content_received: bool = False
         self._on_first_content = on_first_content
 
-        # Configuration with env var fallbacks
         self._word_delay = word_delay if word_delay is not None else _get_env_float("AYE_STREAM_WORD_DELAY", 0.20)
         self._stall_threshold = (
             stall_threshold if stall_threshold is not None else _get_env_float("AYE_STREAM_STALL_THRESHOLD", 3.0)
         )
 
-        # Throttle: minimum interval between Markdown re-renders (seconds)
         self._min_render_interval = _get_env_float("AYE_STREAM_RENDER_INTERVAL", 0.08)
         self._last_render_time: float = 0.0
 
-        # Tailing configuration
         self._tail_enabled: bool = _get_env_bool("AYE_STREAM_TAIL", True)
 
-        # Synchronization: Live + internal state are touched by monitor thread
-        # and by whichever thread calls update(). We must serialize them.
+        # Main lock for all state access.
         self._lock = threading.RLock()
 
-        # Stall detection state
-        # NOTE: this must track *when we last received new content from the stream*,
-        # not when we last refreshed the UI. If we update this timestamp when we draw
-        # the stall indicator, the indicator will blink on/off.
         self._last_receive_time: float = 0.0
         self._is_animating: bool = False
         self._showing_stall_indicator: bool = False
@@ -321,35 +340,241 @@ class StreamingResponseDisplay:
         self._stall_monitor_thread: Optional[threading.Thread] = None
         self._stop_monitoring = threading.Event()
 
+        # -----------------------------------------------------------
+        # Resize handling \u2014 polling + SIGWINCH.
+        #
+        # Primary mechanism (ALL platforms, including Windows):
+        #   Before every render, compare the current terminal size
+        #   against stored geometry.  If it changed, suppress renders
+        #   and arm a debounced restart.
+        #
+        # Secondary mechanism (POSIX only):
+        #   SIGWINCH handler sets the flag and cooldown immediately.
+        #   Not available on Windows.
+        #
+        # NO raw ANSI escape codes are written.  This avoids the
+        # "[2J[H" literal text problem on Windows terminals without
+        # VT processing enabled.  Instead, the old Live is stopped
+        # (Rich handles its own terminal region cleanup) and a new
+        # Live is created with fresh geometry.
+        # -----------------------------------------------------------
+        self._resize_cooldown_until: float = 0.0
+        self._resize_cooldown_secs: float = _get_env_float("AYE_STREAM_RESIZE_COOLDOWN", 0.5)
+        self._restart_live_on_resize: bool = False
+        self._prev_sigwinch_handler = None
+
+        self._settle_delay_secs: float = _get_env_float("AYE_STREAM_SETTLE_DELAY", 0.05)
+
+        # Track terminal geometry for polling-based resize detection.
+        # Initialised to 0; set properly in start().
+        self._last_known_width: int = 0
+        self._last_known_height: int = 0
+
+    # ------------------------------------------------------------------
+    # Resize detection (polling \u2014 works on ALL platforms)
+    # ------------------------------------------------------------------
+
+    def _detect_resize(self) -> bool:
+        """Check if the terminal size has changed since the last check.
+
+        This is the **primary** resize detection mechanism and works on
+        all platforms including Windows (which lacks SIGWINCH).
+
+        When a resize is detected:
+        1. The restart flag is set and cooldown is armed.
+        2. The stored geometry is updated to the new size.
+
+        No screen clearing is done here \u2014 that is handled by the
+        Live stop/start cycle in ``_restart_live_for_resize()``.
+
+        Returns True if a resize was detected.
+        """
+        try:
+            current_width = self._console.size.width
+            current_height = self._console.size.height
+        except Exception:
+            return False
+
+        if (current_width == self._last_known_width
+                and current_height == self._last_known_height):
+            return False
+
+        # Geometry changed \u2014 terminal was resized.
+        self._last_known_width = current_width
+        self._last_known_height = current_height
+
+        # Arm the debounced restart.
+        self._resize_cooldown_until = time.time() + self._resize_cooldown_secs
+        self._restart_live_on_resize = True
+
+        return True
+
+    # ------------------------------------------------------------------
+    # SIGWINCH handling (POSIX only \u2014 fast path)
+    # ------------------------------------------------------------------
+
+    def _install_sigwinch_handler(self) -> None:
+        """Install our SIGWINCH handler after live.start().
+
+        On POSIX systems (Linux, macOS), SIGWINCH fires immediately
+        when the terminal resizes.  Our handler sets the restart flag
+        and extends the cooldown.
+
+        On Windows this is a no-op (SIGWINCH does not exist); the
+        polling-based ``_detect_resize()`` handles everything.
+        """
+        sigwinch = getattr(signal, "SIGWINCH", None)
+        if sigwinch is None:
+            return  # Windows \u2014 no SIGWINCH.
+
+        def _our_handler(signum, frame):
+            self._resize_cooldown_until = time.time() + self._resize_cooldown_secs
+            self._restart_live_on_resize = True
+
+        self._prev_sigwinch_handler = signal.signal(sigwinch, _our_handler)
+
+    def _restore_sigwinch_handler(self) -> None:
+        """Restore the SIGWINCH handler that was active before start()."""
+        sigwinch = getattr(signal, "SIGWINCH", None)
+        if sigwinch is None or self._prev_sigwinch_handler is None:
+            return
+        try:
+            signal.signal(sigwinch, self._prev_sigwinch_handler)
+        except Exception:
+            pass
+        self._prev_sigwinch_handler = None
+
+    # ------------------------------------------------------------------
+    # Debounced Live restart
+    # ------------------------------------------------------------------
+
+    def _restart_live_for_resize(self) -> None:
+        """Stop the current Live and start a fresh one.
+
+        Called from worker threads AFTER the resize cooldown has
+        expired.  Ensures:
+        1. The user has finished resizing.
+        2. We use the FINAL terminal dimensions.
+        3. Only ONE restart happens per resize operation.
+
+        No raw ANSI escape codes are written.  Rich's own
+        ``live.stop()`` handles clearing the Live region, and the
+        new ``live.start()`` renders fresh content at the correct
+        geometry.
+        """
+        with self._lock:
+            if not self._restart_live_on_resize:
+                return
+            self._restart_live_on_resize = False
+
+            live = self._live
+            if live is None:
+                return
+
+            content = self._animated_content
+
+            # Update stored geometry to the current (final) size.
+            try:
+                self._last_known_width = self._console.size.width
+                self._last_known_height = self._console.size.height
+            except Exception:
+                pass
+
+            # Stop the old Live.  Rich will handle clearing its own
+            # terminal region \u2014 no raw ANSI codes needed.
+            try:
+                live.update(Text(""))
+            except Exception:
+                pass
+            try:
+                live.stop()
+            except Exception:
+                pass
+
+            # Settle delay.
+            if self._settle_delay_secs > 0:
+                time.sleep(self._settle_delay_secs)
+
+            # Create a fresh Live with accurate geometry.
+            self._live = Live(
+                _create_response_panel("", use_markdown=False),
+                console=self._console,
+                auto_refresh=False,
+                vertical_overflow="visible",
+                transient=False,
+            )
+            self._live.start()
+
+            # Render current content into the new Live.
+            if content:
+                is_truncated = False
+                display_content = content
+                if self._tail_enabled:
+                    available = self._compute_available_lines(show_stall=False)
+                    inner_width = self._compute_inner_width()
+                    display_content, is_truncated = _tail_content(
+                        content, inner_width, available,
+                    )
+                    if is_truncated:
+                        display_content, _ = _tail_content(
+                            content, inner_width, available - 1,
+                        )
+
+                self._live.update(
+                    _create_response_panel(
+                        display_content,
+                        use_markdown=True,
+                        show_stall_indicator=False,
+                        streaming=True,
+                        is_truncated=is_truncated,
+                    )
+                )
+                self._live.refresh()
+
+            self._last_render_time = time.time()
+
+    def _handle_resize_if_needed(self) -> bool:
+        """Check for pending resize and handle it if cooldown has expired.
+
+        Also runs polling-based resize detection for platforms without
+        SIGWINCH (Windows).
+
+        Returns True if a resize was detected or processed.
+        """
+        # Polling-based detection \u2014 works on all platforms.
+        if self._detect_resize():
+            time.sleep(0.02)
+            return True
+
+        if not self._restart_live_on_resize:
+            return False
+
+        now = time.time()
+        if now < self._resize_cooldown_until:
+            time.sleep(0.02)
+            return True  # Still in cooldown \u2014 suppress but signal "busy"
+
+        # Cooldown expired \u2014 safe to restart.
+        self._restart_live_for_resize()
+        return True
+
     # ------------------------------------------------------------------
     # Tailing helpers
     # ------------------------------------------------------------------
 
     def _compute_available_lines(self, show_stall: bool) -> int:
-        """Return how many wrapped content lines fit in the terminal.
-
-        During streaming, prompt_toolkit is *not* active (no completion
-        menu), so we only need to account for panel chrome, the stall
-        indicator, and a small safety buffer.
-        """
+        """Return how many wrapped content lines fit in the terminal."""
         terminal_height = self._console.size.height
-        panel_chrome = 2   # top + bottom border
-        # "\n\u22ef waiting for more" occupies ~2 rows (blank line + text)
+        panel_chrome = 2
         stall_lines = 2 if show_stall else 0
-        buffer = 2         # safety margin for cursor / prompt restoration
+        buffer = 2
 
         available = terminal_height - panel_chrome - stall_lines - buffer
         return max(3, available)
 
     def _compute_inner_width(self) -> int:
-        """Return the usable content width inside the streaming panel.
-
-        Subtracts panel borders, padding, the grid gap, and the pulse
-        marker column from the terminal width.
-        """
+        """Return the usable content width inside the streaming panel."""
         terminal_width = self._console.size.width
-        # panel border (2) + panel padding h=1 each side (2)
-        # + grid gap (1) + pulse marker column (~7 visible chars)
         overhead = 12
         return max(20, terminal_width - overhead)
 
@@ -366,40 +591,43 @@ class StreamingResponseDisplay:
     ) -> None:
         """Refresh the live display with current animated content.
 
-        When streaming Markdown is active, refreshes are throttled to avoid
-        expensive re-parsing on every word. The throttle is bypassed when
-        ``force=True`` (used for stall-state transitions and final renders).
-
-        When tailing is enabled and *streaming* is True, only the last
-        visible portion of the content is rendered so the panel always
-        follows the bottom of the response.
+        Resize handling:
+            1. Runs ``_detect_resize()`` to catch geometry changes on
+               all platforms (including Windows which lacks SIGWINCH).
+            2. If ``_restart_live_on_resize`` is True, returns
+               immediately \u2014 no ``live.update()``, no ``live.refresh()``.
 
         Args:
             use_markdown: Render content as Markdown.
             show_stall: Show the stall indicator.
             streaming: Use composite streaming Markdown renderer.
-            force: Bypass the throttle (for state transitions / final).
+            force: Bypass the throttle.  Does NOT bypass resize check.
         """
         with self._lock:
             if not self._live:
                 return
 
-            # Throttle: skip render if too soon, unless forced
+            # \u2500\u2500 Polling-based resize detection \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            self._detect_resize()
+
+            # \u2500\u2500 Resize gate \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            if self._restart_live_on_resize:
+                return
+
             now = time.time()
+
+            # Throttle guard.
             if not force and (now - self._last_render_time) < self._min_render_interval:
                 return
 
             content = self._animated_content
             is_truncated = False
 
-            # --- Tailing logic (streaming only) ---
             if streaming and self._tail_enabled and content:
                 available = self._compute_available_lines(show_stall)
                 inner_width = self._compute_inner_width()
                 content, is_truncated = _tail_content(content, inner_width, available)
                 if is_truncated:
-                    # Re-tail with one fewer line to make room for the
-                    # truncation indicator.
                     content, _ = _tail_content(
                         self._animated_content, inner_width, available - 1,
                     )
@@ -413,6 +641,8 @@ class StreamingResponseDisplay:
                     is_truncated=is_truncated,
                 )
             )
+
+            self._live.refresh()
             self._last_render_time = now
             self._showing_stall_indicator = show_stall
 
@@ -421,14 +651,7 @@ class StreamingResponseDisplay:
     # ------------------------------------------------------------------
 
     def _render_final_and_stop(self) -> None:
-        """Clear Live, stop it, and print the full final panel to scrollback.
-
-        This avoids the "double output" problem: Live.stop() with
-        transient=False would freeze whatever was last rendered (possibly
-        a tailed/cropped view).  By clearing first and then printing the
-        full panel via console.print, the complete response ends up in
-        real terminal scrollback where the user can scroll through it.
-        """
+        """Clear Live, stop it, and print the full final panel to scrollback."""
         with self._lock:
             live = self._live
             final_content = self._animated_content
@@ -436,15 +659,18 @@ class StreamingResponseDisplay:
             if not live:
                 return
 
-            # Clear the Live region so stop() doesn't leave a stale frame.
-            # Text("") renders as effectively nothing.
-            live.update(Text(""))
-            live.stop()
+            self._restore_sigwinch_handler()
+
+            try:
+                live.update(Text(""))
+                live.refresh()
+                live.stop()
+            except Exception:
+                pass
+
             self._live = None
             self._started = False
 
-        # Print the full final response outside the lock (console.print
-        # is safe to call without holding our lock).
         if final_content:
             final_panel = _create_response_panel(
                 final_content,
@@ -455,7 +681,7 @@ class StreamingResponseDisplay:
             )
             self._console.print(final_panel)
 
-        self._console.print()  # spacing after panel
+        self._console.print()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -467,52 +693,58 @@ class StreamingResponseDisplay:
             if self._started:
                 return
 
-            self._console.print()  # spacing before panel
+            # Snapshot current geometry for polling-based detection.
+            try:
+                self._last_known_width = self._console.size.width
+                self._last_known_height = self._console.size.height
+            except Exception:
+                self._last_known_width = 80
+                self._last_known_height = 24
+
+            self._console.print()
             self._live = Live(
                 _create_response_panel("", use_markdown=False),
                 console=self._console,
-                refresh_per_second=30,
+                auto_refresh=False,
+                vertical_overflow="visible",
                 transient=False,
             )
             self._live.start()
             self._started = True
             self._last_receive_time = time.time()
 
-            # Start stall monitoring thread
+            self._install_sigwinch_handler()
+
             self._stop_monitoring.clear()
-            self._stall_monitor_thread = threading.Thread(target=self._monitor_stall, daemon=True)
+            self._stall_monitor_thread = threading.Thread(
+                target=self._monitor_stall, daemon=True,
+            )
             self._stall_monitor_thread.start()
 
     def _monitor_stall(self) -> None:
-        """Monitor for stalls.
-
-        A true stall is:
-        - we are not animating
-        - AND the animated output has caught up to the received content
-        - AND we have not received new stream content for >= stall_threshold
-
-        Important: do NOT use a timestamp that is updated when the stall indicator is rendered,
-        otherwise the stall indicator will blink (it resets its own timer).
-        """
+        """Monitor for stalls and handle resize restarts."""
         while not self._stop_monitoring.is_set():
-            if self._stop_monitoring.wait(0.5):
+            if self._stop_monitoring.wait(0.05):
                 break
+
+            # Handle pending resize if cooldown has expired.
+            if self._handle_resize_if_needed():
+                continue
 
             with self._lock:
                 if not self._started or not self._animated_content:
                     continue
 
-                caught_up = (not self._is_animating) and (self._animated_content == self._current_content)
+                caught_up = (
+                    (not self._is_animating)
+                    and (self._animated_content == self._current_content)
+                )
                 if not caught_up:
-                    # If we were showing stall but new content is now pending/animating,
-                    # the animation path will refresh with show_stall=False.
                     continue
 
                 time_since_receive = time.time() - self._last_receive_time
                 should_show_stall = time_since_receive >= self._stall_threshold
 
-                # Only redraw when the stall state changes \u2014 force-flush the throttle.
-                # Delegated to _refresh_display so tailing is applied consistently.
                 if should_show_stall != self._showing_stall_indicator:
                     self._refresh_display(
                         use_markdown=True,
@@ -536,15 +768,18 @@ class StreamingResponseDisplay:
             n = len(new_text)
 
             while i < n:
+                # Handle pending resize if cooldown has expired.
+                self._handle_resize_if_needed()
+
                 char = new_text[i]
 
                 if char in "\n\r":
                     with self._lock:
                         self._animated_content += char
                     i += 1
-                    # Newlines often complete a Markdown block \u2014 force render
                     self._refresh_display(
-                        use_markdown=True, show_stall=False, streaming=True, force=True,
+                        use_markdown=True, show_stall=False,
+                        streaming=True, force=True,
                     )
 
                 elif char in " \t":
@@ -554,7 +789,8 @@ class StreamingResponseDisplay:
                     with self._lock:
                         self._animated_content += new_text[ws_start:i]
                     self._refresh_display(
-                        use_markdown=True, show_stall=False, streaming=True,
+                        use_markdown=True, show_stall=False,
+                        streaming=True,
                     )
 
                 else:
@@ -564,7 +800,8 @@ class StreamingResponseDisplay:
                     with self._lock:
                         self._animated_content += new_text[word_start:i]
                     self._refresh_display(
-                        use_markdown=True, show_stall=False, streaming=True,
+                        use_markdown=True, show_stall=False,
+                        streaming=True,
                     )
 
                     if self._word_delay > 0:
@@ -587,32 +824,25 @@ class StreamingResponseDisplay:
             is_final: If True, stop animating and render final content immediately.
         """
         with self._lock:
-            # For finalization, we must still run even if content matches.
             if not is_final and content == self._current_content:
                 return
 
-            # This is the key timestamp for stall detection:
-            # it should only change when new stream content arrives.
             self._last_receive_time = time.time()
 
-            # Fire the on_first_content callback before starting the display
             if not self._first_content_received:
                 self._first_content_received = True
                 if self._on_first_content:
                     self._on_first_content()
 
-        # Auto-start if not started
         if not self._started:
             self.start()
 
         new_text = ""
 
-        # Decide how to update state under lock
         with self._lock:
             stall_was_showing = self._showing_stall_indicator
 
             if is_final:
-                # Immediately snap to the final content (no word-by-word delays).
                 self._current_content = content
                 self._animated_content = content
             else:
@@ -624,35 +854,22 @@ class StreamingResponseDisplay:
 
                 self._current_content = content
 
-        # --- Final render path ---
-        # Stop monitoring, clear Live, print full panel to scrollback.
         if is_final:
             self._stop_monitoring.set()
             self._render_final_and_stop()
             return
 
-        # --- Streaming render path ---
-
-        # If stall indicator is currently shown, hide it immediately.
-        # Force-flush so the change is visible without throttle delay.
         if stall_was_showing:
             self._refresh_display(
-                use_markdown=True, show_stall=False, streaming=True, force=True,
+                use_markdown=True, show_stall=False,
+                streaming=True, force=True,
             )
 
-        # Streaming render: animate only the delta.
         if new_text:
             self._animate_words(new_text)
 
     def stop(self) -> None:
-        """Stop the live display.
-
-        If ``update(is_final=True)`` was already called, Live is already
-        stopped and this method only cleans up the monitoring thread.
-        Otherwise it acts as a safety-net: clears Live, stops it, and
-        prints whatever content has been accumulated so far.
-        """
-        # Stop the monitoring thread
+        """Stop the live display."""
         self._stop_monitoring.set()
         if self._stall_monitor_thread and self._stall_monitor_thread.is_alive():
             self._stall_monitor_thread.join(timeout=1.0)
@@ -660,10 +877,8 @@ class StreamingResponseDisplay:
 
         with self._lock:
             if not self._live:
-                # Already stopped (e.g. by update(is_final=True)).
                 return
 
-        # Safety-net: render final output and stop Live.
         self._render_final_and_stop()
 
     def is_active(self) -> bool:
