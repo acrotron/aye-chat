@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import unittest
 from unittest.mock import MagicMock, patch, call, PropertyMock
@@ -102,6 +103,42 @@ class TestGetEnvBool(unittest.TestCase):
     def test_whitespace_stripped(self):
         with patch.dict(os.environ, {"B": "  yes  "}):
             self.assertTrue(streaming_ui._get_env_bool("B", False))
+
+
+class TestPlatformHelpers(unittest.TestCase):
+    def test_is_windows_true_on_win32(self):
+        with patch.object(streaming_ui.sys, 'platform', 'win32'):
+            self.assertTrue(streaming_ui._is_windows())
+
+    def test_is_windows_false_on_linux(self):
+        with patch.object(streaming_ui.sys, 'platform', 'linux'):
+            self.assertFalse(streaming_ui._is_windows())
+
+    def test_is_windows_false_on_darwin(self):
+        with patch.object(streaming_ui.sys, 'platform', 'darwin'):
+            self.assertFalse(streaming_ui._is_windows())
+
+    def test_windows_gets_faster_poll_interval(self):
+        with patch.object(streaming_ui.sys, 'platform', 'win32'):
+            interval = streaming_ui._get_poll_interval()
+            self.assertEqual(interval, streaming_ui._POLL_INTERVAL_WINDOWS)
+            self.assertLess(interval, streaming_ui._POLL_INTERVAL_UNIX)
+
+    def test_unix_gets_standard_poll_interval(self):
+        with patch.object(streaming_ui.sys, 'platform', 'linux'):
+            interval = streaming_ui._get_poll_interval()
+            self.assertEqual(interval, streaming_ui._POLL_INTERVAL_UNIX)
+
+    def test_windows_gets_fewer_ghost_clear_lines(self):
+        with patch.object(streaming_ui.sys, 'platform', 'win32'):
+            lines = streaming_ui._get_ghost_clear_lines()
+            self.assertEqual(lines, streaming_ui._GHOST_CLEAR_LINES_WINDOWS)
+            self.assertLess(lines, streaming_ui._GHOST_CLEAR_LINES_UNIX)
+
+    def test_unix_gets_more_ghost_clear_lines(self):
+        with patch.object(streaming_ui.sys, 'platform', 'linux'):
+            lines = streaming_ui._get_ghost_clear_lines()
+            self.assertEqual(lines, streaming_ui._GHOST_CLEAR_LINES_UNIX)
 
 
 # ------------------------------------------------------------------ #
@@ -359,10 +396,11 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.console = MagicMock()
         self.console.size.height = 40
         self.console.size.width = 120
+        # Mock the file attribute for ghost clearing
+        self.console.file = MagicMock()
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_update_autostarts_and_calls_on_first_content_once(self, mock_signal):
+    def test_update_autostarts_and_calls_on_first_content_once(self):
         seen = {"count": 0}
 
         def on_first():
@@ -394,8 +432,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertIn(("Hello world", True, True), events)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_update_same_content_is_noop(self, mock_signal):
+    def test_update_same_content_is_noop(self):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -411,8 +448,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             self.assertEqual(len(events), event_count_after_first)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_update_non_appended_content_resets_animation(self, mock_signal):
+    def test_update_non_appended_content_resets_animation(self):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -430,8 +466,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertIn(("New", True, True), events)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_stop_final_markdown_render_and_spacing_after(self, mock_signal):
+    def test_stop_final_markdown_render_and_spacing_after(self):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -449,8 +484,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertFalse(d.is_active())
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_context_manager_starts_and_stops(self, mock_signal):
+    def test_context_manager_starts_and_stops(self):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -511,8 +545,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertFalse(d.has_received_content())
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_has_received_content_true_after_update(self, mock_signal):
+    def test_has_received_content_true_after_update(self):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
@@ -524,8 +557,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertEqual(d.content, "")
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_content_property_after_update(self, mock_signal):
+    def test_content_property_after_update(self):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
@@ -537,8 +569,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertFalse(d.is_active())
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_start_is_idempotent(self, mock_signal):
+    def test_start_is_idempotent(self):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
             d = streaming_ui.StreamingResponseDisplay(console=self.console)
             d.start()
@@ -554,8 +585,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertFalse(d.is_active())
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_double_stop_is_safe(self, mock_signal):
+    def test_double_stop_is_safe(self):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
@@ -569,8 +599,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_update_is_final_stops_live_and_prints_full(self, mock_signal):
+    def test_update_is_final_stops_live_and_prints_full(self):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -589,8 +618,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertIn(("Final content", True, False), final_events)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_update_is_final_snaps_content(self, mock_signal):
+    def test_update_is_final_snaps_content(self):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
@@ -599,8 +627,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             self.assertEqual(d.content, "final!")
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_stop_after_is_final_is_safe(self, mock_signal):
+    def test_stop_after_is_final_is_safe(self):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
@@ -613,8 +640,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_animate_words_newline_forces_render(self, mock_signal):
+    def test_animate_words_newline_forces_render(self):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -631,8 +657,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertTrue(any("\n" in c for c in contents))
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_animate_words_tabs_handled(self, mock_signal):
+    def test_animate_words_tabs_handled(self):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -648,8 +673,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertEqual(d._animated_content, "a\tb")
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_animate_words_empty_new_text_is_noop(self, mock_signal):
+    def test_animate_words_empty_new_text_is_noop(self):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")), \
              patch.object(streaming_ui.time, "sleep"):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
@@ -658,9 +682,9 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d._stop_monitoring.set()
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_animate_words_returns_early_when_no_live(self):
+    def test_animate_words_returns_early_when_not_started(self):
         d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
-        d._live = None
+        # Not started, so _animate_words should return early
         d._animate_words("text")
         self.assertEqual(d._animated_content, "")
 
@@ -672,6 +696,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     def test_refresh_display_noop_when_no_live(self):
         d = streaming_ui.StreamingResponseDisplay(console=self.console)
         d._live = None
+        d._resize_in_progress = False
         d._refresh_display()
 
     @patch.object(streaming_ui, "Live", FakeLive)
@@ -704,8 +729,8 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_width_change_suppresses_refresh(self):
-        """When terminal width changes, refresh is suppressed."""
+    def test_width_change_triggers_resize_handling(self):
+        """When terminal width changes, resize handling is triggered."""
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
             d._live = FakeLive(Text(""))
@@ -713,19 +738,21 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d._min_render_interval = 0
             d._last_known_width = 120
             d._last_known_height = 40
+            d._resize_in_progress = False
 
             # Simulate terminal width change (narrowing)
             self.console.size.width = 80
 
-            d._refresh_display(use_markdown=True, streaming=True, force=True)
+            # Mock time.sleep to avoid actual delay
+            with patch.object(streaming_ui.time, "sleep"):
+                d._refresh_display(use_markdown=True, streaming=True, force=True)
 
-            # No output should have been committed to Live
-            self.assertEqual(len(d._live.updates), 0)
-            self.assertEqual(d._live.refreshes, 0)
-            # Restart flag should be set
-            self.assertTrue(d._restart_live_on_resize)
+            # Resize should have been detected and handled
+            self.assertTrue(d._resize_in_progress)
             # Width should be updated
             self.assertEqual(d._last_known_width, 80)
+            # Live should be None after resize handling
+            self.assertIsNone(d._live)
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_same_width_allows_refresh(self):
@@ -737,6 +764,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d._min_render_interval = 0
             d._last_known_width = 120  # Same as console mock
             d._last_known_height = 40  # Same as console mock
+            d._resize_in_progress = False
 
             d._refresh_display(use_markdown=True, streaming=True, force=True)
 
@@ -753,7 +781,6 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         result = d._detect_resize()
 
         self.assertTrue(result)
-        self.assertTrue(d._restart_live_on_resize)
         self.assertEqual(d._last_known_width, 80)
 
     @patch.object(streaming_ui, "Live", FakeLive)
@@ -766,7 +793,6 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         result = d._detect_resize()
 
         self.assertFalse(result)
-        self.assertFalse(d._restart_live_on_resize)
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_height_change_also_triggers_resize(self):
@@ -779,12 +805,11 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         result = d._detect_resize()
 
         self.assertTrue(result)
-        self.assertTrue(d._restart_live_on_resize)
         self.assertEqual(d._last_known_height, 30)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    def test_restart_flag_suppresses_all_renders(self):
-        """When restart flag is set, no renders happen."""
+    def test_resize_in_progress_suppresses_all_renders(self):
+        """When resize is in progress, no renders happen."""
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
             d._live = FakeLive(Text(""))
@@ -793,30 +818,86 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d._last_known_width = 120
             d._last_known_height = 40
 
-            # Manually set the restart flag
-            d._restart_live_on_resize = True
+            # Manually set the resize in progress flag
+            d._resize_in_progress = True
+            d._resize_cooldown_until = time.time() + 10  # Far in the future
 
             d._refresh_display(use_markdown=True, streaming=True, force=True)
 
+            # No updates should have been made to Live
             self.assertEqual(len(d._live.updates), 0)
             self.assertEqual(d._live.refreshes, 0)
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_resize_cooldown_expires_allows_refresh(self):
-        """After cooldown expires and restart completes, refresh works."""
+        """After cooldown expires, refresh works."""
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
             d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
-            d._live = FakeLive(Text(""))
             d._animated_content = "test"
             d._min_render_interval = 0
             d._last_known_width = 120
             d._last_known_height = 40
+            d._started = True
 
-            d._resize_cooldown_until = time.time() - 1
+            # Resize was in progress but cooldown has expired
+            d._resize_in_progress = True
+            d._resize_cooldown_until = time.time() - 1  # In the past
+            d._live = None  # Live was stopped during resize
 
             d._refresh_display(use_markdown=True, streaming=True, force=True)
 
+            # After cooldown, a new Live should be created and refreshed
+            self.assertIsNotNone(d._live)
+            self.assertFalse(d._resize_in_progress)
             self.assertGreater(d._live.refreshes, 0)
+
+    # -------------------------------------------------- #
+    # Pre/Post dimension check
+    # -------------------------------------------------- #
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_dimension_change_during_panel_build_triggers_resize(self):
+        """If dimensions change between pre and post check, resize is triggered."""
+        call_count = [0]
+        
+        def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
+            call_count[0] += 1
+            # Simulate resize happening during panel creation
+            if call_count[0] == 1:
+                # Change dimensions after first call (initial panel)
+                pass
+            elif call_count[0] == 2:
+                # This is when we're building the streaming panel - simulate resize
+                self.console.size.width = 80  # Was 120
+            return Text(content)
+
+        with patch.object(streaming_ui, "_create_response_panel", side_effect=fake_panel), \
+             patch.object(streaming_ui.time, "sleep"):
+            d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+            d._min_render_interval = 0
+            d._last_known_width = 120
+            d._last_known_height = 40
+            d._resize_in_progress = False
+            d._live = FakeLive(Text(""))
+            d._animated_content = "test"
+
+            d._refresh_display(use_markdown=True, streaming=True, force=True)
+
+            # Should have detected resize via post-build check
+            self.assertTrue(d._resize_in_progress)
+            self.assertIsNone(d._live)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_get_current_dimensions_returns_fresh_values(self):
+        """_get_current_dimensions returns current console size."""
+        d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+        
+        self.console.size.width = 100
+        self.console.size.height = 50
+        
+        dims = d._get_current_dimensions()
+        
+        self.assertEqual(dims, (100, 50))
 
     # -------------------------------------------------- #
     # Tailing during streaming
@@ -844,6 +925,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d._animated_content = long_content
             d._last_known_width = 80
             d._last_known_height = 10
+            d._resize_in_progress = False
 
             d._refresh_display(use_markdown=True, streaming=True, force=True)
 
@@ -873,6 +955,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d._animated_content = long_content
             d._last_known_width = 80
             d._last_known_height = 10
+            d._resize_in_progress = False
 
             d._refresh_display(use_markdown=True, streaming=True, force=True)
 
@@ -924,8 +1007,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.console.print.assert_not_called()
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_render_final_and_stop_with_empty_content(self, mock_signal):
+    def test_render_final_and_stop_with_empty_content(self):
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
             d = streaming_ui.StreamingResponseDisplay(console=self.console)
             d.start()
@@ -940,8 +1022,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_monitor_stall_detects_stall(self, mock_signal):
+    def test_monitor_stall_detects_stall(self):
         refresh_calls = []
 
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
@@ -974,8 +1055,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertTrue(len(stall_refreshes) > 0)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_monitor_stall_skips_when_animating(self, mock_signal):
+    def test_monitor_stall_skips_when_animating(self):
         refresh_calls = []
 
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
@@ -1002,8 +1082,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertEqual(len(stall_refreshes), 0)
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_monitor_stall_skips_when_no_content(self, mock_signal):
+    def test_monitor_stall_skips_when_no_content(self):
         refresh_calls = []
 
         with patch.object(streaming_ui, "_create_response_panel", return_value=Text("")):
@@ -1031,8 +1110,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_stall_indicator_hidden_on_new_content(self, mock_signal):
+    def test_stall_indicator_hidden_on_new_content(self):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -1062,8 +1140,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_word_delay_causes_sleep(self, mock_signal):
+    def test_word_delay_causes_sleep(self):
         sleep_calls = []
 
         def capture_sleep(duration):
@@ -1086,8 +1163,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_carriage_return_handled(self, mock_signal):
+    def test_carriage_return_handled(self):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -1107,8 +1183,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
     # -------------------------------------------------- #
 
     @patch.object(streaming_ui, "Live", FakeLive)
-    @patch.object(streaming_ui.signal, "signal", return_value=None)
-    def test_multiple_spaces_grouped(self, mock_signal):
+    def test_multiple_spaces_grouped(self):
         events = []
 
         def fake_panel(content, use_markdown=True, show_stall_indicator=False, streaming=False, is_truncated=False):
@@ -1125,6 +1200,116 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         self.assertIn("a", events)
         self.assertIn("a   ", events)
         self.assertIn("a   b", events)
+
+    # -------------------------------------------------- #
+    # Ghost clearing - platform-specific behavior
+    # -------------------------------------------------- #
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_clear_potential_ghosts_writes_ansi_codes(self):
+        """Test that ghost clearing writes ANSI escape codes."""
+        d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+        
+        d._clear_potential_ghosts()
+        
+        # Should have written to console.file
+        self.assertTrue(self.console.file.write.called)
+        self.assertTrue(self.console.file.flush.called)
+        
+        # Check that some ANSI codes were written
+        all_writes = [str(call[0][0]) for call in self.console.file.write.call_args_list]
+        combined = "".join(all_writes)
+        # Should contain cursor movement and clear codes
+        self.assertIn("\033[", combined)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_handle_resize_start_calls_clear_ghosts_only_when_live_exists(self):
+        """Test that _handle_resize_start only clears ghosts when there was a Live."""
+        with patch.object(streaming_ui.time, "sleep"):
+            d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+            d._live = None  # No live instance
+            d._last_known_width = 120
+            d._last_known_height = 40
+            
+            # Reset the mock to clear any previous calls
+            self.console.file.write.reset_mock()
+            
+            d._handle_resize_start()
+        
+        # Should NOT have called ghost clearing since there was no Live
+        self.assertFalse(self.console.file.write.called)
+        # But resize should still be in progress
+        self.assertTrue(d._resize_in_progress)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_handle_resize_start_clears_ghosts_when_live_exists(self):
+        """Test that _handle_resize_start clears ghosts when Live exists."""
+        write_calls = []
+        
+        def capture_write(data):
+            write_calls.append(data)
+        
+        self.console.file.write = capture_write
+        
+        with patch.object(streaming_ui.time, "sleep"):
+            d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+            d._live = FakeLive(Text(""))  # Has live instance
+            d._last_known_width = 120
+            d._last_known_height = 40
+            
+            d._handle_resize_start()
+        
+        # Should have called ghost clearing (wrote ANSI codes)
+        self.assertTrue(len(write_calls) > 0)
+        combined = "".join(write_calls)
+        self.assertIn("\033[", combined)
+        
+        # Live should be None
+        self.assertIsNone(d._live)
+        # Resize should be in progress
+        self.assertTrue(d._resize_in_progress)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_windows_uses_fewer_ghost_clear_lines(self):
+        """Test that Windows clears fewer lines than Unix."""
+        with patch.object(streaming_ui.sys, 'platform', 'win32'):
+            d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+            
+            write_calls = []
+            def capture_write(data):
+                write_calls.append(data)
+            self.console.file.write = capture_write
+            
+            d._clear_potential_ghosts()
+            
+            # Count cursor-up commands (\033[A) to verify fewer lines cleared
+            combined = "".join(write_calls)
+            up_commands = combined.count("\033[A")
+            
+            # Should be _GHOST_CLEAR_LINES_WINDOWS or less
+            self.assertLessEqual(up_commands, streaming_ui._GHOST_CLEAR_LINES_WINDOWS)
+
+    @patch.object(streaming_ui, "Live", FakeLive)
+    def test_windows_minimal_cursor_repositioning(self):
+        """Test that Windows moves cursor down minimally after clearing."""
+        with patch.object(streaming_ui.sys, 'platform', 'win32'):
+            d = streaming_ui.StreamingResponseDisplay(console=self.console, word_delay=0)
+            
+            write_calls = []
+            def capture_write(data):
+                write_calls.append(data)
+            self.console.file.write = capture_write
+            
+            d._clear_potential_ghosts()
+            
+            combined = "".join(write_calls)
+            up_commands = combined.count("\033[A")
+            down_commands = combined.count("\033[B")
+            
+            # Windows should move down very little (1-2 lines max)
+            self.assertLessEqual(down_commands, 2)
+            # And significantly less than the number of up commands
+            self.assertLess(down_commands, up_commands)
 
 
 if __name__ == "__main__":
