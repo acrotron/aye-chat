@@ -478,3 +478,78 @@ class TestSnapshot(TestCase):
         # Restore and verify original content is recovered
         snapshot.restore_snapshot(ordinal="001")
         self.assertEqual(ignored_file.read_text(), original_content)
+
+    def test_apply_updates_with_root_resolves_relative_paths(self):
+        """apply_updates with root resolves relative paths against it."""
+        root = Path(self.tmpdir.name) / "project"
+        root.mkdir()
+        existing = root / "main.py"
+        existing.write_text("old code")
+
+        updated_files = [
+            {"file_name": "main.py", "file_content": "new code"}
+        ]
+
+        with patch('aye.model.snapshot._get_next_ordinal', return_value=1):
+            batch_ts = snapshot.apply_updates(updated_files, prompt="update", root=root)
+
+        # File written under root, not CWD
+        self.assertEqual(existing.read_text(), "new code")
+        self.assertTrue(batch_ts.startswith("001_"))
+
+        # Snapshot was created and restore works
+        snapshot.restore_snapshot(ordinal="001")
+        self.assertEqual(existing.read_text(), "old code")
+
+    def test_apply_updates_with_root_creates_subdirectories(self):
+        """apply_updates with root creates parent dirs for nested relative paths."""
+        root = Path(self.tmpdir.name) / "project"
+        root.mkdir()
+
+        updated_files = [
+            {"file_name": "src/utils/helper.py", "file_content": "def helper(): pass"}
+        ]
+
+        with patch('aye.model.snapshot._get_next_ordinal', return_value=1):
+            snapshot.apply_updates(updated_files, prompt="new file", root=root)
+
+        created = root / "src" / "utils" / "helper.py"
+        self.assertTrue(created.exists())
+        self.assertEqual(created.read_text(), "def helper(): pass")
+
+    def test_apply_updates_with_root_absolute_paths_ignore_root(self):
+        """Absolute paths in updated_files are not resolved against root."""
+        root = Path(self.tmpdir.name) / "project"
+        root.mkdir()
+        abs_file = Path(self.tmpdir.name) / "absolute.txt"
+        abs_file.write_text("original")
+
+        updated_files = [
+            {"file_name": str(abs_file), "file_content": "updated"}
+        ]
+
+        with patch('aye.model.snapshot._get_next_ordinal', return_value=1):
+            snapshot.apply_updates(updated_files, prompt="abs update", root=root)
+
+        # Written to the absolute path, not root / abs_path
+        self.assertEqual(abs_file.read_text(), "updated")
+
+    def test_apply_updates_with_root_skips_incomplete_items(self):
+        """Items missing file_name or file_content are skipped."""
+        root = Path(self.tmpdir.name) / "project"
+        root.mkdir()
+        valid = root / "valid.py"
+        valid.write_text("old")
+
+        updated_files = [
+            {"file_name": "valid.py", "file_content": "new"},
+            {"file_name": "no_content.py"},  # Missing file_content
+            {"file_content": "no_name"},      # Missing file_name
+        ]
+
+        with patch('aye.model.snapshot._get_next_ordinal', return_value=1):
+            snapshot.apply_updates(updated_files, prompt="partial", root=root)
+
+        self.assertEqual(valid.read_text(), "new")
+        # Incomplete items not written
+        self.assertFalse((root / "no_content.py").exists())

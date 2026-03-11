@@ -1,9 +1,13 @@
 """State management classes for IndexManager.
 
 This module contains:
+- StatusFlags: Boolean status flags for indexing operations
+- WorkQueues: Files queued for indexing operations
+- IndexData: On-disk index data
+- ProgressCounters: Progress counters for each phase
 - IndexConfig: Configuration dataclass
 - SafeState: Thread-safe state container
-- IndexingState: All indexing state in one place
+- IndexingState: Composed state from focused dataclasses (backward compatible)
 - ProgressTracker: Progress display abstraction
 - InitializationCoordinator: Initialization logic
 - ErrorHandler: Centralized error handling
@@ -108,23 +112,65 @@ class SafeState:
 
 
 # =============================================================================
-# Indexing State
+# Focused State Components (ISP-compliant)
 # =============================================================================
 
 @dataclass
-class IndexingState:
-    """
-    Consolidated state for all indexing operations.
+class StatusFlags:
+    """Boolean status flags for indexing operations.
     
-    Replaces multiple individual instance variables with a single state object.
+    Consumers that only need to check or set indexing status
+    can depend on this focused interface instead of the full IndexingState.
     """
-    # Status flags
     is_indexing: bool = False
     is_refining: bool = False
     is_discovering: bool = False
     shutdown_requested: bool = False
     
-    # Progress counters
+    def is_active(self) -> bool:
+        """Check if any background work is in progress."""
+        return self.is_indexing or self.is_refining or self.is_discovering
+
+
+@dataclass
+class WorkQueues:
+    """Files queued for indexing operations.
+    
+    Manages the lists of files that need coarse indexing or refinement,
+    plus the target index built during categorization.
+    """
+    files_to_coarse_index: List[str] = field(default_factory=list)
+    files_to_refine: List[str] = field(default_factory=list)
+    target_index: Dict[str, Any] = field(default_factory=dict)
+    
+    def has_work(self) -> bool:
+        """Check if there's indexing work to do."""
+        return bool(self.files_to_coarse_index or self.files_to_refine)
+    
+    def clear(self) -> None:
+        """Clear all work queues and target index."""
+        self.files_to_coarse_index = []
+        self.files_to_refine = []
+        self.target_index = {}
+
+
+@dataclass
+class IndexData:
+    """On-disk index data.
+    
+    Tracks the current state of the file hash index as persisted to disk.
+    Used by PhaseExecutor to update index entries after processing files.
+    """
+    current_index_on_disk: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ProgressCounters:
+    """Progress counters for each indexing phase.
+    
+    Tracks total and processed counts for coarse indexing,
+    refinement, and file discovery phases.
+    """
     coarse_total: int = 0
     coarse_processed: int = 0
     refine_total: int = 0
@@ -132,50 +178,208 @@ class IndexingState:
     discovery_total: int = 0
     discovery_processed: int = 0
     
-    # Generation counter for invalidating old runs
-    generation: int = 0
-    
-    # Work queues
-    files_to_coarse_index: List[str] = field(default_factory=list)
-    files_to_refine: List[str] = field(default_factory=list)
-    
-    # Index data
-    target_index: Dict[str, Any] = field(default_factory=dict)
-    current_index_on_disk: Dict[str, Any] = field(default_factory=dict)
-    
-    def reset_coarse_progress(self, total: int) -> None:
+    def reset_coarse(self, total: int) -> None:
         """Reset coarse indexing progress."""
         self.coarse_total = total
         self.coarse_processed = 0
     
-    def reset_refine_progress(self, total: int) -> None:
+    def reset_refine(self, total: int) -> None:
         """Reset refinement progress."""
         self.refine_total = total
         self.refine_processed = 0
     
-    def reset_discovery_progress(self) -> None:
+    def reset_discovery(self) -> None:
         """Reset discovery progress."""
         self.discovery_total = 0
         self.discovery_processed = 0
+
+
+# =============================================================================
+# Composed Indexing State (backward compatible)
+# =============================================================================
+
+class IndexingState:
+    """Consolidated state for all indexing operations.
+    
+    Composes from focused dataclasses (StatusFlags, WorkQueues, IndexData,
+    ProgressCounters) while maintaining full backward compatibility via
+    properties. Existing code that accesses ``state.is_indexing`` or
+    ``state.files_to_coarse_index`` continues to work unchanged.
+    
+    New code can access the focused components directly:
+    - ``state.status`` -> StatusFlags
+    - ``state.work`` -> WorkQueues  
+    - ``state.data`` -> IndexData
+    - ``state.counters`` -> ProgressCounters
+    """
+    
+    def __init__(self):
+        self.status = StatusFlags()
+        self.work = WorkQueues()
+        self.data = IndexData()
+        self.counters = ProgressCounters()
+        self._generation: int = 0
+    
+    # ----- StatusFlags properties (backward compat) -----
+    
+    @property
+    def is_indexing(self) -> bool:
+        return self.status.is_indexing
+    
+    @is_indexing.setter
+    def is_indexing(self, value: bool) -> None:
+        self.status.is_indexing = value
+    
+    @property
+    def is_refining(self) -> bool:
+        return self.status.is_refining
+    
+    @is_refining.setter
+    def is_refining(self, value: bool) -> None:
+        self.status.is_refining = value
+    
+    @property
+    def is_discovering(self) -> bool:
+        return self.status.is_discovering
+    
+    @is_discovering.setter
+    def is_discovering(self, value: bool) -> None:
+        self.status.is_discovering = value
+    
+    @property
+    def shutdown_requested(self) -> bool:
+        return self.status.shutdown_requested
+    
+    @shutdown_requested.setter
+    def shutdown_requested(self, value: bool) -> None:
+        self.status.shutdown_requested = value
+    
+    # ----- WorkQueues properties (backward compat) -----
+    
+    @property
+    def files_to_coarse_index(self) -> List[str]:
+        return self.work.files_to_coarse_index
+    
+    @files_to_coarse_index.setter
+    def files_to_coarse_index(self, value: List[str]) -> None:
+        self.work.files_to_coarse_index = value
+    
+    @property
+    def files_to_refine(self) -> List[str]:
+        return self.work.files_to_refine
+    
+    @files_to_refine.setter
+    def files_to_refine(self, value: List[str]) -> None:
+        self.work.files_to_refine = value
+    
+    @property
+    def target_index(self) -> Dict[str, Any]:
+        return self.work.target_index
+    
+    @target_index.setter
+    def target_index(self, value: Dict[str, Any]) -> None:
+        self.work.target_index = value
+    
+    # ----- IndexData properties (backward compat) -----
+    
+    @property
+    def current_index_on_disk(self) -> Dict[str, Any]:
+        return self.data.current_index_on_disk
+    
+    @current_index_on_disk.setter
+    def current_index_on_disk(self, value: Dict[str, Any]) -> None:
+        self.data.current_index_on_disk = value
+    
+    # ----- ProgressCounters properties (backward compat) -----
+    
+    @property
+    def coarse_total(self) -> int:
+        return self.counters.coarse_total
+    
+    @coarse_total.setter
+    def coarse_total(self, value: int) -> None:
+        self.counters.coarse_total = value
+    
+    @property
+    def coarse_processed(self) -> int:
+        return self.counters.coarse_processed
+    
+    @coarse_processed.setter
+    def coarse_processed(self, value: int) -> None:
+        self.counters.coarse_processed = value
+    
+    @property
+    def refine_total(self) -> int:
+        return self.counters.refine_total
+    
+    @refine_total.setter
+    def refine_total(self, value: int) -> None:
+        self.counters.refine_total = value
+    
+    @property
+    def refine_processed(self) -> int:
+        return self.counters.refine_processed
+    
+    @refine_processed.setter
+    def refine_processed(self, value: int) -> None:
+        self.counters.refine_processed = value
+    
+    @property
+    def discovery_total(self) -> int:
+        return self.counters.discovery_total
+    
+    @discovery_total.setter
+    def discovery_total(self, value: int) -> None:
+        self.counters.discovery_total = value
+    
+    @property
+    def discovery_processed(self) -> int:
+        return self.counters.discovery_processed
+    
+    @discovery_processed.setter
+    def discovery_processed(self, value: int) -> None:
+        self.counters.discovery_processed = value
+    
+    # ----- Generation (standalone) -----
+    
+    @property
+    def generation(self) -> int:
+        return self._generation
+    
+    @generation.setter
+    def generation(self, value: int) -> None:
+        self._generation = value
+    
+    # ----- Delegating methods (backward compat) -----
+    
+    def reset_coarse_progress(self, total: int) -> None:
+        """Reset coarse indexing progress."""
+        self.counters.reset_coarse(total)
+    
+    def reset_refine_progress(self, total: int) -> None:
+        """Reset refinement progress."""
+        self.counters.reset_refine(total)
+    
+    def reset_discovery_progress(self) -> None:
+        """Reset discovery progress."""
+        self.counters.reset_discovery()
     
     def increment_generation(self) -> int:
         """Increment and return the new generation."""
-        self.generation += 1
-        return self.generation
+        self._generation += 1
+        return self._generation
     
     def has_work(self) -> bool:
         """Check if there's indexing work to do."""
-        return bool(self.files_to_coarse_index or self.files_to_refine)
+        return self.work.has_work()
     
     def is_active(self) -> bool:
         """Check if any background work is in progress."""
-        return self.is_indexing or self.is_refining or self.is_discovering
+        return self.status.is_active()
     
     def clear_work_queues(self) -> None:
         """Clear all work queues."""
-        self.files_to_coarse_index = []
-        self.files_to_refine = []
-        self.target_index = {}
+        self.work.clear()
 
 
 # =============================================================================

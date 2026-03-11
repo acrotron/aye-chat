@@ -1,10 +1,15 @@
+"""LLM response handling - processing and applying LLM responses."""
+
+import traceback
 from pathlib import Path
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Dict
 
 from rich import print as rprint
 from rich.console import Console
 from rich.padding import Padding
 
+from aye.model.auth import get_user_config
+from aye.presenter.diff_presenter import show_diff
 from aye.presenter.repl_ui import (
     print_assistant_response,
     print_no_files_changed,
@@ -14,16 +19,14 @@ from aye.presenter.repl_ui import (
 )
 from aye.presenter import diff_presenter
 from aye.model.snapshot import apply_updates, get_diff_base_for_file
-from aye.model.file_processor import filter_unchanged_files, make_paths_relative
+from aye.model.file_processor import make_paths_relative, filter_unchanged_files
 from aye.model.models import LLMResponse
-from aye.model.auth import get_user_config
 from aye.model.autodiff_config import is_autodiff_enabled
 from aye.model.write_validator import (
     check_files_against_ignore_patterns,
     is_strict_mode_enabled,
     format_ignored_files_warning,
 )
-
 
 _HAS_USED_RESTORE_KEY = "has_used_restore"
 
@@ -88,7 +91,7 @@ def process_llm_response(
     conf: Any,
     console: Console,
     prompt: str,
-    chat_id_file: Optional[Path] = None
+    chat_id_file: Optional[Path] = None,
 ) -> Optional[int]:
     """Unified handler for LLM responses from any source (API or local model)."""
     new_chat_id = None
@@ -110,7 +113,7 @@ def process_llm_response(
 
     updated_files = filter_unchanged_files(updated_files)
     updated_files = make_paths_relative(updated_files, conf.root)
-
+    
     if not updated_files:
         print_no_files_changed(console)
     else:
@@ -139,7 +142,6 @@ def process_llm_response(
 
                     if is_autodiff_enabled():
                         _run_autodiff(updated_files, batch_id, conf, console)
-
             except Exception as e:
                 rprint(f"[red]Error applying updates:[/] {e}")
 
