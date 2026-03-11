@@ -2,7 +2,7 @@
 import io
 import sys
 from unittest import TestCase
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 
 from aye.model import version_checker
 
@@ -104,6 +104,123 @@ class TestVersionChecker(TestCase):
             result = version_checker.get_latest_stable_version_info()
             self.assertIsNone(result)
 
+    # --- get_github_release_title tests ---
+
+    def test_get_github_release_title_success(self):
+        """Test fetching release title from GitHub successfully."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "name": "Feature Bonanza",
+            "tag_name": "v0.27.0",
+        }
+
+        with patch("aye.model.version_checker.httpx.get") as mock_get:
+            mock_get.return_value = mock_response
+            result = version_checker.get_github_release_title("0.27.0")
+
+            self.assertEqual(result, "Feature Bonanza")
+            mock_get.assert_called_once()
+            call_args = mock_get.call_args
+            self.assertIn("v0.27.0", call_args[0][0])
+            self.assertIn("api.github.com", call_args[0][0])
+
+    def test_get_github_release_title_constructs_correct_url(self):
+        """Test that the correct GitHub API URL is constructed with v-prefix tag."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"name": "Some Release"}
+
+        with patch("aye.model.version_checker.httpx.get") as mock_get:
+            mock_get.return_value = mock_response
+            version_checker.get_github_release_title("1.2.3")
+
+            expected_url = "https://api.github.com/repos/acrotron/aye-chat/releases/tags/v1.2.3"
+            mock_get.assert_called_once()
+            self.assertEqual(mock_get.call_args[0][0], expected_url)
+
+    def test_get_github_release_title_sends_accept_header(self):
+        """Test that the GitHub JSON accept header is sent."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"name": "Release"}
+
+        with patch("aye.model.version_checker.httpx.get") as mock_get:
+            mock_get.return_value = mock_response
+            version_checker.get_github_release_title("0.27.0")
+
+            call_kwargs = mock_get.call_args[1]
+            self.assertIn("headers", call_kwargs)
+            self.assertEqual(
+                call_kwargs["headers"]["Accept"],
+                "application/vnd.github+json",
+            )
+
+    def test_get_github_release_title_missing_name(self):
+        """Test returns None when response has no name field."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "tag_name": "v0.27.0",
+        }
+
+        with patch("aye.model.version_checker.httpx.get") as mock_get:
+            mock_get.return_value = mock_response
+            result = version_checker.get_github_release_title("0.27.0")
+            self.assertIsNone(result)
+
+    def test_get_github_release_title_empty_name(self):
+        """Test returns None when release name is an empty string."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "name": "",
+            "tag_name": "v0.27.0",
+        }
+
+        with patch("aye.model.version_checker.httpx.get") as mock_get:
+            mock_get.return_value = mock_response
+            result = version_checker.get_github_release_title("0.27.0")
+            self.assertIsNone(result)
+
+    def test_get_github_release_title_name_is_none(self):
+        """Test returns None when release name is explicitly None."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "name": None,
+            "tag_name": "v0.27.0",
+        }
+
+        with patch("aye.model.version_checker.httpx.get") as mock_get:
+            mock_get.return_value = mock_response
+            result = version_checker.get_github_release_title("0.27.0")
+            self.assertIsNone(result)
+
+    def test_get_github_release_title_network_failure(self):
+        """Test graceful failure when GitHub request fails."""
+        with patch("aye.model.version_checker.httpx.get") as mock_get:
+            mock_get.side_effect = Exception("Network error")
+            result = version_checker.get_github_release_title("0.27.0")
+            self.assertIsNone(result)
+
+    def test_get_github_release_title_timeout(self):
+        """Test graceful failure on timeout."""
+        with patch("aye.model.version_checker.httpx.get") as mock_get:
+            import httpx
+            mock_get.side_effect = httpx.TimeoutException("Timeout")
+            result = version_checker.get_github_release_title("0.27.0")
+            self.assertIsNone(result)
+
+    def test_get_github_release_title_http_error(self):
+        """Test graceful failure on HTTP error (e.g. 404 for missing tag)."""
+        mock_response = MagicMock()
+        import httpx
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "Not Found", request=MagicMock(), response=MagicMock()
+        )
+
+        with patch("aye.model.version_checker.httpx.get") as mock_get:
+            mock_get.return_value = mock_response
+            result = version_checker.get_github_release_title("99.99.99")
+            self.assertIsNone(result)
+
+    # --- is_newer_version_available tests ---
+
     def test_is_newer_version_available_true(self):
         """Test detection when newer version is available."""
         with patch("aye.model.version_checker.get_current_version") as mock_current, \
@@ -173,6 +290,8 @@ class TestVersionChecker(TestCase):
             self.assertEqual(latest, "0.26.0")
             self.assertEqual(current, "0.26.0")
 
+    # --- _parse_python_version_max tests ---
+
     def test_parse_python_version_max_exclusive_upper_bound(self):
         """Test parsing exclusive upper bound like <3.14."""
         result = version_checker._parse_python_version_max(">=3.8, <3.14")
@@ -193,81 +312,99 @@ class TestVersionChecker(TestCase):
         result = version_checker._parse_python_version_max(None)
         self.assertIsNone(result)
 
-    def test_check_version_and_print_warning_with_update(self):
-        """Test that warning is printed when update is available."""
-        with patch("aye.model.version_checker.is_newer_version_available") as mock_check:
+    # --- check_version_and_print_warning tests ---
+
+    def test_check_version_and_print_warning_with_update_and_release_title(self):
+        """Test that warning includes release title when available."""
+        with patch("aye.model.version_checker.is_newer_version_available") as mock_check, \
+             patch("aye.model.version_checker.get_github_release_title") as mock_title, \
+             patch("aye.model.version_checker.rprint") as mock_rprint:
             mock_check.return_value = (True, "0.27.0", "0.26.0", ">=3.8, <3.14")
+            mock_title.return_value = "Feature Bonanza"
 
-            # Capture stdout
-            captured_output = io.StringIO()
-            sys.stdout = captured_output
+            version_checker.check_version_and_print_warning()
 
-            try:
-                version_checker.check_version_and_print_warning()
-                output = captured_output.getvalue()
+            # Collect all printed output
+            output = " ".join(str(c) for c in mock_rprint.call_args_list)
 
-                # Verify warning message components
-                self.assertIn("notice", output)
-                self.assertIn("0.26.0", output)
-                self.assertIn("0.27.0", output)
-                self.assertIn("pip install --upgrade ayechat", output)
-            finally:
-                sys.stdout = sys.__stdout__
+            # Verify warning message components
+            self.assertIn("notice", output)
+            self.assertIn("0.26.0", output)
+            self.assertIn("0.27.0", output)
+            self.assertIn("Feature Bonanza", output)
+            self.assertIn("pip install --upgrade ayechat", output)
+
+            mock_title.assert_called_once_with("0.27.0")
+
+    def test_check_version_and_print_warning_with_update_no_release_title(self):
+        """Test warning without release title when GitHub returns None."""
+        with patch("aye.model.version_checker.is_newer_version_available") as mock_check, \
+             patch("aye.model.version_checker.get_github_release_title") as mock_title, \
+             patch("aye.model.version_checker.rprint") as mock_rprint:
+            mock_check.return_value = (True, "0.27.0", "0.26.0", ">=3.8, <3.14")
+            mock_title.return_value = None
+
+            version_checker.check_version_and_print_warning()
+
+            # Collect all printed output
+            output = " ".join(str(c) for c in mock_rprint.call_args_list)
+
+            # Verify warning message components
+            self.assertIn("notice", output)
+            self.assertIn("0.26.0", output)
+            self.assertIn("0.27.0", output)
+            self.assertIn("pip install --upgrade ayechat", output)
+            # Title suffix should not appear
+            self.assertNotIn("Feature", output)
+
+            mock_title.assert_called_once_with("0.27.0")
 
     def test_check_version_and_print_warning_with_update_no_python_info(self):
         """Test warning without Python version information."""
-        with patch("aye.model.version_checker.is_newer_version_available") as mock_check:
+        with patch("aye.model.version_checker.is_newer_version_available") as mock_check, \
+             patch("aye.model.version_checker.get_github_release_title") as mock_title, \
+             patch("aye.model.version_checker.rprint") as mock_rprint:
             mock_check.return_value = (True, "0.27.0", "0.26.0", None)
+            mock_title.return_value = None
 
-            # Capture stdout
-            captured_output = io.StringIO()
-            sys.stdout = captured_output
+            version_checker.check_version_and_print_warning()
 
-            try:
-                version_checker.check_version_and_print_warning()
-                output = captured_output.getvalue()
+            # Collect all printed output
+            output = " ".join(str(c) for c in mock_rprint.call_args_list)
 
-                # Verify warning message components
-                self.assertIn("notice", output)
-                self.assertIn("0.26.0", output)
-                self.assertIn("0.27.0", output)
-                # Should not contain Python version info
-                self.assertNotIn("Supports Python", output)
-            finally:
-                sys.stdout = sys.__stdout__
+            # Verify warning message components
+            self.assertIn("notice", output)
+            self.assertIn("0.26.0", output)
+            self.assertIn("0.27.0", output)
+            # Should not contain Python version info
+            self.assertNotIn("Supports Python", output)
 
     def test_check_version_and_print_warning_no_update(self):
         """Test that no warning is printed when no update is available."""
-        with patch("aye.model.version_checker.is_newer_version_available") as mock_check:
+        with patch("aye.model.version_checker.is_newer_version_available") as mock_check, \
+             patch("aye.model.version_checker.rprint") as mock_rprint:
             mock_check.return_value = (False, "0.26.0", "0.26.0", ">=3.8, <3.14")
 
-            # Capture stdout
-            captured_output = io.StringIO()
-            sys.stdout = captured_output
+            version_checker.check_version_and_print_warning()
 
-            try:
-                version_checker.check_version_and_print_warning()
-                output = captured_output.getvalue()
+            mock_rprint.assert_not_called()
 
-                # Should be empty or minimal output
-                self.assertEqual(output, "")
-            finally:
-                sys.stdout = sys.__stdout__
+    def test_check_version_and_print_warning_no_update_does_not_fetch_title(self):
+        """Test that GitHub release title is NOT fetched when no update is available."""
+        with patch("aye.model.version_checker.is_newer_version_available") as mock_check, \
+             patch("aye.model.version_checker.get_github_release_title") as mock_title:
+            mock_check.return_value = (False, "0.26.0", "0.26.0", ">=3.8, <3.14")
+
+            version_checker.check_version_and_print_warning()
+
+            mock_title.assert_not_called()
 
     def test_check_version_and_print_warning_network_failure(self):
         """Test that no error is shown when version check fails."""
-        with patch("aye.model.version_checker.is_newer_version_available") as mock_check:
+        with patch("aye.model.version_checker.is_newer_version_available") as mock_check, \
+             patch("aye.model.version_checker.rprint") as mock_rprint:
             mock_check.return_value = (False, None, "0.26.0", None)
 
-            # Capture stdout
-            captured_output = io.StringIO()
-            sys.stdout = captured_output
+            version_checker.check_version_and_print_warning()
 
-            try:
-                version_checker.check_version_and_print_warning()
-                output = captured_output.getvalue()
-
-                # Should not print anything on network failure
-                self.assertEqual(output, "")
-            finally:
-                sys.stdout = sys.__stdout__
+            mock_rprint.assert_not_called()

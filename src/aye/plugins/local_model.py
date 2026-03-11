@@ -7,24 +7,22 @@ from pathlib import Path
 from rich import print as rprint
 
 from .plugin_base import Plugin
+from .model_plugin_utils import (
+    get_conversation_id,
+    build_user_message,
+    build_history_message,
+    create_error_response,
+    parse_llm_response,
+    load_history,
+    save_history,
+)
 from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS
 from aye.model.auth import get_user_config
-from aye.controller.util import is_truncated_json
 
 LLM_TIMEOUT = 600.0
 
-
-# Message shown when LLM response is truncated due to output token limits
-TRUNCATED_RESPONSE_MESSAGE = (
-    "It looks like my response was cut off because it exceeded the output limit. "
-    "This usually happens when you ask me to generate or modify many files at once.\n\n"
-    "**To fix this, please try:**\n"
-    "1. Break your request into smaller parts (e.g., one file at a time)\n"
-    "2. Use the `with` command to focus on specific files: `with file1.py, file2.py: your request`\n"
-    "3. Ask me to work on fewer files or smaller changes in each request\n\n"
-    "For example, instead of 'update all files to add logging', try:\n"
-    "  `with src/main.py: add logging to this file`"
-)
+# History file name for this plugin
+HISTORY_FILENAME = "chat_history.json"
 
 
 def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
@@ -35,9 +33,20 @@ def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _is_local_model_configured() -> bool:
+    """Check if local model (OpenAI-compatible or Gemini) is configured."""
+    # OpenAI-compatible API
+    if get_user_config("llm_api_url") and get_user_config("llm_api_key"):
+        return True
+    # Gemini API
+    if os.environ.get("GEMINI_API_KEY"):
+        return True
+    return False
+
+
 class LocalModelPlugin(Plugin):
     name = "local_model"
-    version = "1.0.0"
+    version = "1.0.1"  # Version bump for new_chat fix
     premium = "free"
 
     def __init__(self):
@@ -50,92 +59,20 @@ class LocalModelPlugin(Plugin):
         super().init(cfg)
         if self.debug:
             rprint(f"[bold yellow]Initializing {self.name} v{self.version}[/]")
-        
+
+    def _get_history_file_path(self, root: Optional[Any]) -> Path:
+        """Get the history file path for this plugin."""
+        if root:
+            return Path(root) / ".aye" / HISTORY_FILENAME
+        return Path.cwd() / ".aye" / HISTORY_FILENAME
+
     def _load_history(self) -> None:
         """Load chat history from disk."""
-        if not self.history_file:
-            if self.verbose:
-                rprint("[yellow]History file path not set for local model. Skipping load.[/]")
-            self.chat_history = {}
-            return
-
-        if self.history_file.exists():
-            try:
-                data = json.loads(self.history_file.read_text(encoding="utf-8"))
-                self.chat_history = data.get("conversations", {})
-            except Exception as e:
-                if self.verbose:
-                    rprint(f"[yellow]Could not load chat history: {e}[/]")
-                self.chat_history = {}
-        else:
-            self.chat_history = {}
+        self.chat_history = load_history(self.history_file, self.verbose, "local model")
 
     def _save_history(self) -> None:
         """Save chat history to disk."""
-        if not self.history_file:
-            if self.verbose:
-                rprint("[yellow]History file path not set for local model. Skipping save.[/]")
-            return
-
-        try:
-            self.history_file.parent.mkdir(parents=True, exist_ok=True)
-            data = {"conversations": self.chat_history}
-            self.history_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except Exception as e:
-            if self.verbose:
-                rprint(f"[yellow]Could not save chat history: {e}[/]")
-
-    def _get_conversation_id(self, chat_id: Optional[int] = None) -> str:
-        """Get conversation ID for history tracking."""
-        return str(chat_id) if chat_id and chat_id > 0 else "default"
-
-    def _build_user_message(self, prompt: str, source_files: Dict[str, str]) -> str:
-        """Build the user message with optional source files appended."""
-        user_message = prompt
-        if source_files:
-            user_message += "\n\n--- Source files are below. ---\n"
-            for file_name, content in source_files.items():
-                user_message += f"\n** {file_name} **\n```\n{content}\n```\n"
-        return user_message
-
-    def _parse_llm_response(self, generated_text: str) -> Dict[str, Any]:
-        """Parse LLM response text and convert to expected format."""
-        try:
-            llm_response = json.loads(generated_text)
-        except json.JSONDecodeError:
-            # Check if this looks like a truncated response
-            #if is_truncated_json(generated_text):
-            #    return {
-            #        "summary": TRUNCATED_RESPONSE_MESSAGE,
-            #        "updated_files": []
-            #    }
-            
-            # Not truncated, just malformed - return as plain text
-            llm_response = {
-                "answer_summary": generated_text,
-                "source_files": []
-            }
-        
-        return {
-            "summary": llm_response.get("answer_summary", ""),
-            "updated_files": [
-                {
-                    "file_name": f.get("file_name"),
-                    "file_content": f.get("file_content")
-                }
-                for f in llm_response.get("source_files", [])
-            ]
-        }
-
-    def _create_error_response(self, error_msg: str) -> Dict[str, Any]:
-        """Create a standardized error response."""
-        if self.verbose:
-            rprint(f"[red]{error_msg}[/]")
-        return {
-            "summary": error_msg,
-            "updated_files": []
-        }
-
+        save_history(self.history_file, self.chat_history, self.verbose, "local model")
 
     def _handle_openai_compatible(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
         """Handle OpenAI-compatible API endpoints.
@@ -145,7 +82,6 @@ class LocalModelPlugin(Plugin):
         - get_user_config("llm_api_key") / AYE_LLM_API_KEY  
         - get_user_config("llm_model") / AYE_LLM_MODEL (default: gpt-3.5-turbo)
         """
-        # Read from config (supports both ~/.ayecfg and AYE_LLM_* env vars)
         api_url = get_user_config("llm_api_url")
         api_key = get_user_config("llm_api_key")
         model_name = get_user_config("llm_model", "gpt-3.5-turbo")
@@ -153,11 +89,12 @@ class LocalModelPlugin(Plugin):
         if not api_url or not api_key:
             return None
         
-        conv_id = self._get_conversation_id(chat_id)
+        conv_id = get_conversation_id(chat_id)
         if conv_id not in self.chat_history:
             self.chat_history[conv_id] = []
         
-        user_message = self._build_user_message(prompt, source_files)
+        user_message = build_user_message(prompt, source_files)
+        history_message = build_history_message(prompt, source_files)
         effective_system_prompt = system_prompt if system_prompt else SYSTEM_PROMPT
         messages = [{"role": "system", "content": effective_system_prompt}] + self.chat_history[conv_id] + [{"role": "user", "content": user_message}]
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
@@ -170,11 +107,11 @@ class LocalModelPlugin(Plugin):
                 result = response.json()
                 if result.get("choices") and result["choices"][0].get("message"):
                     generated_text = result["choices"][0]["message"]["content"]
-                    self.chat_history[conv_id].append({"role": "user", "content": user_message})
+                    self.chat_history[conv_id].append({"role": "user", "content": history_message})
                     self.chat_history[conv_id].append({"role": "assistant", "content": generated_text})
                     self._save_history()
-                    return self._parse_llm_response(generated_text)
-                return self._create_error_response("Failed to get a valid response from the OpenAI-compatible API")
+                    return parse_llm_response(generated_text, self.debug)
+                return create_error_response("Failed to get a valid response from the OpenAI-compatible API", self.verbose)
         except httpx.HTTPStatusError as e:
             error_msg = f"OpenAI API error: {e.response.status_code}"
             try:
@@ -182,20 +119,21 @@ class LocalModelPlugin(Plugin):
                 if "error" in error_detail:
                     error_msg += f" - {error_detail['error'].get('message', str(error_detail['error']))}"
             except: error_msg += f" - {e.response.text[:200]}"
-            return self._create_error_response(error_msg)
+            return create_error_response(error_msg, self.verbose)
         except Exception as e:
-            return self._create_error_response(f"Error calling OpenAI-compatible API: {str(e)}")
+            return create_error_response(f"Error calling OpenAI-compatible API: {str(e)}", self.verbose)
 
     def _handle_gemini_pro_25(self, prompt: str, source_files: Dict[str, str], chat_id: Optional[int] = None, system_prompt: Optional[str] = None, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS) -> Optional[Dict[str, Any]]:
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             return None
 
-        conv_id = self._get_conversation_id(chat_id)
+        conv_id = get_conversation_id(chat_id)
         if conv_id not in self.chat_history:
             self.chat_history[conv_id] = []
 
-        user_message = self._build_user_message(prompt, source_files)
+        user_message = build_user_message(prompt, source_files)
+        history_message = build_history_message(prompt, source_files)
         url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
         headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
         
@@ -212,24 +150,29 @@ class LocalModelPlugin(Plugin):
                 result = response.json()
                 if result.get("candidates") and result["candidates"][0].get("content"):
                     generated_text = result["candidates"][0]["content"]["parts"][0].get("text", "")
-                    self.chat_history[conv_id].append({"role": "user", "content": user_message})
+                    self.chat_history[conv_id].append({"role": "user", "content": history_message})
                     self.chat_history[conv_id].append({"role": "assistant", "content": generated_text})
                     self._save_history()
-                    return self._parse_llm_response(generated_text)
-                return self._create_error_response("Failed to get a valid response from Gemini API")
+                    return parse_llm_response(generated_text, self.debug)
+                return create_error_response("Failed to get a valid response from Gemini API", self.verbose)
         except httpx.HTTPStatusError as e:
-            return self._create_error_response(f"Gemini API error: {e.response.status_code} - {e.response.text}")
+            return create_error_response(f"Gemini API error: {e.response.status_code} - {e.response.text}", self.verbose)
         except Exception as e:
-            return self._create_error_response(f"Error calling Gemini API: {str(e)}")
+            return create_error_response(f"Error calling Gemini API: {str(e)}", self.verbose)
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if command_name == "new_chat":
+            # Only handle if local model is configured
+            if not _is_local_model_configured():
+                return None
+            
             root = params.get("root")
-            history_file = Path(root) / ".aye" / "chat_history.json" if root else Path.cwd() / ".aye" / "chat_history.json"
+            history_file = self._get_history_file_path(root)
             history_file.unlink(missing_ok=True)
             self.chat_history = {}
-            if self.verbose: rprint("[yellow]Local model chat history cleared.[/]")
-            return {"status": "local_history_cleared"}
+            if self.verbose:
+                rprint("[yellow]Local model chat history cleared.[/]")
+            return {"status": "local_history_cleared", "handled": True}
 
         if command_name == "local_model_invoke":
             prompt = params.get("prompt", "").strip()
@@ -240,7 +183,7 @@ class LocalModelPlugin(Plugin):
             system_prompt = params.get("system_prompt")
             max_output_tokens = params.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)
 
-            self.history_file = Path(root) / ".aye" / "chat_history.json" if root else Path.cwd() / ".aye" / "chat_history.json"
+            self.history_file = self._get_history_file_path(root)
             self._load_history()
 
             result = self._handle_openai_compatible(prompt, source_files, chat_id, system_prompt, max_output_tokens)

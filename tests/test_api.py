@@ -130,13 +130,14 @@ class TestModelApi(TestCase):
         payload = {"assistant_response": "{not-json"}
         self.assertEqual(api._extract_answer_summary_from_assistant_response(payload), "")
 
+    @patch("aye.model.api._ssl_verify", return_value=True)
     @patch("aye.model.api.time")
     @patch("httpx.get")
     @patch("httpx.Client")
     @patch("aye.model.api._check_response")
     @patch("aye.model.api._auth_headers")
     def test_cli_invoke_polling_success(
-        self, mock_headers, mock_check, mock_client, mock_get, mock_time
+        self, mock_headers, mock_check, mock_client, mock_get, mock_time, mock_ssl_verify
     ):
         mock_headers.return_value = {"Auth": "fake"}
         mock_post_resp = MagicMock()
@@ -155,16 +156,16 @@ class TestModelApi(TestCase):
         result = api.cli_invoke(message="test", dry_run=False)
         self.assertEqual(result, {"final": "response"})
         self.assertEqual(mock_get.call_count, 2)
-        current = "on" == get_user_config("verify", "on")
-        mock_get.assert_called_with("https://fake.url", timeout=api.TIMEOUT, verify=current)
+        mock_get.assert_called_with("https://fake.url", timeout=api.TIMEOUT, verify=True)
 
+    @patch("aye.model.api._ssl_verify", return_value=True)
     @patch("aye.model.api.time")
     @patch("httpx.get")
     @patch("httpx.Client")
     @patch("aye.model.api._check_response")
     @patch("aye.model.api._auth_headers")
     def test_cli_invoke_polling_json_decode_error(
-        self, mock_headers, mock_check, mock_client, mock_get, mock_time
+        self, mock_headers, mock_check, mock_client, mock_get, mock_time, mock_ssl_verify
     ):
         """If the presigned URL returns 200 but the body isn't valid JSON,
         cli_invoke() retries until poll_timeout and then raises TimeoutError.
@@ -186,13 +187,14 @@ class TestModelApi(TestCase):
         with self.assertRaises(TimeoutError):
             api.cli_invoke(message="test", poll_timeout=1.0)
 
+    @patch("aye.model.api._ssl_verify", return_value=True)
     @patch("aye.model.api.time")
     @patch("httpx.get")
     @patch("httpx.Client")
     @patch("aye.model.api._check_response")
     @patch("aye.model.api._auth_headers")
     def test_cli_invoke_polling_request_error(
-        self, mock_headers, mock_check, mock_client, mock_get, mock_time
+        self, mock_headers, mock_check, mock_client, mock_get, mock_time, mock_ssl_verify
     ):
         mock_headers.return_value = {"Auth": "fake"}
         mock_check.return_value = {"response_url": "https://fake.url"}
@@ -206,13 +208,14 @@ class TestModelApi(TestCase):
         self.assertEqual(result, {"final": "response"})
         self.assertEqual(mock_get.call_count, 2)
 
+    @patch("aye.model.api._ssl_verify", return_value=True)
     @patch("aye.model.api.time")
     @patch("httpx.get")
     @patch("httpx.Client")
     @patch("aye.model.api._check_response")
     @patch("aye.model.api._auth_headers")
     def test_cli_invoke_timeout(
-        self, mock_headers, mock_check, mock_client, mock_get, mock_time
+        self, mock_headers, mock_check, mock_client, mock_get, mock_time, mock_ssl_verify
     ):
         mock_headers.return_value = {"Auth": "fake"}
         mock_post_resp = MagicMock()
@@ -229,13 +232,14 @@ class TestModelApi(TestCase):
         with self.assertRaises(TimeoutError):
             api.cli_invoke(message="test", dry_run=False, poll_timeout=deadline)
 
+    @patch("aye.model.api._ssl_verify", return_value=True)
     @patch("aye.model.api.time")
     @patch("httpx.get")
     @patch("httpx.Client")
     @patch("aye.model.api._check_response")
     @patch("aye.model.api._auth_headers")
     def test_cli_invoke_streaming_calls_callback_and_sets_streamed_summary(
-        self, mock_headers, mock_check, mock_client, mock_get, mock_time
+        self, mock_headers, mock_check, mock_client, mock_get, mock_time, mock_ssl_verify
     ):
         """Exercise streaming polling path:
 
@@ -288,13 +292,14 @@ class TestModelApi(TestCase):
         self.assertEqual(updates, ["Hel", "Hello", "Hello final"])
         self.assertTrue(result.get("_streamed_summary"))
 
+    @patch("aye.model.api._ssl_verify", return_value=True)
     @patch("aye.model.api.time")
     @patch("httpx.get")
     @patch("httpx.Client")
     @patch("aye.model.api._check_response")
     @patch("aye.model.api._auth_headers")
     def test_cli_invoke_streaming_dedupes_identical_partials(
-        self, mock_headers, mock_check, mock_client, mock_get, mock_time
+        self, mock_headers, mock_check, mock_client, mock_get, mock_time, mock_ssl_verify
     ):
         mock_headers.return_value = {"Auth": "fake"}
         mock_check.return_value = {"response_url": "https://fake.url"}
@@ -324,13 +329,14 @@ class TestModelApi(TestCase):
         self.assertEqual(updates, ["Same", "Same"])
         self.assertTrue(result.get("_streamed_summary"))
 
+    @patch("aye.model.api._ssl_verify", return_value=True)
     @patch("aye.model.api.time")
     @patch("httpx.get")
     @patch("httpx.Client")
     @patch("aye.model.api._check_response")
     @patch("aye.model.api._auth_headers")
     def test_cli_invoke_stream_debug_writes_to_stderr(
-        self, mock_headers, mock_check, mock_client, mock_get, mock_time
+        self, mock_headers, mock_check, mock_client, mock_get, mock_time, mock_ssl_verify
     ):
         os.environ["AYE_STREAM_DEBUG"] = "1"
 
@@ -354,13 +360,14 @@ class TestModelApi(TestCase):
 
         self.assertIn("[STREAM_DEBUG]", stderr.getvalue())
 
+    @patch("aye.model.api._ssl_verify", return_value=True)
     @patch("aye.model.api.time")
     @patch("httpx.get")
     @patch("httpx.Client")
     @patch("aye.model.api._check_response")
     @patch("aye.model.api._auth_headers")
     def test_cli_invoke_unexpected_status_raises_for_status(
-        self, mock_headers, mock_check, mock_client, mock_get, mock_time
+        self, mock_headers, mock_check, mock_client, mock_get, mock_time, mock_ssl_verify
     ):
         mock_headers.return_value = {"Auth": "fake"}
         mock_check.return_value = {"response_url": "https://fake.url"}
