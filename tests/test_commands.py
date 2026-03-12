@@ -3,7 +3,6 @@
 Covers ProjectConfig, ProjectContextBuilder, and command functions.
 """
 
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -309,10 +308,7 @@ class TestFindProjectRoot(unittest.TestCase):
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        # Use os.path.realpath to resolve Windows 8.3 short path names
-        # (e.g., RUNNER~1 -> runneradmin) that Path.resolve() may not handle
-        # on all Windows configurations.
-        self.base_path = Path(os.path.realpath(self.temp_dir.name))
+        self.base_path = Path(self.temp_dir.name)
 
     def tearDown(self):
         self.temp_dir.cleanup()
