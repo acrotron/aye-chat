@@ -1,711 +1,1556 @@
-"""Tests for the refactored REPL module.
-
-Covers CommandContext, CommandDispatcher, and helper functions.
-"""
-
-import tempfile
-import unittest
+import os
+import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, call
+from unittest import TestCase
+from unittest.mock import patch, MagicMock
 
-from aye.controller.repl import (
-    CommandContext,
-    CommandDispatcher,
-    BUILTIN_COMMANDS,
-    _parse_input,
-    _normalize_command,
-    _get_completer,
-    _handle_shell_command,
-    _handle_llm_invocation,
-    _setup_context,
-    _print_db_status,
-    create_key_bindings,
-    print_startup_header,
-)
+from prompt_toolkit.filters import completion_is_selected
+from prompt_toolkit.keys import Keys
+
+import aye.controller.repl as repl
+from aye.model.config import MODELS
 
 
-class TestCommandContext(unittest.TestCase):
-    """Tests for CommandContext dataclass."""
-
-    def test_init_defaults(self):
-        """Test default values are set correctly."""
-        conf = MagicMock()
-        session = MagicMock()
-        console = MagicMock()
-        
-        ctx = CommandContext(
-            conf=conf,
-            session=session,
-            console=console,
-        )
-        
-        self.assertEqual(ctx.conf, conf)
-        self.assertEqual(ctx.session, session)
-        self.assertEqual(ctx.console, console)
-        self.assertEqual(ctx.chat_id, -1)
-        self.assertIsNone(ctx.chat_id_file)
-        self.assertEqual(ctx.completion_style, "readline")
-
-    def test_init_with_values(self):
-        """Test initialization with custom values."""
-        conf = MagicMock()
-        session = MagicMock()
-        console = MagicMock()
-        chat_id_file = Path("/tmp/chat_id")
-        
-        ctx = CommandContext(
-            conf=conf,
-            session=session,
-            console=console,
-            chat_id=123,
-            chat_id_file=chat_id_file,
-            completion_style="multi",
-        )
-        
-        self.assertEqual(ctx.chat_id, 123)
-        self.assertEqual(ctx.chat_id_file, chat_id_file)
-        self.assertEqual(ctx.completion_style, "multi")
-
-    def test_update_chat_id_with_value(self):
-        """Test update_chat_id updates when value provided."""
-        ctx = CommandContext(
-            conf=MagicMock(),
-            session=MagicMock(),
-            console=MagicMock(),
-            chat_id=100,
-        )
-        
-        ctx.update_chat_id(200)
-        
-        self.assertEqual(ctx.chat_id, 200)
-
-    def test_update_chat_id_with_none(self):
-        """Test update_chat_id does nothing when None provided."""
-        ctx = CommandContext(
-            conf=MagicMock(),
-            session=MagicMock(),
-            console=MagicMock(),
-            chat_id=100,
-        )
-        
-        ctx.update_chat_id(None)
-        
-        self.assertEqual(ctx.chat_id, 100)
+def _setup_mock_chat_id_path(mock_path, *, exists=False, contents=""):
+    mock_chat_id_file = MagicMock()
+    mock_chat_id_file.exists.return_value = exists
+    mock_chat_id_file.read_text.return_value = contents
+    mock_chat_id_file.parent = MagicMock()
+    mock_chat_id_file.parent.mkdir = MagicMock()
+    mock_path.return_value = mock_chat_id_file
+    return mock_chat_id_file
 
 
-class TestCommandDispatcher(unittest.TestCase):
-    """Tests for CommandDispatcher class."""
+class TestRepl(TestCase):
+    def setUp(self):
+        self.conf = SimpleNamespace(root=Path.cwd(), file_mask="*.py")
+        self.session = MagicMock()
+
+        # Telemetry is global, in-memory state. Reset between tests to avoid leakage.
+        repl.telemetry.reset()
+        repl.telemetry.set_enabled(False)
+
+    @patch("os.chdir")
+    @patch("aye.controller.command_handlers.rprint")
+    def test_handle_cd_command_success(self, mock_rprint, mock_chdir):
+        target_dir = "/tmp"
+
+        with patch("pathlib.Path.cwd", return_value=Path(target_dir)):
+            result = repl.handle_cd_command(["cd", target_dir], self.conf)
+
+        self.assertTrue(result)
+        mock_chdir.assert_called_once_with(target_dir)
+        self.assertEqual(self.conf.root, Path(target_dir))
+        mock_rprint.assert_called_once_with(str(Path(target_dir)))
+
+    @patch("os.chdir")
+    @patch("aye.controller.command_handlers.rprint")
+    def test_handle_cd_command_home(self, mock_rprint, mock_chdir):
+        home_dir = str(Path.home())
+        with patch("pathlib.Path.cwd", return_value=Path(home_dir)):
+            repl.handle_cd_command(["cd"], self.conf)
+        mock_chdir.assert_called_once_with(home_dir)
+
+    @patch("os.chdir", side_effect=FileNotFoundError("No such file or directory"))
+    @patch("aye.controller.command_handlers.print_error")
+    def test_handle_cd_command_failure(self, mock_print_error, mock_chdir):
+        result = repl.handle_cd_command(["cd", "/nonexistent"], self.conf)
+        self.assertFalse(result)
+        mock_chdir.assert_called_once_with("/nonexistent")
+        mock_print_error.assert_called_once()
+
+    @patch("aye.controller.command_handlers.rprint")
+    @patch("aye.controller.command_handlers.set_user_config")
+    def test_handle_model_command_list_and_select(self, mock_set_config, mock_rprint):
+        self.conf.selected_model = MODELS[0]["id"]
+        self.conf.plugin_manager = MagicMock()
+        self.conf.plugin_manager.handle_command.return_value = None
+        self.session.prompt.return_value = "2"
+
+        repl.handle_model_command(self.session, MODELS, self.conf, ["model"])
+
+        self.session.prompt.assert_called_once()
+        self.assertEqual(self.conf.selected_model, MODELS[1]["id"])
+        mock_set_config.assert_called_once_with("selected_model", MODELS[1]["id"])
+        self.assertIn(f"Selected: {MODELS[1]['name']}", str(mock_rprint.call_args_list))
+
+    @patch("aye.controller.command_handlers.rprint")
+    @patch("aye.controller.command_handlers.set_user_config")
+    def test_handle_model_command_direct_select(self, mock_set_config, mock_rprint):
+        self.conf.selected_model = MODELS[0]["id"]
+        self.conf.plugin_manager = MagicMock()
+        self.conf.plugin_manager.handle_command.return_value = None
+
+        repl.handle_model_command(self.session, MODELS, self.conf, ["model", "3"])
+
+        self.session.prompt.assert_not_called()
+        self.assertEqual(self.conf.selected_model, MODELS[2]["id"])
+        mock_set_config.assert_called_once_with("selected_model", MODELS[2]["id"])
+        self.assertIn(f"Selected model: {MODELS[2]['name']}", str(mock_rprint.call_args_list))
+
+    @patch("aye.controller.command_handlers.rprint")
+    @patch("aye.controller.command_handlers.set_user_config")
+    def test_handle_model_command_invalid_input(self, mock_set_config, mock_rprint):
+        self.conf.selected_model = MODELS[0]["id"]
+        self.conf.plugin_manager = MagicMock()
+        self.conf.plugin_manager.handle_command.return_value = None
+
+        repl.handle_model_command(self.session, MODELS, self.conf, ["model", "99"])
+        mock_set_config.assert_not_called()
+        mock_rprint.assert_any_call("[red]Invalid model number.[/]")
+
+        repl.handle_model_command(self.session, MODELS, self.conf, ["model", "abc"])
+        mock_set_config.assert_not_called()
+        mock_rprint.assert_any_call("[red]Invalid input. Use a number.[/]")
+
+        self.session.prompt.return_value = "xyz"
+        repl.handle_model_command(self.session, MODELS, self.conf, ["model"])
+        mock_rprint.assert_any_call("[red]Invalid input.[/]")
+
+    @patch("aye.controller.command_handlers.rprint")
+    @patch("aye.controller.command_handlers.set_user_config")
+    def test_handle_verbose_command(self, mock_set_config, mock_rprint):
+        repl.handle_verbose_command(["verbose", "on"])
+        mock_set_config.assert_called_with("verbose", "on")
+        mock_rprint.assert_any_call("[green]Verbose mode set to On[/]")
+
+        repl.handle_verbose_command(["verbose", "off"])
+        mock_set_config.assert_called_with("verbose", "off")
+        mock_rprint.assert_any_call("[green]Verbose mode set to Off[/]")
+
+        repl.handle_verbose_command(["verbose", "invalid"])
+        mock_rprint.assert_any_call("[red]Usage: verbose on|off[/]")
+
+    @patch("aye.controller.command_handlers.get_user_config", return_value="off")
+    @patch("aye.controller.command_handlers.rprint")
+    def test_handle_verbose_command_status(self, mock_rprint, mock_get_config):
+        repl.handle_verbose_command(["verbose"])
+        mock_get_config.assert_called_with("verbose", "off")
+        mock_rprint.assert_called_with("[yellow]Verbose mode is Off[/]")
+
+    @patch("aye.controller.repl.print_welcome_message")
+    @patch("aye.controller.repl.rprint")
+    def test_print_startup_header_known_model(self, mock_rprint, mock_welcome):
+        conf = SimpleNamespace(selected_model=MODELS[0]["id"], file_mask="*.*")
+        repl.print_startup_header(conf)
+        mock_rprint.assert_any_call(f"[bold cyan]Session context: {conf.file_mask}[/]")
+        mock_rprint.assert_any_call(f"[bold cyan]Current model: {MODELS[0]['name']}[/]")
+        mock_welcome.assert_called_once()
+
+    @patch("aye.controller.repl.rprint")
+    def test_print_startup_header_unknown_model(self, mock_rprint):
+        conf = SimpleNamespace(selected_model="unknown/model", file_mask="*.py")
+        with patch("aye.controller.repl.set_user_config") as mock_set_config:
+            repl.print_startup_header(conf)
+            mock_set_config.assert_called_once_with("selected_model", repl.DEFAULT_MODEL_ID)
+            self.assertEqual(conf.selected_model, repl.DEFAULT_MODEL_ID)
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.Confirm.ask")
+    @patch("aye.controller.repl.set_user_config")
+    @patch("aye.controller.repl.get_user_config")
+    def test_prompt_for_telemetry_consent_already_set(
+        self, mock_get, mock_set, mock_confirm, mock_rprint
+    ):
+        mock_get.return_value = "on"
+        self.assertTrue(repl._prompt_for_telemetry_consent_if_needed())
+        mock_confirm.assert_not_called()
+        mock_set.assert_not_called()
+
+        mock_get.return_value = "off"
+        self.assertFalse(repl._prompt_for_telemetry_consent_if_needed())
+        mock_confirm.assert_not_called()
+        mock_set.assert_not_called()
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.Confirm.ask", return_value=False)
+    @patch("aye.controller.repl.set_user_config")
+    @patch("aye.controller.repl.get_user_config", return_value=None)
+    def test_prompt_for_telemetry_consent_prompts_and_persists(
+        self, mock_get, mock_set, mock_confirm, mock_rprint
+    ):
+        self.assertFalse(repl._prompt_for_telemetry_consent_if_needed())
+        mock_confirm.assert_called_once()
+        mock_set.assert_called_once_with(repl._TELEMETRY_OPT_IN_KEY, "off")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.Confirm.ask", side_effect=EOFError)
+    @patch("aye.controller.repl.set_user_config")
+    @patch("aye.controller.repl.get_user_config", return_value=None)
+    def test_prompt_for_telemetry_consent_handles_eof_ctrlc(
+        self, mock_get, mock_set, mock_confirm, mock_rprint
+    ):
+        self.assertFalse(repl._prompt_for_telemetry_consent_if_needed())
+        mock_set.assert_called_once_with(repl._TELEMETRY_OPT_IN_KEY, "off")
+
+    @patch("aye.controller.repl._is_feedback_prompt_enabled", return_value=True)
+    @patch("aye.controller.repl.send_feedback")
+    @patch("aye.controller.repl.PromptSession")
+    def test_collect_and_send_feedback(self, mock_session_cls, mock_send_feedback, mock_enabled):
+        mock_session_cls.return_value.prompt.return_value = "Great tool!"
+        repl.collect_and_send_feedback(chat_id=123)
+        mock_send_feedback.assert_called_once_with("Great tool!", chat_id=123, telemetry=None)
+
+    @patch("aye.controller.repl.send_feedback")
+    @patch("aye.controller.repl.PromptSession")
+    def test_collect_and_send_feedback_empty(self, mock_session_cls, mock_send_feedback):
+        # Telemetry disabled in setUp, so empty feedback should not send.
+        mock_session_cls.return_value.prompt.return_value = "  \n  "
+        repl.collect_and_send_feedback(chat_id=123)
+        mock_send_feedback.assert_not_called()
+
+    @patch("aye.controller.repl.send_feedback")
+    @patch("aye.controller.repl.PromptSession")
+    def test_collect_and_send_feedback_ctrl_c(self, mock_session_cls, mock_send_feedback):
+        # Telemetry disabled in setUp, so Ctrl+C with no feedback should not send.
+        mock_session_cls.return_value.prompt.side_effect = KeyboardInterrupt
+        repl.collect_and_send_feedback(chat_id=123)
+        mock_send_feedback.assert_not_called()
+
+    @patch("aye.controller.repl._is_feedback_prompt_enabled", return_value=True)
+    @patch("aye.controller.repl.send_feedback", side_effect=Exception("API down"))
+    @patch("aye.controller.repl.PromptSession")
+    def test_collect_and_send_feedback_api_error(self, mock_session_cls, mock_send_feedback, mock_enabled):
+        # New implementation does not swallow send_feedback exceptions.
+        mock_session_cls.return_value.prompt.return_value = "feedback"
+        with self.assertRaises(Exception):
+            repl.collect_and_send_feedback(chat_id=123)
+
+    @patch("aye.controller.repl._is_feedback_prompt_enabled", return_value=True)
+    @patch("aye.controller.repl.telemetry.reset")
+    @patch("aye.controller.repl.telemetry.build_payload", return_value={"x": 1})
+    @patch("aye.controller.repl.telemetry.is_enabled", return_value=True)
+    @patch("aye.controller.repl.send_feedback")
+    @patch("aye.controller.repl.PromptSession")
+    def test_collect_and_send_feedback_includes_telemetry_and_resets(
+        self,
+        mock_session_cls,
+        mock_send_feedback,
+        mock_is_enabled,
+        mock_build,
+        mock_reset,
+        mock_enabled,
+    ):
+        mock_session_cls.return_value.prompt.return_value = "hello"
+        repl.collect_and_send_feedback(chat_id=5)
+        mock_send_feedback.assert_called_once_with("hello", chat_id=5, telemetry={"x": 1})
+        mock_reset.assert_called_once()
+
+    def test_chat_repl_main_loop_commands(self):
+        with (
+            patch("aye.controller.repl.PromptSession") as mock_session_cls,
+            patch("aye.controller.repl.run_first_time_tutorial_if_needed"),
+            patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+            patch("aye.controller.repl.get_user_config", return_value="on"),
+            patch("aye.controller.repl.print_startup_header"),
+            patch("aye.controller.repl.Path") as mock_path,
+            patch("aye.controller.repl.handle_model_command") as mock_model_cmd,
+            patch("aye.controller.repl.commands") as mock_commands,
+            patch("aye.controller.repl.cli_ui") as mock_cli_ui,
+            patch("aye.controller.repl.diff_presenter") as mock_diff,
+            patch("aye.controller.repl.print_help_message") as mock_help,
+            patch("aye.controller.repl.invoke_llm") as mock_invoke,
+            patch("aye.controller.repl.process_llm_response", return_value=None) as mock_process,
+            patch("aye.controller.repl.collect_and_send_feedback"),
+        ):
+            mock_session = MagicMock()
+            mock_session.prompt.side_effect = [
+                "model",
+                "history",
+                "diff file.py 001",
+                "restore 001",
+                "keep 5",
+                "new",
+                "help",
+                "ls -l",
+                "a real prompt",
+                "exit",
+            ]
+            mock_session_cls.return_value = mock_session
+
+            mock_chat_id_file = MagicMock()
+            mock_chat_id_file.exists.return_value = False
+            mock_path.return_value = mock_chat_id_file
+
+            # Return 3-tuple: (path1, path2, is_stash)
+            mock_commands.get_diff_paths.return_value = (Path("p1"), "p2", False)
+
+            # Use a function to handle different command calls dynamically
+            def plugin_side_effect(command, params):
+                if command == "get_completer":
+                    return {"completer": None}
+                elif command == "new_chat":
+                    return None
+                elif command == "execute_shell_command":
+                    cmd = params.get("command", "")
+                    if cmd == "ls":
+                        return {"stdout": "files"}
+                    # 'a' is not a real shell command, return None to trigger LLM
+                    return None
+                elif command == "parse_at_references":
+                    # No @ references found
+                    return None
+                return None
+
+            mock_plugin_manager = MagicMock()
+            mock_plugin_manager.handle_command.side_effect = plugin_side_effect
+
+            mock_index_manager = MagicMock()
+            mock_index_manager.has_work.return_value = False
+            mock_index_manager.is_indexing.return_value = False
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask="*.py",
+                plugin_manager=mock_plugin_manager,
+                index_manager=mock_index_manager,
+                verbose=True,
+                selected_model="test-model",
+            )
+
+            repl.chat_repl(conf)
+
+            self.assertEqual(mock_session.prompt.call_count, 10)
+            self.assertEqual(mock_model_cmd.call_count, 2)
+            mock_commands.get_snapshot_history.assert_called_once()
+            mock_commands.get_diff_paths.assert_called_once_with("file.py", "001", None)
+            mock_diff.show_diff.assert_called_once_with(Path("p1"), "p2", is_stash_ref=False)
+            mock_commands.restore_from_snapshot.assert_called_once_with("001", None)
+            mock_commands.prune_snapshots.assert_called_once_with(5)
+            mock_chat_id_file.unlink.assert_called_once()
+            self.assertEqual(mock_help.call_count, 2)
+
+            # Verify specific plugin calls were made
+            call_commands = [c[0][0] for c in mock_plugin_manager.handle_command.call_args_list]
+            self.assertIn("get_completer", call_commands)
+            self.assertIn("new_chat", call_commands)
+            self.assertIn("execute_shell_command", call_commands)
+            self.assertIn("parse_at_references", call_commands)
+
+            mock_invoke.assert_called_once()
+            mock_process.assert_called_once()
+
+
+class TestExecuteForcedShellCommand(TestCase):
+    """Tests for _execute_forced_shell_command function."""
 
     def setUp(self):
-        """Set up test fixtures."""
-        self.conf = MagicMock()
-        self.conf.root = Path("/tmp/project")
-        self.conf.plugin_manager = MagicMock()
-        self.conf.verbose = False
-        
-        self.session = MagicMock()
-        self.console = MagicMock()
-        
-        self.ctx = CommandContext(
-            conf=self.conf,
-            session=self.session,
-            console=self.console,
-            chat_id=1,
-            chat_id_file=Path("/tmp/chat_id"),
-        )
-        
-        self.dispatcher = CommandDispatcher(self.ctx)
+        repl.telemetry.reset()
+        repl.telemetry.set_enabled(False)
 
-    def test_dispatch_unknown_command_returns_none(self):
-        """Unknown commands should return None."""
-        result = self.dispatcher.dispatch("unknowncommand", ["unknowncommand"])
-        self.assertIsNone(result)
-
-    def test_dispatch_exit_returns_true(self):
-        """Exit commands should return True."""
-        with patch('aye.controller.repl.telemetry'):
-            for cmd in ["exit", "quit", ":q"]:
-                result = self.dispatcher.dispatch(cmd, [cmd])
-                self.assertTrue(result, f"Expected True for {cmd}")
-
-    @patch('aye.controller.repl.handle_model_command')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_model_command(self, mock_telemetry, mock_handle_model):
-        """Model command should be dispatched correctly."""
-        result = self.dispatcher.dispatch("model", ["model"])
-        
-        self.assertFalse(result)
-        mock_handle_model.assert_called_once()
-        mock_telemetry.record_command.assert_called_with("model", has_args=False, prefix="aye:")
-
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_new_command(self, mock_telemetry):
-        """New command should reset chat session."""
-        self.ctx.chat_id_file = MagicMock()
-        self.conf.plugin_manager.handle_command.return_value = None
-        
-        result = self.dispatcher.dispatch("new", ["new"])
-        
-        self.assertFalse(result)
-        self.assertEqual(self.ctx.chat_id, -1)
-        self.ctx.chat_id_file.unlink.assert_called_once_with(missing_ok=True)
-        self.conf.plugin_manager.handle_command.assert_called_with(
-            "new_chat", {"root": self.conf.root}
-        )
-
-    @patch('aye.controller.repl.print_help_message')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_help_command(self, mock_telemetry, mock_print_help):
-        """Help command should print help message."""
-        result = self.dispatcher.dispatch("help", ["help"])
-        
-        self.assertFalse(result)
-        mock_print_help.assert_called_once()
-
-    @patch('aye.controller.repl.handle_verbose_command')
-    @patch('aye.controller.repl.get_user_config', return_value="on")
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_verbose_command(self, mock_telemetry, mock_get_config, mock_handle_verbose):
-        """Verbose command should update conf.verbose."""
-        result = self.dispatcher.dispatch("verbose", ["verbose", "on"])
-        
-        self.assertFalse(result)
-        mock_handle_verbose.assert_called_once_with(["verbose", "on"])
-        self.assertTrue(self.conf.verbose)
-
-    @patch('aye.controller.repl.handle_debug_command')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_debug_command(self, mock_telemetry, mock_handle_debug):
-        """Debug command should be dispatched."""
-        result = self.dispatcher.dispatch("debug", ["debug", "on"])
-        
-        self.assertFalse(result)
-        mock_handle_debug.assert_called_once_with(["debug", "on"])
-
-    @patch('aye.controller.repl.handle_autodiff_command')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_autodiff_command(self, mock_telemetry, mock_handle_autodiff):
-        """Autodiff command should be dispatched."""
-        result = self.dispatcher.dispatch("autodiff", ["autodiff", "on"])
-        
-        self.assertFalse(result)
-        mock_handle_autodiff.assert_called_once_with(["autodiff", "on"])
-
-    @patch('aye.controller.repl.commands.get_snapshot_history', return_value=[])
-    @patch('aye.controller.repl.cli_ui.print_snapshot_history')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_history_command(self, mock_telemetry, mock_print_history, mock_get_history):
-        """History command should list snapshots."""
-        result = self.dispatcher.dispatch("history", ["history"])
-        
-        self.assertFalse(result)
-        mock_get_history.assert_called_once()
-        mock_print_history.assert_called_once_with([])
-
-    @patch('aye.controller.repl.commands.restore_from_snapshot')
-    @patch('aye.controller.repl.cli_ui.print_restore_feedback')
-    @patch('aye.controller.repl.set_user_config')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_restore_command(self, mock_telemetry, mock_set_config, mock_print, mock_restore):
-        """Restore command should call restore_from_snapshot."""
-        result = self.dispatcher.dispatch("restore", ["restore", "001", "file.py"])
-        
-        self.assertFalse(result)
-        mock_restore.assert_called_once_with("001", "file.py")
-        mock_print.assert_called_once_with("001", "file.py")
-        mock_set_config.assert_called_with("has_used_restore", "on")
-
-    @patch('aye.controller.repl.commands.restore_from_snapshot')
-    @patch('aye.controller.repl.cli_ui.print_restore_feedback')
-    @patch('aye.controller.repl.set_user_config')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_undo_command(self, mock_telemetry, mock_set_config, mock_print, mock_restore):
-        """Undo command should work as alias for restore."""
-        result = self.dispatcher.dispatch("undo", ["undo"])
-        
-        self.assertFalse(result)
-        mock_restore.assert_called_once_with(None, None)
-
-    @patch('aye.controller.repl.commands.prune_snapshots', return_value=5)
-    @patch('aye.controller.repl.cli_ui.print_prune_feedback')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_keep_command_with_count(self, mock_telemetry, mock_print, mock_prune):
-        """Keep command should prune snapshots."""
-        result = self.dispatcher.dispatch("keep", ["keep", "5"])
-        
-        self.assertFalse(result)
-        mock_prune.assert_called_once_with(5)
-        mock_print.assert_called_once_with(5, 5)
-
-    @patch('aye.controller.repl.commands.prune_snapshots', return_value=3)
-    @patch('aye.controller.repl.cli_ui.print_prune_feedback')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_keep_command_default(self, mock_telemetry, mock_print, mock_prune):
-        """Keep command without args should use default 10."""
-        result = self.dispatcher.dispatch("keep", ["keep"])
-        
-        self.assertFalse(result)
-        mock_prune.assert_called_once_with(10)
-
-    @patch('aye.controller.repl.rprint')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_keep_command_invalid_number(self, mock_telemetry, mock_rprint):
-        """Keep command with invalid number should show error."""
-        result = self.dispatcher.dispatch("keep", ["keep", "abc"])
-        
-        self.assertFalse(result)
-        mock_rprint.assert_called()
-        self.assertIn("not a valid number", mock_rprint.call_args[0][0])
-
-    @patch('aye.controller.repl.handle_cd_command')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_cd_command(self, mock_telemetry, mock_handle_cd):
-        """CD command should be dispatched."""
-        result = self.dispatcher.dispatch("cd", ["cd", "/path"])
-        
-        self.assertFalse(result)
-        mock_handle_cd.assert_called_once_with(["cd", "/path"], self.conf)
-
-    @patch('aye.controller.repl._print_db_status')
-    @patch('aye.controller.repl.telemetry')
-    def test_dispatch_db_command(self, mock_telemetry, mock_print_db):
-        """DB command should print database status."""
-        result = self.dispatcher.dispatch("db", ["db"])
-        
-        self.assertFalse(result)
-        mock_print_db.assert_called_once_with(self.conf)
-
-
-class TestParseInput(unittest.TestCase):
-    """Tests for _parse_input function."""
-
-    def test_empty_input(self):
-        """Empty input should return empty tokens."""
-        force_shell, prompt, tokens = _parse_input("")
-        
-        self.assertFalse(force_shell)
-        self.assertEqual(prompt, "")
-        self.assertEqual(tokens, [])
-
-    def test_whitespace_only(self):
-        """Whitespace-only input should return empty tokens."""
-        force_shell, prompt, tokens = _parse_input("   ")
-        
-        self.assertFalse(force_shell)
-        self.assertEqual(tokens, [])
-
-    def test_simple_command(self):
-        """Simple command should be parsed correctly."""
-        force_shell, prompt, tokens = _parse_input("help")
-        
-        self.assertFalse(force_shell)
-        self.assertEqual(prompt, "help")
-        self.assertEqual(tokens, ["help"])
-
-    def test_command_with_args(self):
-        """Command with arguments should be parsed correctly."""
-        force_shell, prompt, tokens = _parse_input("model 1")
-        
-        self.assertFalse(force_shell)
-        self.assertEqual(tokens, ["model", "1"])
-
-    def test_force_shell_prefix(self):
-        """! prefix should set force_shell flag."""
-        force_shell, prompt, tokens = _parse_input("!ls -la")
-        
-        self.assertTrue(force_shell)
-        self.assertEqual(prompt, "ls -la")
-        self.assertEqual(tokens, ["ls", "-la"])
-
-    def test_force_shell_prefix_only(self):
-        """! alone should return empty tokens."""
-        force_shell, prompt, tokens = _parse_input("!")
-        
-        self.assertTrue(force_shell)
-        self.assertEqual(tokens, [])
-
-    def test_force_shell_with_spaces(self):
-        """! with trailing spaces should return empty tokens."""
-        force_shell, prompt, tokens = _parse_input("!   ")
-        
-        self.assertTrue(force_shell)
-        self.assertEqual(tokens, [])
-
-    def test_quoted_arguments(self):
-        """Quoted arguments should be parsed correctly."""
-        force_shell, prompt, tokens = _parse_input('echo "hello world"')
-        
-        self.assertFalse(force_shell)
-        self.assertEqual(tokens, ["echo", '"hello world"'])
-
-
-class TestNormalizeCommand(unittest.TestCase):
-    """Tests for _normalize_command function."""
-
-    def test_lowercase_conversion(self):
-        """Commands should be lowercased."""
-        original, lowered, tokens = _normalize_command(["HELP"])
-        
-        self.assertEqual(original, "HELP")
-        self.assertEqual(lowered, "help")
-
-    def test_slash_prefix_removal(self):
-        """Slash prefix should be removed."""
-        original, lowered, tokens = _normalize_command(["/help"])
-        
-        self.assertEqual(lowered, "help")
-        self.assertEqual(tokens, ["help"])
-
-    def test_model_number_shortcut(self):
-        """Single digit should become model command."""
-        original, lowered, tokens = _normalize_command(["1"])
-        
-        self.assertEqual(lowered, "model")
-        self.assertEqual(tokens, ["model", "1"])
-
-    def test_model_number_out_of_range(self):
-        """Number out of model range should not be converted."""
-        # Assuming less than 100 models
-        original, lowered, tokens = _normalize_command(["999"])
-        
-        self.assertEqual(lowered, "999")
-        self.assertEqual(tokens, ["999"])
-
-    def test_model_number_with_args_not_converted(self):
-        """Number with args should not be converted to model command."""
-        original, lowered, tokens = _normalize_command(["1", "arg"])
-        
-        self.assertEqual(lowered, "1")
-        self.assertEqual(tokens, ["1", "arg"])
-
-    def test_non_numeric_not_converted(self):
-        """Non-numeric tokens should not be treated as model shortcuts."""
-        original, lowered, tokens = _normalize_command(["abc"])
-        
-        self.assertEqual(lowered, "abc")
-        self.assertEqual(tokens, ["abc"])
-
-
-class TestGetCompleter(unittest.TestCase):
-    """Tests for _get_completer function."""
-
-    def test_returns_completer_from_plugin(self):
-        """Should return completer from plugin manager."""
-        mock_pm = MagicMock()
-        mock_completer = MagicMock()
-        mock_pm.handle_command.return_value = {"completer": mock_completer}
-        
-        result = _get_completer(mock_pm, "/project", "readline")
-        
-        self.assertEqual(result, mock_completer)
-        mock_pm.handle_command.assert_called_once_with(
-            "get_completer",
-            {
-                "commands": BUILTIN_COMMANDS,
-                "project_root": "/project",
-                "completion_style": "readline",
-            }
-        )
-
-    def test_returns_none_when_plugin_returns_none(self):
-        """Should return None when plugin doesn't provide completer."""
-        mock_pm = MagicMock()
-        mock_pm.handle_command.return_value = None
-        
-        result = _get_completer(mock_pm, "/project", "multi")
-        
-        self.assertIsNone(result)
-
-
-class TestHandleShellCommand(unittest.TestCase):
-    """Tests for _handle_shell_command function."""
-
-    def test_successful_shell_command(self):
-        """Shell command should be executed and return True."""
-        conf = MagicMock()
-        conf.plugin_manager.handle_command.return_value = {
-            "stdout": "output",
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_executes_with_force_flag_and_prints_stdout(self, mock_record, mock_rprint):
+        """Test that command executes with force=True and stdout is printed."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "file1.txt\nfile2.txt",
             "stderr": "",
         }
-        
-        with patch('aye.controller.repl.telemetry'), \
-             patch('aye.controller.repl.rprint'):
-            result = _handle_shell_command("ls", ["ls", "-la"], conf)
-        
-        self.assertTrue(result)
-        conf.plugin_manager.handle_command.assert_called_once()
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
 
-    def test_unrecognized_command_returns_false(self):
-        """Unrecognized command should return False."""
-        conf = MagicMock()
-        conf.plugin_manager.handle_command.return_value = None
-        
-        result = _handle_shell_command("notacommand", ["notacommand"], conf)
-        
-        self.assertFalse(result)
+        repl._execute_forced_shell_command("ls", ["-la"], conf)
 
+        plugin_manager.handle_command.assert_called_once_with(
+            "execute_shell_command",
+            {"command": "ls", "args": ["-la"], "force": True}
+        )
+        mock_rprint.assert_called_once_with("file1.txt\nfile2.txt")
 
-class TestHandleLlmInvocation(unittest.TestCase):
-    """Tests for _handle_llm_invocation function."""
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_prints_stderr_with_yellow_formatting(self, mock_record, mock_rprint):
+        """Test that stderr is printed with yellow formatting."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "",
+            "stderr": "warning: something happened",
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
 
-    def setUp(self):
-        """Set up test fixtures."""
-        self.conf = MagicMock()
-        self.conf.root = Path("/project")
-        self.conf.plugin_manager = MagicMock()
-        self.conf.verbose = False
-        
-        self.ctx = CommandContext(
-            conf=self.conf,
-            session=MagicMock(),
-            console=MagicMock(),
-            chat_id=1,
+        repl._execute_forced_shell_command("cmd", [], conf)
+
+        mock_rprint.assert_called_once_with("[yellow]warning: something happened[/]")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_prints_both_stdout_and_stderr(self, mock_record, mock_rprint):
+        """Test that both stdout and stderr are printed when present."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "output here",
+            "stderr": "warning here",
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("cmd", ["arg1"], conf)
+
+        assert mock_rprint.call_count == 2
+        mock_rprint.assert_any_call("output here")
+        mock_rprint.assert_any_call("[yellow]warning here[/]")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_prints_error_with_red_formatting(self, mock_record, mock_rprint):
+        """Test that error in response is printed with red formatting."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "partial output",
+            "stderr": "",
+            "error": "Command failed with exit code 1",
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("failing_cmd", [], conf)
+
+        assert mock_rprint.call_count == 2
+        mock_rprint.assert_any_call("partial output")
+        mock_rprint.assert_any_call("[red]Error:[/] Command failed with exit code 1")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_prints_message_for_interactive_commands(self, mock_record, mock_rprint):
+        """Test that message-only responses (e.g., interactive commands) are printed."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "message": "Interactive command 'vim' completed (exit code: 0)."
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("vim", ["file.txt"], conf)
+
+        mock_rprint.assert_called_once_with(
+            "Interactive command 'vim' completed (exit code: 0)."
         )
 
-    @patch('aye.controller.repl.invoke_llm')
-    @patch('aye.controller.repl.process_llm_response')
-    @patch('aye.controller.repl.telemetry')
-    def test_basic_llm_invocation(self, mock_telemetry, mock_process, mock_invoke):
-        """Basic LLM invocation without @ references."""
-        mock_invoke.return_value = MagicMock(chat_id=None)
-        self.conf.plugin_manager.handle_command.return_value = None
-        
-        _handle_llm_invocation("explain this", self.ctx)
-        
-        mock_invoke.assert_called_once()
-        mock_telemetry.record_llm_prompt.assert_called_with("LLM")
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_prints_error_when_plugin_returns_none(self, mock_record, mock_rprint):
+        """Test that error is printed when plugin returns None."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = None
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
 
-    @patch('aye.controller.repl.invoke_llm')
-    @patch('aye.controller.repl.process_llm_response')
-    @patch('aye.controller.repl.telemetry')
-    def test_llm_invocation_with_at_reference(self, mock_telemetry, mock_process, mock_invoke):
-        """LLM invocation with @ file references."""
-        mock_invoke.return_value = MagicMock(chat_id=None)
-        self.conf.plugin_manager.handle_command.return_value = {
-            "file_contents": {"main.py": "content"},
-            "cleaned_prompt": "explain this",
+        repl._execute_forced_shell_command("nonexistent", [], conf)
+
+        mock_rprint.assert_called_once_with("[red]Error:[/] Failed to execute shell command")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_records_telemetry_with_args(self, mock_record, mock_rprint):
+        """Test that telemetry is recorded with has_args=True when args present."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {"stdout": "ok", "stderr": ""}
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("git", ["status", "-s"], conf)
+
+        mock_record.assert_called_once_with("git", has_args=True, prefix="cmd:")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_records_telemetry_without_args(self, mock_record, mock_rprint):
+        """Test that telemetry is recorded with has_args=False when no args."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {"stdout": "ok", "stderr": ""}
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("pwd", [], conf)
+
+        mock_record.assert_called_once_with("pwd", has_args=False, prefix="cmd:")
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_does_not_print_empty_stdout_or_stderr(self, mock_record, mock_rprint):
+        """Test that empty stdout/stderr strings don't result in prints."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "   ",  # whitespace only
+            "stderr": "",
         }
-        
-        _handle_llm_invocation("explain @main.py", self.ctx)
-        
-        mock_invoke.assert_called_once()
-        mock_telemetry.record_llm_prompt.assert_called_with("LLM @")
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
 
-    @patch('aye.controller.repl.invoke_llm')
-    @patch('aye.controller.repl.rprint')
-    @patch('aye.controller.repl.telemetry')
-    def test_llm_invocation_no_response(self, mock_telemetry, mock_rprint, mock_invoke):
-        """LLM invocation with no response."""
-        mock_invoke.return_value = None
-        self.conf.plugin_manager.handle_command.return_value = None
-        
-        _handle_llm_invocation("prompt", self.ctx)
-        
-        mock_rprint.assert_called_with("[yellow]No response from LLM.[/]")
+        repl._execute_forced_shell_command("cmd", [], conf)
 
-    @patch('aye.controller.repl.invoke_llm')
-    @patch('aye.controller.repl.process_llm_response')
-    @patch('aye.controller.repl.telemetry')
-    def test_llm_invocation_updates_chat_id(self, mock_telemetry, mock_process, mock_invoke):
-        """LLM invocation should update chat_id from response."""
-        mock_invoke.return_value = MagicMock(chat_id=100)
-        mock_process.return_value = 200
-        self.conf.plugin_manager.handle_command.return_value = None
-        
-        _handle_llm_invocation("prompt", self.ctx)
-        
-        self.assertEqual(self.ctx.chat_id, 200)
+        mock_rprint.assert_not_called()
+
+    @patch("aye.controller.repl.rprint")
+    @patch("aye.controller.repl.telemetry.record_command")
+    def test_handles_stdout_stderr_and_error_together(self, mock_record, mock_rprint):
+        """Test all three outputs printed when all present."""
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.return_value = {
+            "stdout": "some output",
+            "stderr": "some warning",
+            "error": "but it failed",
+        }
+        conf = SimpleNamespace(plugin_manager=plugin_manager)
+
+        repl._execute_forced_shell_command("cmd", ["arg"], conf)
+
+        assert mock_rprint.call_count == 3
+        mock_rprint.assert_any_call("some output")
+        mock_rprint.assert_any_call("[yellow]some warning[/]")
+        mock_rprint.assert_any_call("[red]Error:[/] but it failed")
 
 
-class TestPrintDbStatus(unittest.TestCase):
-    """Tests for _print_db_status function."""
+def test_chat_repl_force_shell_prefix_executes_via_forced_function():
+    """Test that ! prefix triggers _execute_forced_shell_command in REPL."""
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl._execute_forced_shell_command") as mock_forced,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["!mycommand arg1 arg2", "exit"]
+        mock_session_cls.return_value = session
 
-    @patch('aye.controller.repl.rprint')
-    def test_no_index_manager(self, mock_rprint):
-        """Should handle missing index manager."""
-        conf = SimpleNamespace(index_manager=None, use_rag=True)
-        
-        _print_db_status(conf)
-        
-        mock_rprint.assert_called_with("[red]Index manager not available.[/red]")
+        _setup_mock_chat_id_path(mock_path)
 
-    @patch('aye.controller.repl.rprint')
-    def test_small_project_mode(self, mock_rprint):
-        """Should show small project message when use_rag=False."""
-        conf = SimpleNamespace(index_manager=None, use_rag=False)
-        
-        _print_db_status(conf)
-        
-        mock_rprint.assert_called_with(
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=None,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        mock_forced.assert_called_once_with("mycommand", ["arg1", "arg2"], conf)
+
+
+def test_chat_repl_force_shell_empty_after_bang_skips():
+    """Test that '!' alone is skipped without error."""
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl._execute_forced_shell_command") as mock_forced,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["!", "!   ", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=None,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        mock_forced.assert_not_called()
+
+
+def test_create_key_bindings_registers_two_enter_bindings_and_handlers_work():
+    bindings = repl.create_key_bindings()
+    enter_bindings = bindings.get_bindings_for_keys((Keys.Enter,))
+
+    assert len(enter_bindings) == 2
+
+    selected_binding = next(b for b in enter_bindings if b.filter == completion_is_selected)
+    first_binding = next(b for b in enter_bindings if b.filter != completion_is_selected)
+
+    # accept_selected_completion
+    completion = object()
+    complete_state = SimpleNamespace(current_completion=completion, completions=[completion])
+    buffer = MagicMock()
+    buffer.complete_state = complete_state
+    event = SimpleNamespace(app=SimpleNamespace(current_buffer=buffer))
+
+    selected_binding.handler(event)
+    buffer.apply_completion.assert_called_once_with(completion)
+    assert buffer.complete_state is None
+
+    # accept_first_completion
+    completion2 = object()
+    complete_state2 = SimpleNamespace(current_completion=None, completions=[completion2])
+    buffer2 = MagicMock()
+    buffer2.complete_state = complete_state2
+    event2 = SimpleNamespace(app=SimpleNamespace(current_buffer=buffer2))
+
+    first_binding.handler(event2)
+    buffer2.apply_completion.assert_called_once_with(completion2)
+    assert buffer2.complete_state is None
+
+
+def test_create_prompt_session_uses_multicolumn_and_key_bindings():
+    completer = MagicMock()
+
+    with patch("aye.controller.repl.PromptSession") as mock_session_cls:
+        repl.create_prompt_session(completer=completer, completion_style="readline")
+
+        assert mock_session_cls.call_count == 1
+        kwargs = mock_session_cls.call_args.kwargs
+        assert kwargs["completer"] is completer
+        assert kwargs["complete_style"] == repl.CompleteStyle.MULTI_COLUMN
+        assert kwargs["complete_while_typing"] is True
+        assert kwargs["key_bindings"] is not None
+
+
+def test_chat_repl_starts_background_indexing_when_has_work():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.threading.Thread") as mock_thread_cls,
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.print_help_message"),
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        thread_instance = MagicMock()
+        mock_thread_cls.return_value = thread_instance
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = True
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+        )
+
+        repl.chat_repl(conf)
+
+        mock_thread_cls.assert_called_once_with(
+            target=index_manager.run_sync_in_background, daemon=True
+        )
+        thread_instance.start.assert_called_once()
+
+
+def test_chat_repl_shell_command_outputs_error_info():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+        patch("aye.controller.repl.rprint") as mock_rprint,
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["ls", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [
+            {"completer": None},
+            {"stdout": "files", "stderr": "warn", "error": "bad"},
+        ]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+        )
+
+        repl.chat_repl(conf)
+
+        outputs = [c.args[0] for c in mock_rprint.call_args_list]
+        assert "files" in outputs
+        assert "[yellow]warn[/]" in outputs
+        assert "[red]Error:[/] bad" in outputs
+
+
+def test_chat_repl_db_command_with_collection_sample():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+        patch("aye.controller.repl.rprint") as mock_rprint,
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["/db", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        long_doc = "A" * 80 + "\nmore text"
+        collection = MagicMock()
+        collection.name = "test"
+        collection.count.return_value = 2
+        collection.peek.return_value = {
+            "ids": ["1"],
+            "metadatas": [{"foo": "bar"}],
+            "documents": [long_doc],
+        }
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+        index_manager.collection = collection
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        printed = [call.args[0] for call in mock_rprint.call_args_list]
+        assert any("Vector DB Status" in str(line) for line in printed)
+        assert any("Sample of up to 5 records" in str(line) for line in printed)
+        assert any(
+            "[yellow]Content:[/]" in str(line) and str(line).endswith('..."')
+            for line in printed
+        )
+
+
+def test_chat_repl_db_command_empty_collection_prints_empty_message():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+        patch("aye.controller.repl.rprint") as mock_rprint,
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["db", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        collection = MagicMock()
+        collection.name = "empty"
+        collection.count.return_value = 0
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+        index_manager.collection = collection
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        printed = [call.args[0] for call in mock_rprint.call_args_list]
+        assert any("The vector index is empty" in str(x) for x in printed)
+
+
+def test_chat_repl_db_command_peek_exception_is_handled():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+        patch("aye.controller.repl.rprint") as mock_rprint,
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["db", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        collection = MagicMock()
+        collection.name = "boom"
+        collection.count.return_value = 1
+        collection.peek.side_effect = RuntimeError("nope")
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+        index_manager.collection = collection
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        printed = [call.args[0] for call in mock_rprint.call_args_list]
+        assert any("Could not retrieve sample records" in str(x) for x in printed)
+
+
+def test_chat_repl_handles_tokenization_error():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.print_error") as mock_print_error,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ['bad "input', "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+        )
+
+        repl.chat_repl(conf)
+
+        mock_print_error.assert_called_once()
+        assert isinstance(mock_print_error.call_args[0][0], ValueError)
+
+
+def test_chat_repl_handles_exception_and_calls_error_handler():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.handle_llm_error") as mock_handle_error,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["ls", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        def plugin_side_effect(command, *_args, **_kwargs):
+            if command == "get_completer":
+                return {"completer": None}
+            raise RuntimeError("boom")
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = plugin_side_effect
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+        )
+
+        repl.chat_repl(conf)
+
+        mock_handle_error.assert_called_once()
+
+
+def test_chat_repl_invalid_chat_id_file_is_cleaned():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["exit"]
+        mock_session_cls.return_value = session
+
+        chat_id_file = _setup_mock_chat_id_path(mock_path, exists=True, contents="abc")
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+        )
+
+        repl.chat_repl(conf)
+
+        chat_id_file.unlink.assert_called_once_with(missing_ok=True)
+
+
+def test_chat_repl_completion_command_recreates_completer_and_session():
+    with (
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.handle_completion_command", return_value="multi") as mock_completion,
+        patch("aye.controller.repl.create_prompt_session") as mock_create_session,
+        patch("aye.controller.repl.rprint") as mock_rprint,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["completion multi", "exit"]
+        mock_create_session.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+
+        def plugin_side_effect(command, params):
+            if command == "get_completer":
+                return {"completer": None}
+            return None
+
+        plugin_manager.handle_command.side_effect = plugin_side_effect
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=None,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        # One session created at startup, one recreated after completion command
+        assert mock_create_session.call_count == 2
+        assert mock_completion.call_count == 1
+        assert any(
+            "Completion style is now active" in str(c.args[0]) for c in mock_rprint.call_args_list
+        )
+
+        # get_completer should be called twice (startup + after completion style change)
+        get_completer_calls = [
+            c
+            for c in plugin_manager.handle_command.call_args_list
+            if c.args and c.args[0] == "get_completer"
+        ]
+        assert len(get_completer_calls) == 2
+
+
+def test_chat_repl_model_number_shortcut_calls_model_handler():
+    with (
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.handle_model_command") as mock_model_cmd,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        # Use real create_prompt_session path via patched PromptSession
+        with patch("aye.controller.repl.PromptSession") as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ["2", "exit"]
+            mock_session_cls.return_value = session
+
+            _setup_mock_chat_id_path(mock_path)
+
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask="*.py",
+                plugin_manager=plugin_manager,
+                index_manager=None,
+                verbose=False,
+                selected_model="model",
+                use_rag=True,
+            )
+
+            repl.chat_repl(conf)
+
+        mock_model_cmd.assert_called_once()
+        args = mock_model_cmd.call_args.args
+        assert args[3] == ["model", "2"]
+
+
+def test_chat_repl_slash_prefixed_shell_command_executes_normalized_command():
+    with (
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.rprint") as mock_rprint,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        with patch("aye.controller.repl.PromptSession") as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ["/ls -l", "exit"]
+            mock_session_cls.return_value = session
+
+            _setup_mock_chat_id_path(mock_path)
+
+            def plugin_side_effect(command, params):
+                if command == "get_completer":
+                    return {"completer": None}
+                if command == "execute_shell_command":
+                    assert params["command"] == "ls"
+                    assert params["args"] == ["-l"]
+                    return {"stdout": "ok"}
+                return None
+
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = plugin_side_effect
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask="*.py",
+                plugin_manager=plugin_manager,
+                index_manager=None,
+                verbose=False,
+                selected_model="model",
+                use_rag=True,
+            )
+
+            repl.chat_repl(conf)
+
+        mock_rprint.assert_any_call("ok")
+
+
+def test_chat_repl_reads_valid_chat_id_file_passes_to_llm_and_updates_chat_id():
+    with (
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.invoke_llm") as mock_invoke,
+        patch("aye.controller.repl.process_llm_response", return_value=9) as mock_process,
+        patch("aye.controller.repl.collect_and_send_feedback") as mock_feedback,
+    ):
+        with patch("aye.controller.repl.PromptSession") as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ["hello", "exit"]
+            mock_session_cls.return_value = session
+
+            chat_id_file = _setup_mock_chat_id_path(mock_path, exists=True, contents="7")
+
+            def plugin_side_effect(command, params):
+                if command == "get_completer":
+                    return {"completer": None}
+                if command == "execute_shell_command":
+                    return None
+                if command == "parse_at_references":
+                    return None
+                return None
+
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = plugin_side_effect
+
+            # LLM response object with chat_id; process_llm_response should receive chat_id_file
+            mock_invoke.return_value = SimpleNamespace(chat_id=9)
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask="*.py",
+                plugin_manager=plugin_manager,
+                index_manager=None,
+                verbose=False,
+                selected_model="model",
+                use_rag=True,
+            )
+
+            repl.chat_repl(conf)
+
+        # First LLM invocation should receive chat_id from file
+        assert mock_invoke.call_count == 1
+        assert mock_invoke.call_args.kwargs["chat_id"] == 7
+
+        # process_llm_response should have been passed a chat_id_file (since llm_response.chat_id truthy)
+        assert mock_process.call_count == 1
+        assert mock_process.call_args.kwargs["chat_id_file"] is chat_id_file
+
+        # Final feedback should be called with updated chat_id (9)
+        mock_feedback.assert_called_once_with(9)
+
+
+def test_chat_repl_db_command_no_index_manager_rag_disabled_prints_small_project_mode():
+    with (
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.rprint") as mock_rprint,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        with patch("aye.controller.repl.PromptSession") as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ["db", "exit"]
+            mock_session_cls.return_value = session
+
+            _setup_mock_chat_id_path(mock_path)
+
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask="*.py",
+                plugin_manager=plugin_manager,
+                index_manager=None,
+                verbose=False,
+                selected_model="model",
+                use_rag=False,
+            )
+
+            repl.chat_repl(conf)
+
+        mock_rprint.assert_any_call(
             "[yellow]Small project mode: RAG indexing is disabled.[/yellow]"
         )
 
-    @patch('aye.controller.repl.rprint')
-    def test_with_index_manager(self, mock_rprint):
-        """Should print collection info when index manager exists."""
-        mock_collection = MagicMock()
-        mock_collection.count.return_value = 100
-        mock_collection.name = "test_collection"
-        mock_collection.peek.return_value = {
-            "ids": ["id1"],
-            "metadatas": [{"file": "test.py"}],
-            "documents": ["test content"],
-        }
-        
-        mock_index_manager = MagicMock()
-        mock_index_manager.collection = mock_collection
-        
-        conf = SimpleNamespace(index_manager=mock_index_manager)
-        
-        _print_db_status(conf)
-        
-        # Verify rprint was called with collection info
-        calls = [str(c) for c in mock_rprint.call_args_list]
-        self.assertTrue(any("test_collection" in c for c in calls))
-        self.assertTrue(any("100" in c for c in calls))
+
+def test_chat_repl_always_shuts_down_index_manager_in_finally():
+    with (
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        with patch("aye.controller.repl.PromptSession") as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ["exit"]
+            mock_session_cls.return_value = session
+
+            _setup_mock_chat_id_path(mock_path)
+
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+            index_manager = MagicMock()
+            index_manager.has_work.return_value = False
+            index_manager.is_indexing.return_value = False
+
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask="*.py",
+                plugin_manager=plugin_manager,
+                index_manager=index_manager,
+                verbose=False,
+                selected_model="model",
+                use_rag=True,
+            )
+
+            repl.chat_repl(conf)
+
+        index_manager.shutdown.assert_called_once()
 
 
-class TestCreateKeyBindings(unittest.TestCase):
-    """Tests for create_key_bindings function."""
+def test_chat_repl_when_indexing_and_verbose_prefixes_prompt_with_progress():
+    with (
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.handle_model_command"),
+        patch("aye.controller.repl.print_help_message"),
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        with patch("aye.controller.repl.PromptSession") as mock_session_cls:
+            session = MagicMock()
+            session.prompt.side_effect = ["exit"]
+            mock_session_cls.return_value = session
 
-    def test_returns_key_bindings(self):
-        """Should return KeyBindings object."""
-        from prompt_toolkit.key_binding import KeyBindings
-        
-        bindings = create_key_bindings()
-        
-        self.assertIsInstance(bindings, KeyBindings)
+            _setup_mock_chat_id_path(mock_path)
 
+            plugin_manager = MagicMock()
+            plugin_manager.handle_command.side_effect = [{"completer": None}]
 
-class TestCreatePromptSession(unittest.TestCase):
-    """Tests for create_prompt_session function."""
+            index_manager = MagicMock()
+            index_manager.has_work.return_value = False
+            index_manager.is_indexing.return_value = True
+            index_manager.get_progress_display.return_value = "1/3"
 
-    @patch('aye.controller.repl.PromptSession')
-    def test_creates_session_with_completer(self, mock_session_class):
-        """Should create session with provided completer."""
-        from aye.controller.repl import create_prompt_session
-        
-        mock_completer = MagicMock()
-        mock_session_instance = MagicMock()
-        mock_session_class.return_value = mock_session_instance
-        
-        session = create_prompt_session(mock_completer, "readline")
-        
-        mock_session_class.assert_called_once()
-        call_kwargs = mock_session_class.call_args[1]
-        self.assertEqual(call_kwargs['completer'], mock_completer)
-        self.assertEqual(session, mock_session_instance)
+            conf = SimpleNamespace(
+                root=Path.cwd(),
+                file_mask="*.py",
+                plugin_manager=plugin_manager,
+                index_manager=index_manager,
+                verbose=True,
+                selected_model="model",
+                use_rag=True,
+            )
 
-    @patch('aye.controller.repl.PromptSession')
-    def test_creates_session_without_completer(self, mock_session_class):
-        """Should create session even without completer."""
-        from aye.controller.repl import create_prompt_session
-        
-        mock_session_instance = MagicMock()
-        mock_session_class.return_value = mock_session_instance
-        
-        session = create_prompt_session(None, "multi")
-        
-        mock_session_class.assert_called_once()
-        call_kwargs = mock_session_class.call_args[1]
-        self.assertIsNone(call_kwargs['completer'])
-        self.assertEqual(session, mock_session_instance)
+            repl.chat_repl(conf)
+
+        # The prompt should be overridden when indexing and verbose
+        assert session.prompt.call_args.args[0] == "(ツ (1/3) » "
 
 
-class TestPrintStartupHeader(unittest.TestCase):
-    """Tests for print_startup_header function."""
+def test_chat_repl_diff_without_args_prints_error_and_continues():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.rprint") as mock_rprint,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["diff", "exit"]
+        mock_session_cls.return_value = session
 
-    @patch('aye.controller.repl.MODELS', [
-        {"id": "test/model", "name": "Test Model"},
-    ])
-    @patch('aye.controller.repl.print_welcome_message')
-    @patch('aye.controller.repl.rprint')
-    def test_prints_model_and_mask(self, mock_rprint, mock_welcome):
-        """Should print model name and file mask."""
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
         conf = SimpleNamespace(
-            selected_model="test/model",
+            root=Path.cwd(),
             file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
         )
-        
-        print_startup_header(conf)
-        
-        calls = [str(c) for c in mock_rprint.call_args_list]
-        self.assertTrue(any("*.py" in c for c in calls))
-        self.assertTrue(any("Test Model" in c for c in calls))
-        mock_welcome.assert_called_once()
 
-    @patch('aye.controller.repl.MODELS', [
-        {"id": "default/model", "name": "Default Model"},
-    ])
-    @patch('aye.controller.repl.DEFAULT_MODEL_ID', "default/model")
-    @patch('aye.controller.repl.set_user_config')
-    @patch('aye.controller.repl.print_welcome_message')
-    @patch('aye.controller.repl.rprint')
-    def test_falls_back_to_default_model(self, mock_rprint, mock_welcome, mock_set_config):
-        """Should fall back to default model if selected not found."""
+        repl.chat_repl(conf)
+
+        mock_rprint.assert_any_call("[red]Error:[/] No file specified for diff.")
+
+
+def test_chat_repl_restore_with_file_arg_sets_has_used_restore():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.commands") as mock_commands,
+        patch("aye.controller.repl.cli_ui") as mock_cli_ui,
+        patch("aye.controller.repl.set_user_config") as mock_set_user_config,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["restore 001 file.py", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
         conf = SimpleNamespace(
-            selected_model="nonexistent/model",
+            root=Path.cwd(),
             file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
         )
-        
-        print_startup_header(conf)
-        
-        self.assertEqual(conf.selected_model, "default/model")
-        mock_set_config.assert_called_with("selected_model", "default/model")
+
+        repl.chat_repl(conf)
+
+        mock_commands.restore_from_snapshot.assert_called_once_with("001", "file.py")
+        mock_cli_ui.print_restore_feedback.assert_called_once_with("001", "file.py")
+        mock_set_user_config.assert_any_call("has_used_restore", "on")
 
 
-class TestSetupContext(unittest.TestCase):
-    """Tests for _setup_context function."""
+def test_chat_repl_keep_without_arg_defaults_to_10():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.commands") as mock_commands,
+        patch("aye.controller.repl.cli_ui") as mock_cli_ui,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["keep", "exit"]
+        mock_session_cls.return_value = session
 
-    @patch('aye.controller.repl.get_user_config', return_value="readline")
-    @patch('aye.controller.repl._get_completer', return_value=None)
-    @patch('aye.controller.repl.create_prompt_session')
-    def test_creates_context(self, mock_create_session, mock_completer, mock_config):
-        """Should create CommandContext with all components."""
-        conf = MagicMock()
-        conf.root = Path("/project")
-        conf.plugin_manager = MagicMock()
-        
-        mock_session = MagicMock()
-        mock_create_session.return_value = mock_session
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Change to temp directory so .aye can be created
-            import os
-            original_cwd = os.getcwd()
-            os.chdir(tmpdir)
-            
-            try:
-                ctx = _setup_context(conf)
-                
-                self.assertIsInstance(ctx, CommandContext)
-                self.assertEqual(ctx.conf, conf)
-                self.assertEqual(ctx.session, mock_session)
-                self.assertEqual(ctx.chat_id, -1)
-                self.assertEqual(ctx.completion_style, "readline")
-            finally:
-                os.chdir(original_cwd)
+        _setup_mock_chat_id_path(mock_path)
 
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
 
-class TestBuiltinCommands(unittest.TestCase):
-    """Tests for BUILTIN_COMMANDS list."""
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
 
-    def test_contains_expected_commands(self):
-        """BUILTIN_COMMANDS should contain all expected commands."""
-        expected = [
-            "with", "new", "history", "diff", "restore", "undo",
-            "model", "verbose", "debug", "autodiff", "completion",
-            "exit", "quit", ":q", "help", "cd", "db", "llm",
-        ]
-        
-        for cmd in expected:
-            self.assertIn(cmd, BUILTIN_COMMANDS, f"{cmd} not in BUILTIN_COMMANDS")
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
 
-    def test_no_duplicates(self):
-        """BUILTIN_COMMANDS should not have duplicates."""
-        self.assertEqual(len(BUILTIN_COMMANDS), len(set(BUILTIN_COMMANDS)))
+        mock_commands.prune_snapshots.return_value = ["001"]
+
+        repl.chat_repl(conf)
+
+        mock_commands.prune_snapshots.assert_called_once_with(10)
+        mock_cli_ui.print_prune_feedback.assert_called_once_with(["001"], 10)
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_chat_repl_keep_with_invalid_arg_shows_error():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.commands") as mock_commands,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+        patch("aye.controller.repl.rprint") as mock_rprint,
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["keep abc", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = [{"completer": None}]
+
+        index_manager = MagicMock()
+        index_manager.has_work.return_value = False
+        index_manager.is_indexing.return_value = False
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=index_manager,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        # prune_snapshots should NOT be called when input is invalid
+        mock_commands.prune_snapshots.assert_not_called()
+
+        # rprint should have been called with the error message
+        mock_rprint.assert_any_call(
+            "[red]Error:[/] 'abc' is not a valid number. Please provide a positive integer."
+        )
+
+
+def test_chat_repl_at_references_verbose_prints_and_llm_called_with_explicit_source_files():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.invoke_llm") as mock_invoke,
+        patch("aye.controller.repl.process_llm_response", return_value=None),
+        patch("aye.controller.repl.rprint") as mock_rprint,
+        patch("aye.controller.repl.telemetry.record_llm_prompt") as mock_record_llm,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["explain @a.py", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        def plugin_side_effect(command, params):
+            if command == "get_completer":
+                return {"completer": None}
+            if command == "execute_shell_command":
+                return None
+            if command == "parse_at_references":
+                return {
+                    "file_contents": {"a.py": "print('x')"},
+                    "cleaned_prompt": "explain file",
+                }
+            return None
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = plugin_side_effect
+
+        mock_invoke.return_value = SimpleNamespace(chat_id=None)
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=None,
+            verbose=True,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        assert any("Including 1 file(s)" in str(c.args[0]) for c in mock_rprint.call_args_list)
+        mock_record_llm.assert_any_call("LLM @")
+        assert mock_invoke.call_count == 1
+        assert mock_invoke.call_args.kwargs["prompt"] == "explain file"
+        assert mock_invoke.call_args.kwargs["explicit_source_files"] == {"a.py": "print('x')"}
+
+
+def test_chat_repl_at_references_error_falls_back_to_llm_without_explicit_files():
+    with (
+        patch("aye.controller.repl.PromptSession") as mock_session_cls,
+        patch("aye.controller.repl.run_first_time_tutorial_if_needed", return_value=False),
+        patch("aye.controller.repl._prompt_for_telemetry_consent_if_needed", return_value=False),
+        patch("aye.controller.repl.print_startup_header"),
+        patch("aye.controller.repl.print_prompt", return_value="> "),
+        patch("aye.controller.repl.Path") as mock_path,
+        patch("aye.controller.repl.invoke_llm") as mock_invoke,
+        patch("aye.controller.repl.process_llm_response", return_value=None),
+        patch("aye.controller.repl.telemetry.record_llm_prompt") as mock_record_llm,
+        patch("aye.controller.repl.collect_and_send_feedback"),
+    ):
+        session = MagicMock()
+        session.prompt.side_effect = ["explain @a.py", "exit"]
+        mock_session_cls.return_value = session
+
+        _setup_mock_chat_id_path(mock_path)
+
+        def plugin_side_effect(command, params):
+            if command == "get_completer":
+                return {"completer": None}
+            if command == "execute_shell_command":
+                return None
+            if command == "parse_at_references":
+                return {"error": "bad parse"}
+            return None
+
+        plugin_manager = MagicMock()
+        plugin_manager.handle_command.side_effect = plugin_side_effect
+
+        mock_invoke.return_value = SimpleNamespace(chat_id=None)
+
+        conf = SimpleNamespace(
+            root=Path.cwd(),
+            file_mask="*.py",
+            plugin_manager=plugin_manager,
+            index_manager=None,
+            verbose=False,
+            selected_model="model",
+            use_rag=True,
+        )
+
+        repl.chat_repl(conf)
+
+        mock_record_llm.assert_any_call("LLM")
+        assert mock_invoke.call_count == 1
+        assert mock_invoke.call_args.kwargs["explicit_source_files"] is None
