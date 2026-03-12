@@ -52,7 +52,7 @@ def _load_ignore_patterns(root_dir: Path) -> pathspec.PathSpec:
         
         current_path = current_path.parent
 
-    return pathspec.PathSpec.from_lines("gitignore", patterns)
+    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
 
 
 def get_project_files_with_limit(root_dir: str, file_mask: str, limit: int = SMALL_PROJECT_FILE_LIMIT) -> Tuple[List[Path], bool]:
