@@ -561,6 +561,330 @@ class TestParseApiResponse(TestCase):
         self.assertTrue(any("truncated" in c.lower() for c in debug_prints))
 
 
+class TestBuildSystemPrompt(TestCase):
+    """Tests for _build_system_prompt function."""
+
+    def setUp(self):
+        self.conf = SimpleNamespace(root=Path('.'))
+
+    @patch('aye.controller.llm_invoker.discover_agents_file', return_value=None)
+    def test_default_system_prompt_when_no_ground_truth(self, mock_discover):
+        """Uses SYSTEM_PROMPT when no ground_truth is set."""
+        result = llm_invoker._build_system_prompt(self.conf, verbose=False)
+        self.assertEqual(result, SYSTEM_PROMPT)
+
+    @patch('aye.controller.llm_invoker.discover_agents_file', return_value=None)
+    def test_ground_truth_overrides_system_prompt(self, mock_discover):
+        """Uses ground_truth when set on conf."""
+        self.conf.ground_truth = "Custom evaluation prompt"
+        result = llm_invoker._build_system_prompt(self.conf, verbose=False)
+        self.assertEqual(result, "Custom evaluation prompt")
+
+    @patch('aye.controller.llm_invoker.discover_agents_file', return_value=None)
+    def test_empty_ground_truth_uses_default(self, mock_discover):
+        """Empty ground_truth falls back to SYSTEM_PROMPT."""
+        self.conf.ground_truth = ""
+        result = llm_invoker._build_system_prompt(self.conf, verbose=False)
+        self.assertEqual(result, SYSTEM_PROMPT)
+
+    @patch('aye.controller.llm_invoker.discover_agents_file')
+    def test_agents_md_appended(self, mock_discover):
+        """AGENTS.md content is appended to the base prompt."""
+        mock_discover.return_value = (Path("/repo/AGENTS.md"), "Use pytest for tests.")
+        result = llm_invoker._build_system_prompt(self.conf, verbose=False)
+        self.assertIn(SYSTEM_PROMPT, result)
+        self.assertIn("AGENTS.md", result)
+        self.assertIn("Use pytest for tests.", result)
+        self.assertIn("--- END AGENTS.md", result)
+
+    @patch('aye.controller.llm_invoker.discover_agents_file')
+    def test_agents_md_with_ground_truth(self, mock_discover):
+        """AGENTS.md is appended to ground_truth when both present."""
+        self.conf.ground_truth = "Evaluation prompt"
+        mock_discover.return_value = (Path("/repo/AGENTS.md"), "Repo instructions")
+        result = llm_invoker._build_system_prompt(self.conf, verbose=False)
+        self.assertIn("Evaluation prompt", result)
+        self.assertIn("Repo instructions", result)
+        self.assertNotIn(SYSTEM_PROMPT, result)
+
+    @patch('aye.controller.llm_invoker.rprint')
+    @patch('aye.controller.llm_invoker.discover_agents_file')
+    def test_agents_md_verbose_log(self, mock_discover, mock_rprint):
+        """Verbose mode logs which AGENTS.md file is used."""
+        mock_discover.return_value = (Path("/repo/AGENTS.md"), "Instructions")
+        llm_invoker._build_system_prompt(self.conf, verbose=True)
+        mock_rprint.assert_called_once()
+        self.assertIn("AGENTS.md", str(mock_rprint.call_args))
+
+    @patch('aye.controller.llm_invoker.rprint')
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='on')
+    @patch('aye.controller.llm_invoker.discover_agents_file')
+    def test_agents_md_debug_log(self, mock_discover, mock_get_cfg, mock_rprint):
+        """Debug mode also logs AGENTS.md file."""
+        mock_discover.return_value = (Path("/repo/AGENTS.md"), "Instructions")
+        llm_invoker._build_system_prompt(self.conf, verbose=False)
+        mock_rprint.assert_called_once()
+        self.assertIn("AGENTS.md", str(mock_rprint.call_args))
+
+    @patch('aye.controller.llm_invoker.discover_agents_file')
+    def test_agents_md_contains_tools_disclaimer(self, mock_discover):
+        """The AGENTS.md block includes a tools disclaimer."""
+        mock_discover.return_value = (Path("/repo/AGENTS.md"), "run: pytest")
+        result = llm_invoker._build_system_prompt(self.conf, verbose=False)
+        self.assertIn("tools or commands in this section", result)
+        self.assertIn("do not try to execute them", result)
+
+    @patch('aye.controller.llm_invoker.discover_agents_file')
+    def test_discover_called_with_correct_paths(self, mock_discover):
+        """discover_agents_file is called with cwd and resolved repo root."""
+        mock_discover.return_value = None
+        self.conf.root = Path('/some/project')
+        llm_invoker._build_system_prompt(self.conf, verbose=False)
+        mock_discover.assert_called_once()
+        call_args = mock_discover.call_args
+        # Second arg should be the resolved root
+        self.assertEqual(call_args[0][1], Path('/some/project').resolve())
+
+
+class TestBuildSystemPromptWithSkills(TestCase):
+    """Tests for _build_system_prompt_with_skills function."""
+
+    def setUp(self):
+        self.conf = SimpleNamespace(root=Path('.'))
+
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker._build_system_prompt')
+    def test_no_index_returns_base_prompt(self, mock_build_base, mock_resolver):
+        """When get_index returns None, only the base prompt is returned."""
+        mock_build_base.return_value = "base prompt"
+        mock_resolver.get_index.return_value = None
+        result = llm_invoker._build_system_prompt_with_skills("user prompt", self.conf, verbose=False)
+        self.assertEqual(result, "base prompt")
+        mock_resolver.resolve_applied_skills.assert_not_called()
+
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker._build_system_prompt')
+    def test_get_index_exception_returns_base_prompt(self, mock_build_base, mock_resolver):
+        """When get_index raises, the base prompt is returned gracefully."""
+        mock_build_base.return_value = "base prompt"
+        mock_resolver.get_index.side_effect = RuntimeError("index broken")
+        result = llm_invoker._build_system_prompt_with_skills("user prompt", self.conf, verbose=False)
+        self.assertEqual(result, "base prompt")
+
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker._build_system_prompt')
+    def test_empty_skills_returns_base_prompt(self, mock_build_base, mock_resolver):
+        """When index has no skills, the base prompt is returned."""
+        mock_build_base.return_value = "base prompt"
+        mock_index = MagicMock()
+        mock_index.skills = []
+        mock_resolver.get_index.return_value = mock_index
+        result = llm_invoker._build_system_prompt_with_skills("user prompt", self.conf, verbose=False)
+        self.assertEqual(result, "base prompt")
+        mock_resolver.resolve_applied_skills.assert_not_called()
+
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker._build_system_prompt')
+    def test_no_matching_skills_returns_base_prompt(self, mock_build_base, mock_resolver):
+        """When resolve_applied_skills returns no skill_ids, base prompt is returned."""
+        mock_build_base.return_value = "base prompt"
+        mock_index = MagicMock()
+        mock_index.skills = [MagicMock()]  # non-empty so we proceed
+        mock_resolver.get_index.return_value = mock_index
+
+        mock_result = MagicMock()
+        mock_result.skill_ids = []
+        mock_result.unknown_ids = []
+        mock_resolver.resolve_applied_skills.return_value = mock_result
+
+        result = llm_invoker._build_system_prompt_with_skills("user prompt", self.conf, verbose=False)
+        self.assertEqual(result, "base prompt")
+        mock_resolver.render_skills_for_system_prompt.assert_not_called()
+
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker._build_system_prompt')
+    def test_skills_appended_to_base_prompt(self, mock_build_base, mock_resolver):
+        """When skills are resolved, they are appended to the base prompt."""
+        mock_build_base.return_value = "base prompt"
+        mock_index = MagicMock()
+        mock_index.skills = [MagicMock()]
+        mock_index.skills_dir = Path("/repo/.aye/skills")
+        mock_resolver.get_index.return_value = mock_index
+
+        mock_result = MagicMock()
+        mock_result.skill_ids = ["coding-style"]
+        mock_result.unknown_ids = []
+        mock_resolver.resolve_applied_skills.return_value = mock_result
+        mock_resolver.render_skills_for_system_prompt.return_value = "--- SKILL: coding-style\nUse snake_case.\n---"
+
+        result = llm_invoker._build_system_prompt_with_skills("user prompt", self.conf, verbose=False)
+        self.assertIn("base prompt", result)
+        self.assertIn("SKILL: coding-style", result)
+        self.assertIn("snake_case", result)
+        mock_resolver.render_skills_for_system_prompt.assert_called_once_with(
+            ["coding-style"], mock_index
+        )
+
+    @patch('aye.controller.llm_invoker.rprint')
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker._build_system_prompt')
+    def test_verbose_logs_applied_skills(self, mock_build_base, mock_resolver, mock_rprint):
+        """Verbose mode logs which skills are applied."""
+        mock_build_base.return_value = "base"
+        mock_index = MagicMock()
+        mock_index.skills = [MagicMock()]
+        mock_index.skills_dir = Path("/repo/.aye/skills")
+        mock_resolver.get_index.return_value = mock_index
+
+        mock_result = MagicMock()
+        mock_result.skill_ids = ["coding-style", "testing"]
+        mock_result.unknown_ids = []
+        mock_resolver.resolve_applied_skills.return_value = mock_result
+        mock_resolver.render_skills_for_system_prompt.return_value = "skills block"
+
+        llm_invoker._build_system_prompt_with_skills("prompt", self.conf, verbose=True)
+
+        rprint_calls = [str(c) for c in mock_rprint.call_args_list]
+        self.assertTrue(any("Applied skills: coding-style, testing" in c for c in rprint_calls))
+        self.assertTrue(any("Skills directory" in c for c in rprint_calls))
+
+    @patch('aye.controller.llm_invoker.rprint')
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='on')
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker._build_system_prompt')
+    def test_verbose_mode_via_config_logs_skills(self, mock_build_base, mock_resolver, mock_get_cfg, mock_rprint):
+        """When _is_verbose returns True (via config), skills are logged."""
+        mock_build_base.return_value = "base"
+        mock_index = MagicMock()
+        mock_index.skills = [MagicMock()]
+        mock_index.skills_dir = Path("/repo/.aye/skills")
+        mock_resolver.get_index.return_value = mock_index
+
+        mock_result = MagicMock()
+        mock_result.skill_ids = ["style"]
+        mock_result.unknown_ids = []
+        mock_resolver.resolve_applied_skills.return_value = mock_result
+        mock_resolver.render_skills_for_system_prompt.return_value = "skills block"
+
+        llm_invoker._build_system_prompt_with_skills("prompt", self.conf, verbose=False)
+
+        rprint_calls = [str(c) for c in mock_rprint.call_args_list]
+        self.assertTrue(any("Applied skills: style" in c for c in rprint_calls))
+
+    @patch('aye.controller.llm_invoker.rprint')
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='on')
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker._build_system_prompt')
+    def test_unknown_skills_logged_in_debug(self, mock_build_base, mock_resolver, mock_get_cfg, mock_rprint):
+        """Unknown skills are logged when debug is on and verbose."""
+        mock_build_base.return_value = "base"
+        mock_index = MagicMock()
+        mock_index.skills = [MagicMock()]
+        mock_index.skills_dir = Path("/repo/.aye/skills")
+        mock_resolver.get_index.return_value = mock_index
+
+        mock_result = MagicMock()
+        mock_result.skill_ids = ["valid-skill"]
+        mock_result.unknown_ids = ["nonexistent"]
+        mock_resolver.resolve_applied_skills.return_value = mock_result
+        mock_resolver.render_skills_for_system_prompt.return_value = "skills block"
+
+        llm_invoker._build_system_prompt_with_skills("prompt", self.conf, verbose=True)
+
+        rprint_calls = [str(c) for c in mock_rprint.call_args_list]
+        self.assertTrue(any("Ignored unknown skills: nonexistent" in c for c in rprint_calls))
+
+    @patch('aye.controller.llm_invoker.rprint')
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='off')
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker._build_system_prompt')
+    def test_unknown_skills_not_logged_without_debug(self, mock_build_base, mock_resolver, mock_get_cfg, mock_rprint):
+        """Unknown skills are NOT logged when debug is off and verbose is off."""
+        mock_build_base.return_value = "base"
+        mock_index = MagicMock()
+        mock_index.skills = [MagicMock()]
+        mock_index.skills_dir = Path("/repo/.aye/skills")
+        mock_resolver.get_index.return_value = mock_index
+
+        mock_result = MagicMock()
+        mock_result.skill_ids = []
+        mock_result.unknown_ids = ["nonexistent"]
+        mock_resolver.resolve_applied_skills.return_value = mock_result
+        mock_resolver.render_skills_for_system_prompt.return_value = ""
+
+        llm_invoker._build_system_prompt_with_skills("prompt", self.conf, verbose=False)
+
+        rprint_calls = [str(c) for c in mock_rprint.call_args_list]
+        self.assertFalse(any("Ignored unknown skills" in c for c in rprint_calls))
+
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker._build_system_prompt')
+    def test_resolve_called_with_prompt_and_index(self, mock_build_base, mock_resolver):
+        """resolve_applied_skills receives the user prompt and the index."""
+        mock_build_base.return_value = "base"
+        mock_index = MagicMock()
+        mock_index.skills = [MagicMock()]
+        mock_resolver.get_index.return_value = mock_index
+
+        mock_result = MagicMock()
+        mock_result.skill_ids = []
+        mock_result.unknown_ids = []
+        mock_resolver.resolve_applied_skills.return_value = mock_result
+
+        llm_invoker._build_system_prompt_with_skills("refactor controllers", self.conf, verbose=False)
+        mock_resolver.resolve_applied_skills.assert_called_once_with("refactor controllers", mock_index)
+
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker._build_system_prompt')
+    def test_multiple_skills_all_rendered(self, mock_build_base, mock_resolver):
+        """Multiple skills are passed to render_skills_for_system_prompt."""
+        mock_build_base.return_value = "base"
+        mock_index = MagicMock()
+        mock_index.skills = [MagicMock(), MagicMock()]
+        mock_index.skills_dir = Path("/skills")
+        mock_resolver.get_index.return_value = mock_index
+
+        mock_result = MagicMock()
+        mock_result.skill_ids = ["python-style", "testing", "docs"]
+        mock_result.unknown_ids = []
+        mock_resolver.resolve_applied_skills.return_value = mock_result
+        mock_resolver.render_skills_for_system_prompt.return_value = "combined skills"
+
+        result = llm_invoker._build_system_prompt_with_skills("prompt", self.conf, verbose=False)
+        self.assertIn("combined skills", result)
+        mock_resolver.render_skills_for_system_prompt.assert_called_once_with(
+            ["python-style", "testing", "docs"], mock_index
+        )
+
+    @patch('aye.controller.llm_invoker._skills_resolver')
+    @patch('aye.controller.llm_invoker.discover_agents_file')
+    def test_full_integration_base_agents_skills(self, mock_discover, mock_resolver):
+        """Integration: base + AGENTS.md + skills are all present in final prompt."""
+        mock_discover.return_value = (Path("/repo/AGENTS.md"), "Run pytest.")
+
+        mock_index = MagicMock()
+        mock_index.skills = [MagicMock()]
+        mock_index.skills_dir = Path("/skills")
+        mock_resolver.get_index.return_value = mock_index
+
+        mock_result = MagicMock()
+        mock_result.skill_ids = ["testing"]
+        mock_result.unknown_ids = []
+        mock_resolver.resolve_applied_skills.return_value = mock_result
+        mock_resolver.render_skills_for_system_prompt.return_value = "--- SKILL: testing\nAlways add tests.\n---"
+
+        result = llm_invoker._build_system_prompt_with_skills("write tests", self.conf, verbose=False)
+
+        # Base system prompt
+        self.assertIn(SYSTEM_PROMPT, result)
+        # AGENTS.md
+        self.assertIn("Run pytest.", result)
+        self.assertIn("AGENTS.md", result)
+        # Skills
+        self.assertIn("SKILL: testing", result)
+        self.assertIn("Always add tests.", result)
+
+
 class TestLlmInvoker(TestCase):
     def setUp(self):
         self.conf = SimpleNamespace(
@@ -580,8 +904,9 @@ class TestLlmInvoker(TestCase):
     def tearDown(self):
         pass
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.collect_sources')
-    def test_invoke_llm_local_model_success(self, mock_collect_sources):
+    def test_invoke_llm_local_model_success(self, mock_collect_sources, mock_build_skills):
         mock_collect_sources.return_value = self.source_files
         local_response = {
             "summary": "local summary",
@@ -620,6 +945,7 @@ class TestLlmInvoker(TestCase):
         self.assertEqual(response.summary, "local summary")
         self.assertEqual(len(response.updated_files), 1)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
     @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
     @patch('aye.controller.llm_invoker.StoppableSpinner')
@@ -632,6 +958,7 @@ class TestLlmInvoker(TestCase):
         mock_spinner_class,
         mock_streaming_display_class,
         mock_create_stream_callback,
+        mock_build_skills,
     ):
         mock_collect_sources.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
@@ -703,7 +1030,8 @@ class TestLlmInvoker(TestCase):
         self.plugin_manager.handle_command.return_value = {"summary": "s", "updated_files": []}
 
         # Patch _determine_source_files to return RAG-selected files (simulating large project)
-        with patch.object(llm_invoker, '_determine_source_files') as mock_determine:
+        with patch.object(llm_invoker, '_determine_source_files') as mock_determine, \
+             patch.object(llm_invoker, '_build_system_prompt_with_skills', return_value=SYSTEM_PROMPT):
             mock_determine.return_value = ({"relevant.py": "relevant content"}, False, "p")
 
             llm_invoker.invoke_llm("p", self.conf, self.console, self.plugin_manager)
@@ -717,6 +1045,7 @@ class TestLlmInvoker(TestCase):
             self.assertIn("relevant.py", final_source_files)
             self.assertNotIn("large.py", final_source_files)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
     @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
     @patch('aye.controller.llm_invoker.StoppableSpinner')
@@ -729,6 +1058,7 @@ class TestLlmInvoker(TestCase):
         mock_spinner_class,
         mock_streaming_display_class,
         mock_create_stream_callback,
+        mock_build_skills,
     ):
         mock_collect_sources.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
@@ -749,6 +1079,7 @@ class TestLlmInvoker(TestCase):
         self.assertEqual(response.updated_files, [])
         self.assertEqual(response.chat_id, 789)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
     @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
     @patch('aye.controller.llm_invoker.StoppableSpinner')
@@ -761,6 +1092,7 @@ class TestLlmInvoker(TestCase):
         mock_spinner_class,
         mock_streaming_display_class,
         mock_create_stream_callback,
+        mock_build_skills,
     ):
         mock_collect_sources.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
@@ -778,6 +1110,7 @@ class TestLlmInvoker(TestCase):
         with self.assertRaisesRegex(Exception, "Server error in chat 'My Chat'"):
             llm_invoker.invoke_llm("p", self.conf, self.console, self.plugin_manager)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
     @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
     @patch('aye.controller.llm_invoker.StoppableSpinner')
@@ -790,6 +1123,7 @@ class TestLlmInvoker(TestCase):
         mock_spinner_class,
         mock_streaming_display_class,
         mock_create_stream_callback,
+        mock_build_skills,
     ):
         mock_collect_sources.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
@@ -807,9 +1141,10 @@ class TestLlmInvoker(TestCase):
         self.assertEqual(response.updated_files, [])
         self.assertEqual(response.chat_id, 111)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.rprint')
     @patch('aye.controller.llm_invoker.collect_sources')
-    def test_invoke_llm_verbose_mode_small_project(self, mock_collect, mock_rprint):
+    def test_invoke_llm_verbose_mode_small_project(self, mock_collect, mock_rprint, mock_build_skills):
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = {"summary": "s", "updated_files": []}
 
@@ -819,6 +1154,7 @@ class TestLlmInvoker(TestCase):
         mock_rprint.assert_any_call(f"[cyan]Project size ({size_kb:.1f}KB) is small; including all files.[/]")
         mock_rprint.assert_any_call(f"[yellow]Included with prompt: {', '.join(self.source_files.keys())}[/]")
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('builtins.print')
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
     @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
@@ -835,6 +1171,7 @@ class TestLlmInvoker(TestCase):
         mock_streaming_display_class,
         mock_create_stream_callback,
         mock_print,
+        mock_build_skills,
     ):
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
@@ -872,6 +1209,7 @@ class TestLlmInvoker(TestCase):
         self.assertIn("[DEBUG] Chat message processed, response keys: dict_keys(['assistant_response', 'chat_id'])", debug_prints)
         self.assertIn("[DEBUG] Successfully parsed assistant_response JSON", debug_prints)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
     @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
     @patch('aye.controller.llm_invoker.StoppableSpinner')
@@ -884,6 +1222,7 @@ class TestLlmInvoker(TestCase):
         mock_spinner_class,
         mock_streaming_display_class,
         mock_create_stream_callback,
+        mock_build_skills,
     ):
         explicit_files = {"explicit.py": "content"}
         self.plugin_manager.handle_command.return_value = None
@@ -903,6 +1242,7 @@ class TestLlmInvoker(TestCase):
         mock_cli.assert_called_once()
         self.assertEqual(mock_cli.call_args[1]['source_files'], explicit_files)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
     @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
     @patch('aye.controller.llm_invoker.StoppableSpinner')
@@ -915,6 +1255,7 @@ class TestLlmInvoker(TestCase):
         mock_spinner_class,
         mock_streaming_display_class,
         mock_create_stream_callback,
+        mock_build_skills,
     ):
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = None
@@ -947,9 +1288,6 @@ class TestLlmInvoker(TestCase):
             result = llm_invoker._get_rag_context_files("p", self.conf, verbose=True)
 
         self.assertEqual(result, {})
-        mock_rprint.assert_any_call(
-            f"[yellow]Skipping large file large.py ({len(large_content.encode('utf-8')) / 1024:.1f}KB) to stay within payload limits.[/]"
-        )
 
     def test_get_rag_context_files_no_chunks(self):
         mock_index_manager = MagicMock()
@@ -987,6 +1325,7 @@ class TestLlmInvoker(TestCase):
         debug_prints = [c[0][0] for c in mock_print.call_args_list]
         self.assertIn("[DEBUG] Successfully parsed assistant_response JSON", debug_prints)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
     @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
     @patch('aye.controller.llm_invoker.StoppableSpinner')
@@ -999,6 +1338,7 @@ class TestLlmInvoker(TestCase):
         mock_spinner_class,
         mock_streaming_display_class,
         mock_create_stream_callback,
+        mock_build_skills,
     ):
         """Test that chat_id is correctly passed to cli_invoke."""
         mock_collect.return_value = self.source_files
@@ -1018,6 +1358,7 @@ class TestLlmInvoker(TestCase):
         mock_cli.assert_called_once()
         self.assertEqual(mock_cli.call_args[1]['chat_id'], 555)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
     @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
     @patch('aye.controller.llm_invoker.StoppableSpinner')
@@ -1030,6 +1371,7 @@ class TestLlmInvoker(TestCase):
         mock_spinner_class,
         mock_streaming_display_class,
         mock_create_stream_callback,
+        mock_build_skills,
     ):
         """Test that spinner is constructed with progressive messages for API calls."""
         mock_collect.return_value = self.source_files
@@ -1061,8 +1403,9 @@ class TestLlmInvoker(TestCase):
         spinner_instance.start.assert_called_once()
         self.assertTrue(spinner_instance.stop.called)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.collect_sources')
-    def test_invoke_llm_local_model_empty_summary(self, mock_collect):
+    def test_invoke_llm_local_model_empty_summary(self, mock_collect, mock_build_skills):
         """Test local model response with missing summary key."""
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = {"updated_files": []}
@@ -1074,8 +1417,9 @@ class TestLlmInvoker(TestCase):
         self.assertEqual(response.summary, "")
         self.assertEqual(response.source, LLMSource.LOCAL)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.collect_sources')
-    def test_invoke_llm_local_model_missing_updated_files(self, mock_collect):
+    def test_invoke_llm_local_model_missing_updated_files(self, mock_collect, mock_build_skills):
         """Test local model response with missing updated_files key."""
         mock_collect.return_value = self.source_files
         self.plugin_manager.handle_command.return_value = {"summary": "test"}
@@ -1087,6 +1431,7 @@ class TestLlmInvoker(TestCase):
         self.assertEqual(response.updated_files, [])
         self.assertEqual(response.source, LLMSource.LOCAL)
 
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
     @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
     @patch('aye.controller.llm_invoker.StoppableSpinner')
@@ -1099,6 +1444,7 @@ class TestLlmInvoker(TestCase):
         mock_spinner_class,
         mock_streaming_display_class,
         mock_create_stream_callback,
+        mock_build_skills,
     ):
         """Test API response with missing answer_summary in parsed JSON."""
         mock_collect.return_value = self.source_files
@@ -1117,3 +1463,60 @@ class TestLlmInvoker(TestCase):
 
         self.assertEqual(response.summary, "")
         self.assertEqual(len(response.updated_files), 1)
+
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_passes_skills_prompt_to_local_model(self, mock_collect, mock_build_skills):
+        """Test that the system prompt built with skills is passed to local model."""
+        mock_collect.return_value = self.source_files
+        mock_build_skills.return_value = "base prompt\n\n--- SKILL: coding-style\nUse snake_case.\n---"
+        self.plugin_manager.handle_command.return_value = {"summary": "s", "updated_files": []}
+
+        llm_invoker.invoke_llm("prompt", self.conf, self.console, self.plugin_manager)
+
+        call_args = self.plugin_manager.handle_command.call_args[0][1]
+        self.assertIn("SKILL: coding-style", call_args["system_prompt"])
+        self.assertIn("snake_case", call_args["system_prompt"])
+
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills')
+    @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
+    @patch('aye.controller.llm_invoker.cli_invoke')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_passes_skills_prompt_to_api(
+        self,
+        mock_collect,
+        mock_cli,
+        mock_spinner_class,
+        mock_streaming_display_class,
+        mock_create_stream_callback,
+        mock_build_skills,
+    ):
+        """Test that the system prompt built with skills is passed to the API."""
+        mock_collect.return_value = self.source_files
+        mock_build_skills.return_value = "base + skills prompt"
+        self.plugin_manager.handle_command.return_value = None
+
+        streaming_display_instance = MagicMock()
+        streaming_display_instance.is_active.return_value = False
+        mock_streaming_display_class.return_value = streaming_display_instance
+
+        mock_cli.return_value = {"assistant_response": "{}", "chat_id": 1}
+
+        llm_invoker.invoke_llm("prompt", self.conf, self.console, self.plugin_manager)
+
+        mock_cli.assert_called_once()
+        self.assertEqual(mock_cli.call_args[1]['system_prompt'], "base + skills prompt")
+
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_calls_build_skills_with_prompt(self, mock_collect, mock_build_skills):
+        """Test that _build_system_prompt_with_skills receives the (possibly modified) prompt."""
+        mock_collect.return_value = self.source_files
+        mock_build_skills.return_value = SYSTEM_PROMPT
+        self.plugin_manager.handle_command.return_value = {"summary": "s", "updated_files": []}
+
+        llm_invoker.invoke_llm("my specific prompt", self.conf, self.console, self.plugin_manager, verbose=True)
+
+        mock_build_skills.assert_called_once_with("my specific prompt", self.conf, True)

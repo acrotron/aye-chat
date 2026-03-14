@@ -12,6 +12,7 @@ from aye.model.config import MODELS
 from aye.presenter.repl_ui import print_error
 from aye.controller.llm_invoker import invoke_llm
 from aye.controller.llm_handler import process_llm_response, handle_llm_error
+from aye.controller.shell_capture import maybe_attach_shell_result, SHELLCAP_KEY
 
 
 def handle_cd_command(tokens: list[str], conf: Any) -> bool:
@@ -164,6 +165,40 @@ def handle_autodiff_command(tokens: list):
         rprint("[dim]When on, diffs are shown automatically after each LLM file update.[/]")
 
 
+def handle_shellcap_command(tokens: list):
+    """Handle the 'shellcap' command for configuring shell output capture mode.
+
+    Controls when shell command output is captured and attached to the next AI prompt:
+    - 'none' (default): Do not capture any shell output
+    - 'fail': Only capture output from failing commands
+    - 'all': Capture output from all shell commands regardless of exit code
+    """
+    if len(tokens) > 1:
+        val = tokens[1].lower()
+        if val in ("none", "fail", "all"):
+            set_user_config(SHELLCAP_KEY, val)
+            if val == "none":
+                rprint("[green]Shell capture set to 'none' (disabled)[/]")
+            elif val == "fail":
+                rprint("[green]Shell capture set to 'fail' (only failing commands)[/]")
+            else:
+                rprint("[green]Shell capture set to 'all' (all commands)[/]")
+        else:
+            rprint("[red]Usage: shellcap none|fail|all[/]")
+            rprint("[dim]  none - Do not capture any shell output (default)[/]")
+            rprint("[dim]  fail - Only capture output from failing commands[/]")
+            rprint("[dim]  all  - Capture output from all shell commands[/]")
+    else:
+        current = get_user_config(SHELLCAP_KEY, "none")
+        rprint(f"[yellow]Shell capture mode is '{current}'[/]")
+        if current == "none":
+            rprint("[dim]Shell output is not captured or attached to AI prompts.[/]")
+        elif current == "fail":
+            rprint("[dim]Only failing shell commands will be captured and attached to the next AI prompt.[/]")
+        else:
+            rprint("[dim]All shell command output will be captured and attached to the next AI prompt.[/]")
+
+
 def handle_completion_command(tokens: list) -> Optional[str]:
     """Handle the 'completion' command for switching completion styles.
 
@@ -288,6 +323,144 @@ def handle_llm_command(session: Optional[PromptSession], tokens: list[str]) -> N
         rprint("\n[yellow] Both URL and KEY are required for the local LLM endpoint to be active.[/]")
 
 
+def handle_printraw_command() -> None:
+    """Handle 'printraw' / 'raw' command: reprint last assistant response as plain text.
+
+    Reads the last assistant response directly from the UI layer
+    (captured automatically when print_assistant_response() is called).
+    This guarantees we always have the correct text regardless of
+    the LLM response object's attribute names.
+    """
+    from aye.presenter.repl_ui import get_last_assistant_response
+    from aye.presenter.raw_output import print_assistant_response_raw
+    print_assistant_response_raw(get_last_assistant_response())
+
+
+def _expand_file_patterns(patterns: list[str], conf: Any) -> list[str]:
+    """Expand wildcard patterns and return a list of existing file paths."""
+    expanded_files = []
+
+    for pattern in patterns:
+        pattern = pattern.strip()
+        if not pattern:
+            continue
+
+        # Check if it's a direct file path first
+        direct_path = conf.root / pattern
+        if direct_path.is_file():
+            expanded_files.append(pattern)
+            continue
+
+        # Use glob to expand wildcards
+        # Search relative to the project root
+        matched_paths = list(conf.root.glob(pattern))
+
+        # Add relative paths of matched files
+        for matched_path in matched_paths:
+            if matched_path.is_file():
+                try:
+                    relative_path = matched_path.relative_to(conf.root)
+                    expanded_files.append(str(relative_path))
+                except ValueError:
+                    # If we can't make it relative, use the original pattern
+                    expanded_files.append(pattern)
+
+    return expanded_files
+
+
+def handle_with_command(
+    prompt: str,
+    conf: Any,
+    console: Console,
+    chat_id: int,
+    chat_id_file: Path
+) -> Optional[int]:
+    """Handle the 'with' command for file-specific prompts with wildcard support.
+
+    Args:
+        prompt: The full prompt string starting with 'with'
+        conf: Configuration object
+        console: Rich console for output
+        chat_id: Current chat ID
+        chat_id_file: Path to chat ID file
+
+    Returns:
+        New chat_id if available, None otherwise
+    """
+    try:
+        parts = prompt.split(":", 1)
+        file_list_str, new_prompt_str = parts
+        file_list_str = file_list_str.strip()[4:].strip()  # Remove 'with ' prefix
+
+        if not file_list_str:
+            rprint("[red]Error: File list cannot be empty for 'with' command.[/red]")
+            return None
+        if not new_prompt_str.strip():
+            rprint("[red]Error: Prompt cannot be empty after the colon.[/red]")
+            return None
+
+        # Parse file patterns (can include wildcards)
+        file_patterns = [f.strip() for f in file_list_str.replace(",", " ").split() if f.strip()]
+
+        # Expand wildcards to get actual file paths
+        expanded_files = _expand_file_patterns(file_patterns, conf)
+
+        if not expanded_files:
+            rprint("[red]Error: No files found matching the specified patterns.[/red]")
+            return None
+
+        explicit_source_files = {}
+
+        for file_name in expanded_files:
+            file_path = conf.root / file_name
+            if not file_path.is_file():
+                rprint(f"[yellow]File not found, skipping: {file_name}[/yellow]")
+                continue  # Continue with other files instead of breaking
+            try:
+                explicit_source_files[file_name] = file_path.read_text(encoding="utf-8")
+            except Exception as e:
+                rprint(f"[red]Could not read file '{file_name}': {e}[/red]")
+                continue  # Continue with other files instead of breaking
+
+        if not explicit_source_files:
+            rprint("[red]Error: No readable files found.[/red]")
+            return None
+
+        # Show which files were included
+        if conf.verbose or len(explicit_source_files) != len(expanded_files):
+            rprint(f"[cyan]Including {len(explicit_source_files)} file(s): {', '.join(explicit_source_files.keys())}[/cyan]")
+
+        # Attach pending shell failure output (one-shot) before sending to LLM
+        final_prompt = maybe_attach_shell_result(conf, new_prompt_str.strip())
+
+        llm_response = invoke_llm(
+            prompt=final_prompt,
+            conf=conf,
+            console=console,
+            plugin_manager=conf.plugin_manager,
+            chat_id=chat_id,
+            verbose=conf.verbose,
+            explicit_source_files=explicit_source_files
+        )
+
+        if llm_response:
+            new_chat_id = process_llm_response(
+                response=llm_response,
+                conf=conf,
+                console=console,
+                prompt=new_prompt_str.strip(),
+                chat_id_file=chat_id_file if llm_response.chat_id else None
+            )
+            return new_chat_id
+        else:
+            rprint("[yellow]No response from LLM.[/]")
+            return None
+
+    except Exception as exc:
+        handle_llm_error(exc)
+        return None
+
+
 _BLOG_PROMPT_PREAMBLE = (
     "You are going to write a technical blog post as a deep dive into what we implemented in this chat session.\n"
     "\n"
@@ -330,6 +503,9 @@ def handle_blog_command(
             f"{_BLOG_PROMPT_PREAMBLE}\n"
             f"User intent: {intent}\n"
         )
+
+        # Attach pending shell failure output (one-shot) before sending to LLM
+        llm_prompt = maybe_attach_shell_result(conf, llm_prompt)
 
         llm_response = invoke_llm(
             prompt=llm_prompt,

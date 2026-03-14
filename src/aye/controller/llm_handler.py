@@ -8,6 +8,16 @@ from rich import print as rprint
 from rich.console import Console
 from rich.padding import Padding
 
+from aye.presenter.repl_ui import (
+    print_assistant_response,
+    print_no_files_changed,
+    print_files_updated,
+    print_error,
+    set_last_assistant_response,
+)
+from aye.model.auth import get_user_config
+from aye.presenter.diff_presenter import show_diff
+
 from aye.model.snapshot import apply_updates, get_diff_base_for_file
 from aye.model.file_processor import make_paths_relative, filter_unchanged_files
 from aye.model.models import LLMResponse
@@ -17,14 +27,6 @@ from aye.model.write_validator import (
     is_strict_mode_enabled,
     format_ignored_files_warning,
 )
-from aye.model.auth import get_user_config
-from aye.presenter.repl_ui import (
-    print_assistant_response,
-    print_error,
-    print_files_updated,
-    print_no_files_changed,
-)
-from aye.presenter.diff_presenter import show_diff
 
 
 def process_llm_response(
@@ -47,18 +49,25 @@ def process_llm_response(
     Returns:
         New chat_id if available, None otherwise
     """
-    # Print the summary if present
-    if response.summary:
-        print_assistant_response(response.summary)
-    
-    # Handle chat_id persistence
-    new_chat_id = response.chat_id
-    if new_chat_id is not None and chat_id_file is not None:
-        chat_id_file.write_text(str(new_chat_id))
-    
+    new_chat_id = None
+    if response.chat_id is not None and chat_id_file:
+        new_chat_id = response.chat_id
+        chat_id_file.parent.mkdir(parents=True, exist_ok=True)
+        chat_id_file.write_text(str(new_chat_id), encoding="utf-8")
+
+    # Always capture the summary for `raw` / `printraw` when present.
+    # (Even if it was already printed via streaming UI.)
+    if response.summary and response.summary.strip():
+        set_last_assistant_response(response.summary)
+
+        # Only print if it was not already rendered by streaming UI.
+        if not getattr(response, "summary_already_printed", False):
+            print_assistant_response(response.summary)
+
     # Process file updates
     updated_files = response.updated_files or []
     if not updated_files:
+        print_no_files_changed(console)
         return new_chat_id
     
     # Filter unchanged files (pass root for proper path resolution)
@@ -85,11 +94,13 @@ def process_llm_response(
             # In strict mode, only write allowed files
             updated_files = allowed_files
             if not updated_files:
+                print_no_files_changed(console)
                 return new_chat_id
     
     # Apply updates - pass root so files are written to correct location
     try:
-        batch_id = apply_updates(updated_files, prompt, root=conf.root)
+        root_path = Path(conf.root) if hasattr(conf, 'root') else Path.cwd()
+        batch_id = apply_updates(updated_files, prompt, root=root_path)
     except Exception as e:
         rprint(f"[red]Error applying updates:[/] {e}")
         return new_chat_id
@@ -166,14 +177,17 @@ def _show_autodiffs(batch_id: str, updated_files: List[Dict[str, str]], root: Pa
 
 
 def handle_llm_error(exc: Exception) -> None:
-    """
-    Handle errors from LLM invocation.
-    """
-    # Check for auth errors (403)
-    if hasattr(exc, "response") and hasattr(exc.response, "status_code"):
-        if exc.response.status_code == 403:
-            traceback.print_exc()
-            print_error(Exception("Unauthorized. Please check your API key."))
-            return
-    
-    print_error(exc)
+    """Unified error handler for LLM invocation errors."""
+
+    if hasattr(exc, "response") and getattr(exc.response, "status_code", None) == 403:
+        traceback.print_exc()
+        print_error(
+            Exception(
+                "[red]❌ Unauthorized:[/] the stored token is invalid or missing.\n"
+                "Log in again with `aye auth login` or set a valid "
+                "`AYE_TOKEN` environment variable.\n"
+                "Obtain your personal access token at https://ayechat.ai"
+            )
+        )
+    else:
+        print_error(exc)

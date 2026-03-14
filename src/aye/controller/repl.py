@@ -42,7 +42,10 @@ from aye.controller.command_handlers import (
     handle_blog_command,
     handle_llm_command,
     handle_autodiff_command,
+    handle_shellcap_command,
+    handle_printraw_command,
 )
+from aye.controller.shell_capture import capture_shell_result, maybe_attach_shell_result
 
 DEBUG = False
 plugin_manager = None # HACK: for broken test patch to work
@@ -144,9 +147,12 @@ def collect_and_send_feedback(chat_id: int):
 
     feedback_text: str = ""
     try:
-        rprint("\n[bold cyan]Before you go, would you mind sharing some comments about your experience?")
-        rprint("[bold cyan]Include your email if you are ok with us contacting you with some questions.")
-        rprint("[bold cyan](Start typing. Press Enter for a new line. Press Ctrl+C to finish.)")
+        rprint("\n[bold cyan]Before you go:")
+        rprint()
+        rprint("[bold cyan]Has Aye Chat replaced anything in your workflow?")
+        rprint("[bold cyan]If yes, what? If not, what would need to change for it to?")
+        rprint()
+        rprint("[dim](Ctrl+C to finish.)")
         feedback = feedback_session.prompt("> ", multiline=True, key_bindings=bindings, reserve_space_for_menu=6)
         if feedback and feedback.strip():
             feedback_text = feedback.strip()
@@ -165,7 +171,7 @@ def collect_and_send_feedback(chat_id: int):
     if telemetry_payload is not None:
         telemetry.reset()
 
-    rprint("[cyan]Thank you for your feedback! Goodbye.[/cyan]")
+    rprint("[cyan]Thank you for your feedback![/cyan]")
 
 
 
@@ -278,6 +284,10 @@ def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> N
                 rprint(f"[red]Error:[/] {shell_response['error']}")
         elif "message" in shell_response:
             rprint(shell_response["message"])
+
+        # Capture failing command output for auto-attach to next LLM prompt
+        cmd_str = " ".join([command] + args)
+        capture_shell_result(conf, cmd=cmd_str, shell_response=shell_response)
     else:
         rprint(f"[red]Error:[/] Failed to execute shell command")
 
@@ -285,7 +295,7 @@ def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> N
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm"]
+    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "shellcap", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm", "printraw", "raw"]
 
     # Get the completion style setting
     completion_style = get_user_config("completion_style", "readline").lower()
@@ -340,7 +350,7 @@ def chat_repl(conf: Any) -> None:
                 # Show indexing progress only if index_manager exists and is active
                 if index_manager and index_manager.is_indexing() and conf.verbose:
                     progress = index_manager.get_progress_display()
-                    prompt_str = f"(ツ ({progress}) » "
+                    prompt_str = f"(\u30C4 ({progress}) \u00BB "
 
                 # IMPORTANT: prompt_toolkit reserves space at the bottom of the terminal
                 # for the completion menu. Default is ~8 lines, which can look like
@@ -411,6 +421,9 @@ def chat_repl(conf: Any) -> None:
                 elif lowered_first == "autodiff":
                     telemetry.record_command("autodiff", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_autodiff_command(tokens)
+                elif lowered_first == "shellcap":
+                    telemetry.record_command("shellcap", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
+                    handle_shellcap_command(tokens)
                 elif lowered_first == "completion":
                     telemetry.record_command("completion", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     new_style = handle_completion_command(tokens)
@@ -434,6 +447,9 @@ def chat_repl(conf: Any) -> None:
                     new_chat_id = handle_blog_command(tokens, conf, console, chat_id, chat_id_file)
                     if new_chat_id is not None:
                         chat_id = new_chat_id
+                elif lowered_first in ("printraw", "raw"):
+                    telemetry.record_command("printraw", has_args=False, prefix=_AYE_PREFIX)
+                    handle_printraw_command()
                 elif lowered_first == "diff":
                     telemetry.record_command("diff", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     args = tokens[1:]
@@ -473,7 +489,7 @@ def chat_repl(conf: Any) -> None:
                     chat_id_file.unlink(missing_ok=True)
                     chat_id = -1
                     conf.plugin_manager.handle_command("new_chat", {"root": conf.root})
-                    console.print("[green]✅ New chat session started.[/]")
+                    console.print("[green]\u2705 New chat session started.[/]")
                 elif lowered_first == "help":
                     telemetry.record_command("help", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     print_help_message()
@@ -526,6 +542,10 @@ def chat_repl(conf: Any) -> None:
                                 rprint(f"[yellow]{shell_response['stderr']}[/]")
                             if "error" in shell_response:
                                 rprint(f"[red]Error:[/] {shell_response['error']}")
+
+                        # Capture failing command output for auto-attach to next LLM prompt
+                        cmd_str = " ".join([original_first] + tokens[1:])
+                        capture_shell_result(conf, cmd=cmd_str, shell_response=shell_response)
                     else:
                         # Check for @file references before invoking LLM
                         at_response = conf.plugin_manager.handle_command("parse_at_references", {
@@ -550,6 +570,9 @@ def chat_repl(conf: Any) -> None:
                             telemetry.record_llm_prompt("LLM @")
                         else:
                             telemetry.record_llm_prompt("LLM")
+
+                        # Attach pending shell failure output (one-shot) before sending to LLM
+                        cleaned_prompt = maybe_attach_shell_result(conf, cleaned_prompt)
 
                         # DO NOT call prepare_sync() here - it blocks the main thread!
                         # The index is already being maintained in the background.
