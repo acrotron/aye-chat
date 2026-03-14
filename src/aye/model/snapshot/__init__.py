@@ -110,20 +110,54 @@ def restore_snapshot(ordinal: Optional[str] = None, file_name: Optional[str] = N
     return get_backend().restore_snapshot(ordinal, file_name)
 
 
-def apply_updates(updated_files: List[Dict[str, str]], prompt: Optional[str] = None) -> str:
+def apply_updates(
+    updated_files: List[Dict[str, str]], 
+    prompt: Optional[str] = None,
+    root: Optional[Path] = None
+) -> str:
     """
     1. Take a snapshot of the *current* files.
     2. Write the new contents supplied by the LLM.
-    Returns the batch timestamp (useful for UI feedback).
+    
+    Args:
+        updated_files: List of dicts with 'file_name' and 'file_content' keys
+        prompt: Optional prompt text for the snapshot metadata
+        root: Optional project root path. If provided, relative paths are 
+              resolved against it. If None, paths are used as-is (relative 
+              to current working directory).
+    
+    Returns:
+        The batch timestamp (useful for UI feedback).
     """
-    file_paths: List[Path] = [
-        Path(item["file_name"]) for item in updated_files if "file_name" in item and "file_content" in item
-    ]
-    batch_ts = create_snapshot(file_paths, prompt)
+    # Build list of file paths, resolving against root if provided
+    file_paths: List[Path] = []
     for item in updated_files:
-        fp = Path(item["file_name"])
+        if "file_name" not in item or "file_content" not in item:
+            continue
+        
+        file_name = item["file_name"]
+        if root is not None and not Path(file_name).is_absolute():
+            file_paths.append(root / file_name)
+        else:
+            file_paths.append(Path(file_name))
+    
+    # Create snapshot of current state
+    batch_ts = create_snapshot(file_paths, prompt)
+    
+    # Write new contents
+    for item in updated_files:
+        if "file_name" not in item or "file_content" not in item:
+            continue
+        
+        file_name = item["file_name"]
+        if root is not None and not Path(file_name).is_absolute():
+            fp = root / file_name
+        else:
+            fp = Path(file_name)
+        
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_text(item["file_content"], encoding="utf-8")
+    
     return batch_ts
 
 
