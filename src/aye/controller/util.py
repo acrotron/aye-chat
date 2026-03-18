@@ -1,9 +1,12 @@
 from pathlib import Path
 import os
-from typing import Union, Optional
+from typing import Union, Optional, Tuple
 
 # The only marker we care about now is the index file inside the .aye directory
 PROJECT_MARKER = ".aye/file_index.json"
+
+AGENTS_FILENAME = "AGENTS.md"
+
 
 def find_project_root(start_path: Optional[Union[str, Path]] = None) -> Path:
     """
@@ -49,6 +52,76 @@ def find_project_root(start_path: Optional[Union[str, Path]] = None) -> Path:
             return cwd
         
         search_dir = parent_dir
+
+
+def discover_agents_file(
+    cwd: Path, repo_root: Path, verbose: bool = False
+) -> Optional[Tuple[Path, str]]:
+    """
+    Discover an AGENTS.md file for the current project context.
+
+    Discovery order (first match wins, no merging):
+      1. cwd/.aye/AGENTS.md   (highest precedence)
+      2. Walk upward from cwd checking AGENTS.md at each directory,
+         stopping at repo_root or filesystem root.
+
+    Args:
+        cwd:        Resolved current working directory.
+        repo_root:  Resolved repository/project root (upper boundary for search).
+        verbose:    If True, warnings for unreadable files are printed.
+
+    Returns:
+        A tuple (path, contents) if found and readable, otherwise None.
+    """
+    cwd = cwd.resolve()
+    repo_root = repo_root.resolve()
+
+    # --- 1) Highest precedence: cwd/.aye/AGENTS.md ---
+    aye_agents = cwd / ".aye" / AGENTS_FILENAME
+    result = _try_read_agents(aye_agents, verbose)
+    if result is not None:
+        return result
+
+    # --- 2) Walk upward from cwd, checking AGENTS.md at each level ---
+    search_dir = cwd
+    while True:
+        candidate = search_dir / ".aye" / AGENTS_FILENAME
+        result = _try_read_agents(candidate, verbose)
+        if result is not None:
+            return result
+
+        candidate = search_dir / AGENTS_FILENAME
+        result = _try_read_agents(candidate, verbose)
+        if result is not None:
+            return result
+
+        # Stop conditions
+        parent = search_dir.parent
+        if parent == search_dir:
+            # Filesystem root reached
+            break
+        search_dir = parent
+
+    return None
+
+
+def _try_read_agents(path: Path, verbose: bool) -> Optional[Tuple[Path, str]]:
+    """
+    Attempt to read an AGENTS.md candidate file.
+
+    Returns (path, contents) on success, or None if the file does not exist
+    or cannot be read. On read failure, a warning is printed when verbose is True.
+    """
+    if not path.is_file():
+        return None
+    try:
+        contents = path.read_text(encoding="utf-8")
+        return (path, contents)
+    except Exception as e:
+        if verbose:
+            from rich import print as rprint
+            rprint(f"[yellow]Warning: found {path} but could not read it: {e}[/]")
+        return None
 
 
 def is_truncated_json(raw_text: str) -> bool:

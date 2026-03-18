@@ -12,9 +12,10 @@ from aye.presenter.ui_utils import StoppableSpinner, DEFAULT_THINKING_MESSAGES
 from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
 from aye.model.offline_llm_manager import is_offline_model
-from aye.controller.util import is_truncated_json
+from aye.controller.util import is_truncated_json, discover_agents_file
 from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB, CONTEXT_HARD_LIMIT_KB
 from aye.model import telemetry
+from aye.model.skills_system import SkillsResolver
 
 import os
 
@@ -50,6 +51,10 @@ TRUNCATED_RESPONSE_MESSAGE = (
     "For example, instead of 'update all files to add logging', try:\n"
     "  `with src/main.py: add logging to this file`"
 )
+
+
+# Module-level skills resolver singleton (keeps cache across invocations)
+_skills_resolver = SkillsResolver()
 
 
 def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
@@ -138,8 +143,6 @@ def _get_rag_context_files(prompt: str, conf: Any, verbose: bool) -> Dict[str, s
 
     context_target_size = _get_context_target_size(conf.selected_model)
     context_hard_limit = _get_context_hard_limit(conf.selected_model)
-    #context_target_size = DEFAULT_CONTEXT_TARGET_KB #_get_context_target_size(conf.selected_model)
-    #context_hard_limit = CONTEXT_HARD_LIMIT_KB # _get_context_hard_limit(conf.selected_model)
 
     if _is_debug():
         rprint(f"[yellow]Context target: {context_target_size / 1024:.1f}KB, hard limit: {context_hard_limit / 1024:.1f}KB[/]")
@@ -160,7 +163,7 @@ def _get_rag_context_files(prompt: str, conf: Any, verbose: bool) -> Dict[str, s
             file_size = len(content.encode('utf-8'))
 
             if current_size + file_size > context_hard_limit:
-                if verbose:
+                if _is_debug():
                     rprint(f"[yellow]Skipping large file {file_path_str} ({file_size / 1024:.1f}KB) to stay within payload limits.[/]")
                 continue
 
@@ -281,6 +284,94 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
     return parsed, chat_id
 
 
+def _build_system_prompt(conf: Any, verbose: bool) -> str:
+    """
+    Build the full system prompt, including AGENTS.md context if available.
+
+    1. Start with ground_truth or the default SYSTEM_PROMPT.
+    2. Discover AGENTS.md (per-project repo instructions).
+    3. If found, append it verbatim inside delimiters.
+    """
+    base_prompt = (
+        conf.ground_truth
+        if hasattr(conf, 'ground_truth') and conf.ground_truth
+        else SYSTEM_PROMPT
+    )
+
+    # Discover AGENTS.md
+    cwd = Path.cwd().resolve()
+    repo_root = Path(conf.root).resolve()
+
+    agents_result = discover_agents_file(cwd, repo_root, verbose=verbose or _is_debug())
+
+    if agents_result is not None:
+        agents_path, agents_text = agents_result
+        if verbose or _is_debug():
+            rprint(f"[cyan]Using AGENTS.md system context from: {agents_path}[/]")
+        base_prompt = (
+            base_prompt
+            + "\n\n--- SYSTEM CONTEXT - AGENTS.md (repo instructions)\n\n"
+            + "\n\n--- If there are any tools or commands in this section - they are for the human to run; do not try to execute them.\n\n"
+            + agents_text
+            + "\n\n--- END AGENTS.md"
+        )
+
+    return base_prompt
+
+
+def _build_system_prompt_with_skills(prompt: str, conf: Any, verbose: bool) -> str:
+    """
+    Build the full system prompt with AGENTS.md and applicable skills.
+
+    Ordering:
+    1. Base prompt (ground_truth or default SYSTEM_PROMPT)
+    2. AGENTS.md block (repo instructions)
+    3. Skills blocks (user-selected behavior modifiers)
+    """
+    base_prompt = _build_system_prompt(conf, verbose)
+
+    try:
+        index = _skills_resolver.get_index(Path.cwd())
+    except Exception:
+        return base_prompt
+
+    if index is None or not index.skills:
+        return base_prompt
+
+    result = _skills_resolver.resolve_applied_skills(prompt, index)
+
+    # Verbose + debug: log unknown explicit skills
+    if result.unknown_ids and _is_debug() and (verbose or _is_verbose()):
+        rprint(f"[yellow]Ignored unknown skills: {', '.join(result.unknown_ids)}[/]")
+
+    if not result.skill_ids:
+        return base_prompt
+
+    # Verbose: log applied skills and directory
+    if verbose or _is_verbose():
+        rprint(f"[cyan]Applied skills: {', '.join(result.skill_ids)}[/]")
+        rprint(f"[cyan]Skills directory: {index.skills_dir}[/]")
+
+    skills_block = _skills_resolver.render_skills_for_system_prompt(
+        result.skill_ids, index,
+    )
+    return base_prompt + "\n\n" + skills_block
+
+
+def _print_token_usage(token_usage: Dict[str, int], verbose: bool) -> None:
+    """Print token usage information if verbose mode is enabled."""
+    if not verbose or not token_usage:
+        return
+    
+    prompt_tokens = token_usage.get("prompt_tokens", 0)
+    completion_tokens = token_usage.get("completion_tokens", 0)
+    total_tokens = token_usage.get("total_tokens", 0)
+    
+    rprint(
+        f"[dim]Tokens: {prompt_tokens} prompt + {completion_tokens} completion = {total_tokens} total[/]"
+    )
+
+
 def invoke_llm(
     prompt: str,
     conf: Any,
@@ -290,39 +381,35 @@ def invoke_llm(
     verbose: bool = False,
     explicit_source_files: Optional[Dict[str, str]] = None
 ) -> LLMResponse:
-    """
-    Unified LLM invocation with streaming display and routing.
-    """
+    """Unified LLM invocation with streaming display and routing."""
     source_files, use_all_files, prompt = _determine_source_files(
         prompt, conf, verbose, explicit_source_files
     )
 
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
 
-    system_prompt = conf.ground_truth if hasattr(conf, 'ground_truth') and conf.ground_truth else SYSTEM_PROMPT
+    system_prompt = _build_system_prompt_with_skills(prompt, conf, verbose)
 
     model_config = _get_model_config(conf.selected_model)
     max_output_tokens = model_config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS) if model_config else DEFAULT_MAX_OUTPUT_TOKENS
 
-    # Create spinner - will be shown for ALL model types (local, databricks, API)
     spinner = StoppableSpinner(
         console,
         messages=DEFAULT_THINKING_MESSAGES,
         interval=15.0
     )
-    
-    # For API calls, we also have streaming display
+
     streaming_display: Optional[StreamingResponseDisplay] = None
-    
+    token_usage: Optional[Dict[str, int]] = None
+
     def stop_spinner():
         """Callback to stop spinner when first content arrives (for streaming API)."""
         spinner.stop()
 
     try:
-        # Start the spinner before ANY LLM call (local or API)
         spinner.start()
-        
-        # 1. Try local/offline model plugins first
+
+        # 1) Local/offline model plugins
         local_response = plugin_manager.handle_command("local_model_invoke", {
             "prompt": prompt,
             "model_id": conf.selected_model,
@@ -334,21 +421,23 @@ def invoke_llm(
         })
 
         if local_response is not None:
-            # Local model handled the request - spinner will be stopped in finally block
+            # Extract token usage if present (for printing after spinner stops)
+            token_usage = local_response.get("token_usage")
+            
             return LLMResponse(
                 summary=local_response.get("summary", ""),
                 updated_files=local_response.get("updated_files", []),
                 chat_id=None,
-                source=LLMSource.LOCAL
+                source=LLMSource.LOCAL,
+                summary_already_printed=False,
             )
 
-        # 2. API call with streaming display
+        # 2) API call with streaming display
         if _is_debug():
             print(f"[DEBUG] Processing chat message with chat_id={chat_id or -1}, model={conf.selected_model}")
 
         telemetry_payload = telemetry.build_payload(top_n=20) if telemetry.is_enabled() else None
 
-        # Create streaming display with callback to stop spinner on first content
         streaming_display = StreamingResponseDisplay(on_first_content=stop_spinner)
         stream_callback = create_streaming_callback(streaming_display)
 
@@ -369,22 +458,29 @@ def invoke_llm(
         if _is_debug():
             print(f"[DEBUG] Chat message processed, response keys: {api_resp.keys() if api_resp else 'None'}")
 
-        # Check if we already displayed the response via streaming
+        # If streaming UI already printed the summary, the API includes a marker.
         streamed_summary = bool(api_resp.get("_streamed_summary")) if isinstance(api_resp, dict) else False
 
-        # 3. Parse API response
+        # 3) Parse API response
         assistant_resp, new_chat_id = _parse_api_response(api_resp)
+        parsed_summary = assistant_resp.get("answer_summary", "")
 
+        # IMPORTANT:
+        # - Always return the parsed summary so other features (e.g. `raw`) can use it.
+        # - Use summary_already_printed to prevent double-printing in process_llm_response.
         return LLMResponse(
-            summary="" if streamed_summary else assistant_resp.get("answer_summary", ""),
+            summary=parsed_summary,
             updated_files=assistant_resp.get("source_files", []),
             chat_id=new_chat_id,
-            source=LLMSource.API
+            source=LLMSource.API,
+            summary_already_printed=streamed_summary,
         )
     finally:
-        # Ensure spinner is stopped for ALL code paths (local model, API, or error)
         spinner.stop()
-        
-        # Stop the streaming display if it was created and is active
+
         if streaming_display is not None and streaming_display.is_active():
             streaming_display.stop()
+        
+        # Print token usage after spinner has stopped
+        if token_usage:
+            _print_token_usage(token_usage, verbose)
