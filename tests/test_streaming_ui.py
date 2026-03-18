@@ -19,11 +19,13 @@ class FakeLive:
         console=None,
         refresh_per_second=None,
         transient=None,
+        vertical_overflow=None,
     ):
         self.initial_renderable = renderable
         self.console = console
         self.refresh_per_second = refresh_per_second
         self.transient = transient
+        self.vertical_overflow = vertical_overflow
 
         self.started = False
         self.stopped = False
@@ -35,7 +37,7 @@ class FakeLive:
     def stop(self):
         self.stopped = True
 
-    def update(self, renderable):
+    def update(self, renderable, **kwargs):
         self.updates.append(renderable)
 
 
@@ -67,6 +69,7 @@ class TestCreateResponsePanel(unittest.TestCase):
 class TestStreamingResponseDisplay(unittest.TestCase):
     def setUp(self):
         self.console = MagicMock()
+        self.console.is_terminal = False  # Avoids writing escape codes to test output
 
     @patch.object(streaming_ui, "Live", FakeLive)
     def test_update_autostarts_and_calls_on_first_content_once(self):
@@ -145,7 +148,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
 
         def fake_panel(content: str, use_markdown: bool = True, show_stall_indicator: bool = False):
             events.append((content, use_markdown))
-            return (content, use_markdown)
+            return {"content": content, "use_markdown": use_markdown}
 
         with patch.object(streaming_ui, "_create_response_panel", side_effect=fake_panel), \
              patch.object(streaming_ui.time, "sleep"):
@@ -153,10 +156,17 @@ class TestStreamingResponseDisplay(unittest.TestCase):
             d.update("Hi")
             d.stop()
 
-        # start() prints once before, stop() prints once after
-        self.assertEqual(self.console.print.call_count, 2)
+        # start() prints once before
+        # stop() prints the final reflowed panel
+        # stop() prints spacing after
+        self.assertEqual(self.console.print.call_count, 3)
 
-        # stop() does a final update with markdown=True if there is animated content
+        # verify the final panel was printed via console.print
+        final_print_args = self.console.print.call_args_list[1][0]
+        self.assertEqual(final_print_args[0]["content"], "Hi")
+        self.assertEqual(final_print_args[0]["use_markdown"], True)
+
+        # stop() does a final update with markdown=True inside Live if there is animated content
         self.assertIn(("Hi", True), events)
         self.assertFalse(d.is_active())
 
@@ -173,7 +183,7 @@ class TestStreamingResponseDisplay(unittest.TestCase):
                 self.assertTrue(d.is_active())
             self.assertFalse(d.is_active())
 
-        # Should have printed spacing before and after
+        # Should have printed spacing before and after, plus final panel since there was no content
         self.assertEqual(self.console.print.call_count, 2)
 
     def test_env_var_word_delay_used_when_word_delay_none(self):
