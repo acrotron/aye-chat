@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .base import SnapshotBackend
 
-# Module-level constants
+# Module-level defaults (used when no root is provided)
 SNAP_ROOT = Path(".aye/snapshots").resolve()
 LATEST_SNAP_DIR = SNAP_ROOT / "latest"
 
@@ -16,9 +16,14 @@ LATEST_SNAP_DIR = SNAP_ROOT / "latest"
 class FileBasedBackend(SnapshotBackend):
     """File-based snapshot backend using .aye/snapshots directory."""
 
-    def __init__(self):
-        self.snap_root = SNAP_ROOT
-        self.latest_dir = LATEST_SNAP_DIR
+    def __init__(self, root: Optional[Path] = None):
+        if root is not None:
+            snap_root = (root / ".aye" / "snapshots").resolve()
+            self.snap_root = snap_root
+            self.latest_dir = snap_root / "latest"
+        else:
+            self.snap_root = SNAP_ROOT
+            self.latest_dir = LATEST_SNAP_DIR
 
     def _get_next_ordinal(self) -> int:
         """Get the next ordinal number by checking existing snapshot directories."""

@@ -69,8 +69,14 @@ def _is_git_repository() -> Optional[Path]:
         return None
 
 
-def get_backend() -> SnapshotBackend:
-    """Get the appropriate snapshot backend (singleton pattern)."""
+def get_backend(root: Optional[Path] = None) -> SnapshotBackend:
+    """Get the appropriate snapshot backend (singleton pattern).
+
+    Args:
+        root: Optional project root path. When provided on the first call,
+              snapshots are stored under ``root/.aye/snapshots`` instead of
+              the current working directory.
+    """
     global _backend
 
     if _backend is None:
@@ -81,7 +87,7 @@ def get_backend() -> SnapshotBackend:
         #    _backend = FileBasedBackend()
 
         # disabling GitRefBackend for now: it's not finished yet.
-        _backend = FileBasedBackend()
+        _backend = FileBasedBackend(root=root)
 
     return _backend
 

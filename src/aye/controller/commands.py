@@ -286,6 +286,11 @@ def initialize_project_context(root: Optional[Path], file_mask: Optional[str], g
 
     rprint(f"[bold cyan]Project root: {conf.root}[/]")
 
+    # 1b. Initialize snapshot backend with project root so snapshots
+    #     are stored under root/.aye/snapshots (not CWD).
+    snapshot.reset_backend()
+    snapshot.get_backend(root=conf.root)
+
     # 2. Initialize Plugin Manager and add to conf
     plugin_manager = PluginManager(verbose=conf.verbose)
     plugin_manager.discover()
