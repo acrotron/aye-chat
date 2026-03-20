@@ -204,9 +204,9 @@ jobs:
         run: |
           $version = "${{ steps.version.outputs.VERSION }}"
           $parts = $version.Split('.')
-          $major = if ($parts.Length -gt 0) { $parts[0] } else { "0" }
-          $minor = if ($parts.Length -gt 1) { $parts[1] } else { "0" }
-          $patch = if ($parts.Length -gt 2) { $parts[2] -replace '[^0-9].*', '' } else { "0" }
+          $major = if ($parts.Length -gt 0) { [int]$parts[0] } else { 0 }
+          $minor = if ($parts.Length -gt 1) { [int]$parts[1] } else { 0 }
+          $patch = if ($parts.Length -gt 2) { [int]($parts[2] -replace '[^0-9].*', '') } else { 0 }
 
           $content = @"
           VSVersionInfo(
