@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-from aye.model.file_processor import make_paths_relative, filter_unchanged_files
+from aye.model.file_processor import make_paths_relative, filter_unchanged_files, fix_duplicated_paths
 
 class TestFileProcessor(TestCase):
     def setUp(self):
@@ -133,10 +133,87 @@ class TestFileProcessor(TestCase):
         updated_files = [
             {"file_name": str(self.file1), "file_content": "new content"}
         ]
-        
+
         with patch('pathlib.Path.read_text', side_effect=IOError("Can't read")):
             changed = filter_unchanged_files(updated_files)
-            
+
             # If the original can't be read, it should be included for update
             self.assertEqual(len(changed), 1)
             self.assertEqual(changed[0]['file_name'], str(self.file1))
+
+
+class TestFixDuplicatedPaths(TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmpdir.name).resolve()
+
+        # Create directory structure: root/src/file.txt
+        self.src_dir = self.root / "src"
+        self.src_dir.mkdir()
+        self.src_file = self.src_dir / "file.txt"
+        self.src_file.write_text("hello")
+
+        # Create deeper structure: root/src/utils/helper.py
+        self.utils_dir = self.src_dir / "utils"
+        self.utils_dir.mkdir()
+        self.helper_file = self.utils_dir / "helper.py"
+        self.helper_file.write_text("def help(): pass")
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_fixes_duplicated_segment(self):
+        """src/src/file.txt -> src/file.txt when src/file.txt exists."""
+        files = [{"file_name": "src/src/file.txt"}]
+        result = fix_duplicated_paths(files, self.root)
+        self.assertEqual(result[0]["file_name"], str(Path("src/file.txt")))
+
+    def test_fixes_deeper_duplication(self):
+        """src/utils/utils/helper.py -> src/utils/helper.py when it exists."""
+        files = [{"file_name": "src/utils/utils/helper.py"}]
+        result = fix_duplicated_paths(files, self.root)
+        self.assertEqual(result[0]["file_name"], str(Path("src/utils/helper.py")))
+
+    def test_no_change_when_path_exists(self):
+        """Don't touch paths that already resolve to existing files."""
+        files = [{"file_name": "src/file.txt"}]
+        result = fix_duplicated_paths(files, self.root)
+        self.assertEqual(result[0]["file_name"], "src/file.txt")
+
+    def test_no_change_when_deduped_doesnt_exist(self):
+        """Don't correct if the deduplicated path doesn't exist on disk either."""
+        files = [{"file_name": "lib/lib/missing.txt"}]
+        result = fix_duplicated_paths(files, self.root)
+        self.assertEqual(result[0]["file_name"], "lib/lib/missing.txt")
+
+    def test_no_change_for_legitimate_repeated_dirs(self):
+        """Don't correct if the original duplicated path actually exists."""
+        # Create root/src/src/real.txt (legitimately nested)
+        nested = self.src_dir / "src"
+        nested.mkdir()
+        real_file = nested / "real.txt"
+        real_file.write_text("I'm real")
+
+        files = [{"file_name": "src/src/real.txt"}]
+        result = fix_duplicated_paths(files, self.root)
+        # Should NOT deduplicate because the original path exists
+        self.assertEqual(result[0]["file_name"], "src/src/real.txt")
+
+    def test_skips_absolute_paths(self):
+        """Absolute paths are left untouched."""
+        abs_path = str(self.src_dir / "src" / "file.txt")
+        files = [{"file_name": abs_path}]
+        result = fix_duplicated_paths(files, self.root)
+        self.assertEqual(result[0]["file_name"], abs_path)
+
+    def test_skips_items_without_file_name(self):
+        """Items missing file_name key are ignored."""
+        files = [{"other_key": "value"}]
+        result = fix_duplicated_paths(files, self.root)
+        self.assertNotIn("file_name", result[0])
+
+    def test_single_segment_path_unchanged(self):
+        """Single-segment paths (just a filename) are never modified."""
+        files = [{"file_name": "file.txt"}]
+        result = fix_duplicated_paths(files, self.root)
+        self.assertEqual(result[0]["file_name"], "file.txt")

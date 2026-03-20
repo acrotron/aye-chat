@@ -19,7 +19,7 @@ from aye.model.auth import get_user_config
 from aye.presenter.diff_presenter import show_diff
 
 from aye.model.snapshot import apply_updates, get_diff_base_for_file
-from aye.model.file_processor import make_paths_relative, filter_unchanged_files
+from aye.model.file_processor import make_paths_relative, filter_unchanged_files, fix_duplicated_paths
 from aye.model.models import LLMResponse
 from aye.model.autodiff_config import is_autodiff_enabled
 from aye.model.write_validator import (
@@ -70,9 +70,12 @@ def process_llm_response(
         print_no_files_changed(console)
         return new_chat_id
     
+    # Fix duplicated path segments (e.g. src/src/file.txt -> src/file.txt)
+    updated_files = fix_duplicated_paths(updated_files, conf.root)
+
     # Filter unchanged files (pass root for proper path resolution)
     updated_files = filter_unchanged_files(updated_files, conf.root)
-    
+
     # Make paths relative to project root
     updated_files = make_paths_relative(updated_files, conf.root)
     
