@@ -9,6 +9,14 @@ import httpx
 from aye.model.auth import get_token, get_user_config
 from aye.model.config import DEFAULT_MAX_OUTPUT_TOKENS
 
+
+class ApiError(Exception):
+    """API error with HTTP status code context for actionable error messages."""
+
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
+
 # -------------------------------------------------
 # 👉  EDIT THIS TO POINT TO YOUR SERVICE
 # -------------------------------------------------
@@ -63,21 +71,21 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
 
     * Raises for non‑2xx status codes.
     * If the response body is JSON and contains an ``error`` key, prints
-      the error message and raises ``Exception`` with that message.
+      the error message and raises ``ApiError`` with that message.
     * If parsing JSON fails, falls back to raw text for the error message.
     Returns the parsed JSON payload for successful calls.
     """
     try:
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        status = resp.status_code
         # Try to extract a JSON error message, otherwise use text.
         try:
             err_json = resp.json()
             err_msg = err_json.get("error") or resp.text
         except Exception:
             err_msg = resp.text
-        print(f"Error: {err_msg}")
-        raise Exception(err_msg) from exc
+        raise ApiError(err_msg, status_code=status) from exc
 
     # Successful status – still check for an error field in the payload.
     try:
@@ -88,8 +96,7 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
 
     if isinstance(payload, dict) and "error" in payload:
         err_msg = payload["error"]
-        print(f"Error: {err_msg}")
-        raise Exception(err_msg)
+        raise ApiError(err_msg)
     return payload
 
 

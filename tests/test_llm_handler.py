@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 from rich.padding import Padding
 
 import aye.controller.llm_handler as llm_handler
+from aye.model.api import ApiError
 from aye.model.models import LLMResponse, LLMSource
 
 
@@ -99,21 +100,68 @@ class TestLlmHandler(TestCase):
 
             mock_rprint.assert_called_with("[red]Error applying updates:[/] Disk full")
 
-    @patch('aye.controller.llm_handler.print_error')
-    @patch('traceback.print_exc')
-    def test_handle_llm_error_403(self, mock_traceback, mock_print_error):
+    @patch('aye.controller.llm_handler.rprint')
+    def test_handle_llm_error_403_api_error(self, mock_rprint):
+        exc = ApiError("Forbidden", status_code=403)
+        llm_handler.handle_llm_error(exc)
+        msg = mock_rprint.call_args[0][0]
+        self.assertIn("Authentication error", msg)
+        self.assertIn("aye auth login", msg)
+
+    @patch('aye.controller.llm_handler.rprint')
+    def test_handle_llm_error_401(self, mock_rprint):
+        exc = ApiError("Unauthorized", status_code=401)
+        llm_handler.handle_llm_error(exc)
+        msg = mock_rprint.call_args[0][0]
+        self.assertIn("Authentication error", msg)
+
+    @patch('aye.controller.llm_handler.rprint')
+    def test_handle_llm_error_403_legacy_response_attr(self, mock_rprint):
+        """Legacy path: exc.response.status_code (e.g. from httpx directly)."""
         mock_response = MagicMock()
         mock_response.status_code = 403
         exc = Exception("Auth error")
         exc.response = mock_response
-
         llm_handler.handle_llm_error(exc)
+        msg = mock_rprint.call_args[0][0]
+        self.assertIn("Authentication error", msg)
 
-        mock_traceback.assert_called_once()
-        mock_print_error.assert_called_once()
-        arg = mock_print_error.call_args[0][0]
-        self.assertIsInstance(arg, Exception)
-        self.assertIn("Unauthorized", str(arg))
+    @patch('aye.controller.llm_handler.rprint')
+    def test_handle_llm_error_429_rate_limit(self, mock_rprint):
+        exc = ApiError("Too many requests", status_code=429)
+        llm_handler.handle_llm_error(exc)
+        msg = mock_rprint.call_args[0][0]
+        self.assertIn("Rate limit", msg)
+
+    @patch('aye.controller.llm_handler.rprint')
+    def test_handle_llm_error_500_server(self, mock_rprint):
+        exc = ApiError("Internal server error", status_code=500)
+        llm_handler.handle_llm_error(exc)
+        msg = mock_rprint.call_args[0][0]
+        self.assertIn("Server error", msg)
+        self.assertIn("not caused by your local code", msg)
+
+    @patch('aye.controller.llm_handler.rprint')
+    def test_handle_llm_error_502_server(self, mock_rprint):
+        exc = ApiError("Bad gateway", status_code=502)
+        llm_handler.handle_llm_error(exc)
+        msg = mock_rprint.call_args[0][0]
+        self.assertIn("Server error (HTTP 502)", msg)
+
+    @patch('aye.controller.llm_handler.rprint')
+    def test_handle_llm_error_400_request(self, mock_rprint):
+        exc = ApiError("Bad request", status_code=400)
+        llm_handler.handle_llm_error(exc)
+        msg = mock_rprint.call_args[0][0]
+        self.assertIn("Request error", msg)
+        self.assertIn("oversized prompt", msg)
+
+    @patch('aye.controller.llm_handler.rprint')
+    def test_handle_llm_error_timeout(self, mock_rprint):
+        exc = TimeoutError("Timed out waiting for response")
+        llm_handler.handle_llm_error(exc)
+        msg = mock_rprint.call_args[0][0]
+        self.assertIn("timed out", msg)
 
     @patch('aye.controller.llm_handler.print_error')
     def test_handle_llm_error_generic(self, mock_print_error):

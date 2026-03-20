@@ -277,7 +277,10 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
 
         if "error" in assistant_resp_str.lower():
             chat_title = resp.get('chat_title', 'Unknown')
-            raise Exception(f"Server error in chat '{chat_title}': {assistant_resp_str}") from e
+            raise Exception(
+                f"The LLM returned an error for chat '{chat_title}': {assistant_resp_str}\n"
+                "This may be a temporary issue with the model provider. Please try again."
+            ) from e
 
         parsed = {"answer_summary": assistant_resp_str, "source_files": []}
 

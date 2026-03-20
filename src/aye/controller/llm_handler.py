@@ -18,6 +18,7 @@ from aye.presenter.repl_ui import (
 from aye.model.auth import get_user_config
 from aye.presenter.diff_presenter import show_diff
 
+from aye.model.api import ApiError
 from aye.model.snapshot import apply_updates, get_diff_base_for_file
 from aye.model.file_processor import make_paths_relative, filter_unchanged_files, fix_duplicated_paths
 from aye.model.models import LLMResponse
@@ -180,17 +181,47 @@ def _show_autodiffs(batch_id: str, updated_files: List[Dict[str, str]], root: Pa
 
 
 def handle_llm_error(exc: Exception) -> None:
-    """Unified error handler for LLM invocation errors."""
+    """Unified error handler for LLM invocation errors.
 
-    if hasattr(exc, "response") and getattr(exc.response, "status_code", None) == 403:
-        traceback.print_exc()
-        print_error(
-            Exception(
-                "[red]❌ Unauthorized:[/] the stored token is invalid or missing.\n"
-                "Log in again with `aye auth login` or set a valid "
-                "`AYE_TOKEN` environment variable.\n"
-                "Obtain your personal access token at https://ayechat.ai"
-            )
+    Provides actionable guidance based on the specific error type rather
+    than showing a generic message for all failures.
+    """
+    status = None
+
+    # Extract HTTP status from ApiError or from a raw httpx response attribute
+    if isinstance(exc, ApiError):
+        status = exc.status_code
+    elif hasattr(exc, "response") and hasattr(exc.response, "status_code"):
+        status = exc.response.status_code
+
+    if status == 401 or status == 403:
+        rprint(
+            "[red]Authentication error:[/] the stored token is invalid or missing.\n"
+            "Log in again with `aye auth login` or set a valid "
+            "`AYE_TOKEN` environment variable.\n"
+            "Obtain your personal access token at https://ayechat.ai"
+        )
+    elif status == 429:
+        rprint(
+            "[yellow]Rate limit reached:[/] too many requests in a short period.\n"
+            "Please wait a moment and try again."
+        )
+    elif status is not None and 500 <= status <= 599:
+        rprint(
+            f"[red]Server error (HTTP {status}):[/] the API encountered an internal problem.\n"
+            "This is not caused by your local code. Please try again shortly.\n"
+            "If the problem persists, check https://ayechat.ai for service status."
+        )
+    elif status == 400 or status == 422:
+        rprint(
+            f"[red]Request error (HTTP {status}):[/] {exc}\n"
+            "This may be caused by an oversized prompt or unsupported content.\n"
+            "Try reducing the number of included files or simplifying your prompt."
+        )
+    elif isinstance(exc, TimeoutError):
+        rprint(
+            "[yellow]Request timed out:[/] the LLM took too long to respond.\n"
+            "This can happen with large prompts. Try again or reduce context size."
         )
     else:
         print_error(exc)
