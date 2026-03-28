@@ -221,6 +221,8 @@ def _is_small_project(root: Path, file_mask: str, verbose: bool) -> Tuple[bool, 
     Returns:
         Tuple of (is_small, files_list)
     """
+    rprint("[cyan]Scanning directory for project size context…[/]")
+
     # Quick scan with limit
     files, limit_hit = get_project_files_with_limit(root_dir=str(root), file_mask=file_mask, limit=SMALL_PROJECT_FILE_LIMIT)
 
@@ -234,12 +236,11 @@ def _is_small_project(root: Path, file_mask: str, verbose: bool) -> Tuple[bool, 
     total_size = _calculate_total_file_size(files)
 
     if total_size >= SMALL_PROJECT_TOTAL_SIZE_LIMIT:
-        if verbose:
-            rprint(f"[cyan]Large project detected: {total_size / 1024:.1f}KB total size[/]")
+        
+        rprint(f"[cyan]Large project detected: {total_size / 1024:.1f}KB total size[/]")
         return False, files
 
-    if verbose:
-        rprint(f"[cyan]Small project: {len(files)} files, {total_size / 1024:.1f}KB total[/]")
+    rprint(f"[cyan]Small project: {len(files)} files, {total_size / 1024:.1f}KB total[/]")
 
     return True, files
 
