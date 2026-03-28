@@ -534,12 +534,12 @@ class TestParseApiResponse(TestCase):
             "assistant_response": "An error occurred",
             "chat_title": "Test Chat"
         }
-        with self.assertRaisesRegex(Exception, "Server error in chat 'Test Chat'"):
+        with self.assertRaisesRegex(Exception, "LLM returned an error for chat 'Test Chat'"):
             llm_invoker._parse_api_response(resp)
 
     def test_server_error_no_chat_title(self):
         resp = {"assistant_response": "Internal error occurred"}
-        with self.assertRaisesRegex(Exception, "Server error in chat 'Unknown'"):
+        with self.assertRaisesRegex(Exception, "LLM returned an error for chat 'Unknown'"):
             llm_invoker._parse_api_response(resp)
 
     @patch('aye.controller.llm_invoker.is_truncated_json', return_value=True)
@@ -1107,7 +1107,7 @@ class TestLlmInvoker(TestCase):
         }
         mock_cli_invoke.return_value = api_response
 
-        with self.assertRaisesRegex(Exception, "Server error in chat 'My Chat'"):
+        with self.assertRaisesRegex(Exception, "LLM returned an error for chat 'My Chat'"):
             llm_invoker.invoke_llm("p", self.conf, self.console, self.plugin_manager)
 
     @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)

@@ -152,7 +152,7 @@ Your input is handled in this order:
 
 - Aye Chat respects `.gitignore` and `.ayeignore` - private files are never touched
 - Change history and backups stored locally in `.aye/` folder
-- Configure default model and preferences in `~/.aye/config.yaml`
+- Configure default model and preferences in `~/.ayecfg`
 
 ## Privacy & Security
 

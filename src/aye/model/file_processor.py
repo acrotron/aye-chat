@@ -1,12 +1,14 @@
 # file_processor.py
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 
 def make_paths_relative(files: List[Dict[str, Any]], root: Path) -> List[Dict[str, Any]]:
     """
-    Strip *root* from any file_name that already starts with it.
-    This prevents double-prefixing like `src/aye/src/aye/foo.py`.
+    Convert file paths to be relative to the project root.
+    
+    This handles both absolute paths and paths that need resolution.
+    Paths are resolved against the project root, NOT the current working directory.
     
     Args:
         files: List of file dictionaries with 'file_name' keys
@@ -19,23 +21,102 @@ def make_paths_relative(files: List[Dict[str, Any]], root: Path) -> List[Dict[st
     for f in files:
         if "file_name" not in f:
             continue
+        
+        file_name = f["file_name"]
+        
         try:
-            p = Path(f["file_name"]).resolve()
-            if p.is_relative_to(root):
-                f["file_name"] = str(p.relative_to(root))
+            p = Path(file_name)
+            
+            if p.is_absolute():
+                # Absolute path: check if it's under root and make relative
+                if p.is_relative_to(root):
+                    f["file_name"] = str(p.relative_to(root))
+                # else: leave absolute paths outside root unchanged
+            else:
+                # Relative path: resolve against ROOT (not CWD) to normalize,
+                # then make relative to root again
+                # This handles cases like "./src/../src/file.py" -> "src/file.py"
+                resolved = (root / p).resolve()
+                if resolved.is_relative_to(root):
+                    f["file_name"] = str(resolved.relative_to(root))
+                # else: path resolved outside root, leave as-is
+                
         except Exception:
-            # If the path cannot be resolved or Python <3.9, leave it unchanged
+            # If the path cannot be processed, leave it unchanged
             pass
     return files
 
 
-def filter_unchanged_files(updated_files: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def fix_duplicated_paths(files: List[Dict[str, Any]], root: Path) -> List[Dict[str, Any]]:
+    """
+    Fix file paths where the LLM has duplicated directory segments.
+
+    When an LLM returns paths like 'src/src/file.txt' instead of 'src/file.txt',
+    this detects the duplication by checking whether the path exists on disk and,
+    if not, tries removing consecutive duplicate directory segments.
+
+    A correction is only applied when:
+      1. The original path does NOT exist on disk (under root), AND
+      2. The deduplicated path DOES exist on disk.
+
+    This avoids false corrections for legitimately repeated directory names.
+
+    Args:
+        files: List of file dictionaries with 'file_name' keys
+        root: Project root path for resolving relative paths
+
+    Returns:
+        Modified list with corrected paths
+    """
+    root = root.resolve()
+    for f in files:
+        if "file_name" not in f:
+            continue
+
+        file_name = f["file_name"]
+
+        try:
+            p = Path(file_name)
+
+            if p.is_absolute():
+                continue
+
+            # If the file already exists at the given path, no fix needed
+            if (root / p).exists():
+                continue
+
+            # Try removing consecutive duplicate directory segments
+            parts = p.parts
+            if len(parts) < 2:
+                continue
+
+            deduped = [parts[0]]
+            for i in range(1, len(parts)):
+                if parts[i] != parts[i - 1]:
+                    deduped.append(parts[i])
+
+            if len(deduped) == len(parts):
+                # No duplicates found
+                continue
+
+            fixed_path = Path(*deduped)
+            if (root / fixed_path).exists():
+                f["file_name"] = str(fixed_path)
+
+        except Exception:
+            pass
+
+    return files
+
+
+def filter_unchanged_files(updated_files: List[Dict[str, Any]], root: Optional[Path] = None) -> List[Dict[str, Any]]:
     """
     Filter out files from updated_files list if their content hasn't changed 
     compared to on-disk version.
     
     Args:
         updated_files: List of file dictionaries with 'file_name' and 'file_content' keys
+        root: Optional project root path. If provided, relative paths are resolved against it.
         
     Returns:
         List containing only files that have actually changed
@@ -45,8 +126,14 @@ def filter_unchanged_files(updated_files: List[Dict[str, Any]]) -> List[Dict[str
         if "file_name" not in item or "file_content" not in item:
             continue
             
-        file_path = Path(item["file_name"])
+        file_name = item["file_name"]
         new_content = item["file_content"]
+        
+        # Resolve the file path
+        if root is not None and not Path(file_name).is_absolute():
+            file_path = root / file_name
+        else:
+            file_path = Path(file_name)
         
         # If file doesn't exist on disk, consider it changed (new file)
         if not file_path.exists():

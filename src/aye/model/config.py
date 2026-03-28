@@ -4,9 +4,18 @@ Stores application configuration constants and settings.
 """
 
 # Default ignore patterns for file scanning
+# These directories are excluded from indexing and context unless explicitly requested
 DEFAULT_IGNORE_SET = {
-    'venv', 'env', 'node_modules', '__pycache__', 'dist', 'build',
-    'target', 'bin', 'public', 'vendor'
+    # Python
+    'venv', 'env', '__pycache__', '.venv', '.env',
+    # Node.js
+    'node_modules',
+    # Build outputs
+    'dist', 'build', 'target', 'out',
+    # .NET / C# / Visual Studio
+    'bin', 'obj',
+    # Other common directories
+    'public', 'vendor',
 }
 
 # Threshold to define a "small" project by file count. Projects with more files

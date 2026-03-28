@@ -8,6 +8,7 @@ from unittest.mock import patch, MagicMock
 import httpx
 
 import aye.model.api as api
+from aye.model.api import ApiError
 from aye.model.auth import get_user_config
 
 
@@ -63,9 +64,10 @@ class TestModelApi(TestCase):
         mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
             "error", request=None, response=mock_resp
         )
-        with self.assertRaises(Exception) as cm:
+        with self.assertRaises(ApiError) as cm:
             api._check_response(mock_resp)
         self.assertIn("Bad request", str(cm.exception))
+        self.assertEqual(cm.exception.status_code, 400)
 
     def test_check_response_error_status_json_without_error_uses_text(self):
         mock_resp = MagicMock()
@@ -76,9 +78,10 @@ class TestModelApi(TestCase):
             "error", request=None, response=mock_resp
         )
 
-        with self.assertRaises(Exception) as cm:
+        with self.assertRaises(ApiError) as cm:
             api._check_response(mock_resp)
         self.assertIn("Fallback text", str(cm.exception))
+        self.assertEqual(cm.exception.status_code, 400)
 
     def test_check_response_error_status_non_json(self):
         mock_resp = MagicMock()
@@ -88,9 +91,10 @@ class TestModelApi(TestCase):
         mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
             "error", request=None, response=mock_resp
         )
-        with self.assertRaises(Exception) as cm:
+        with self.assertRaises(ApiError) as cm:
             api._check_response(mock_resp)
         self.assertIn("Raw error text", str(cm.exception))
+        self.assertEqual(cm.exception.status_code, 400)
 
     def test_check_response_json_error(self):
         mock_resp = MagicMock()
@@ -98,9 +102,34 @@ class TestModelApi(TestCase):
         mock_resp.raise_for_status.return_value = None
         mock_resp.json.return_value = {"error": "Server error"}
         mock_resp.text = "Server error"
-        with self.assertRaises(Exception) as cm:
+        with self.assertRaises(ApiError) as cm:
             api._check_response(mock_resp)
         self.assertIn("Server error", str(cm.exception))
+        self.assertIsNone(cm.exception.status_code)
+
+    def test_check_response_error_status_429_rate_limit(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 429
+        mock_resp.json.return_value = {"error": "Rate limit exceeded"}
+        mock_resp.text = "Rate limit exceeded"
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "error", request=None, response=mock_resp
+        )
+        with self.assertRaises(ApiError) as cm:
+            api._check_response(mock_resp)
+        self.assertEqual(cm.exception.status_code, 429)
+
+    def test_check_response_error_status_500_server(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.json.return_value = {"error": "Internal server error"}
+        mock_resp.text = "Internal server error"
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "error", request=None, response=mock_resp
+        )
+        with self.assertRaises(ApiError) as cm:
+            api._check_response(mock_resp)
+        self.assertEqual(cm.exception.status_code, 500)
 
     def test_check_response_non_json(self):
         mock_resp = MagicMock()
