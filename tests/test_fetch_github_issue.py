@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 import httpx
 
-from aye.plugins.github_get.fetch_github_issue import (
+from aye.plugins.gitlib.fetch_github_issue import (
     fetch_github_issue,
     driver,
     GITHUB_ISSUE_PATTERN,
@@ -309,11 +309,11 @@ class TestDriver:
 
         with patch("sys.argv", ["fetch_github_issue", "https://github.com/owner/repo/issues/1"]):
             with patch(
-                "aye.plugins.github_get.fetch_github_issue.fetch_github_issue",
+                "aye.plugins.gitlib.fetch_github_issue.fetch_github_issue",
                 return_value=mock_data,
             ):
                 with patch(
-                    "aye.plugins.github_get.fetch_github_issue.Console"
+                    "aye.plugins.gitlib.fetch_github_issue.Console"
                 ) as mock_console_class:
                     mock_console = MagicMock()
                     mock_console_class.return_value = mock_console
@@ -329,7 +329,7 @@ class TestDriver:
             mock_response.status_code = 404
 
             with patch(
-                "aye.plugins.github_get.fetch_github_issue.fetch_github_issue",
+                "aye.plugins.gitlib.fetch_github_issue.fetch_github_issue",
                 side_effect=httpx.HTTPStatusError(
                     "Not Found",
                     request=MagicMock(),
@@ -344,7 +344,7 @@ class TestDriver:
         """Test driver exits with error on network error."""
         with patch("sys.argv", ["fetch_github_issue", "https://github.com/owner/repo/issues/1"]):
             with patch(
-                "aye.plugins.github_get.fetch_github_issue.fetch_github_issue",
+                "aye.plugins.gitlib.fetch_github_issue.fetch_github_issue",
                 side_effect=httpx.ConnectError("Connection failed"),
             ):
                 with pytest.raises(SystemExit) as exc_info:
