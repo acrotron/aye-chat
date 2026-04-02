@@ -1,12 +1,14 @@
 import re
 import sys
-from typing import Any
-
 import httpx
-from rich import print as rprint, print_json
+
+from typing import Any, Dict, Optional
+from rich import print as rprint
 from rich.console import Console
 from rich.json import JSON
 from rich.theme import Theme
+
+from aye.plugins.plugin_base import Plugin
 
 _JSON_PRINT_THEME = Theme({
     "json.key": "bold turquoise2",
@@ -16,12 +18,42 @@ _JSON_PRINT_THEME = Theme({
     "json.bool_false": "bold indian_red1",
     "json.null": "bold khaki1",
 })
+
 DEFAULT_TIMEOUT = 30.0
 
-# Regex to extract owner, repo, issue number from GitHub URL
 GITHUB_ISSUE_PATTERN = re.compile(
     r"^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/issues/(\d+)/?$"
 )
+
+
+class FetchGithubIssuePlugin(Plugin):
+    name = "fetch_github_issue"
+
+    def init(self, cfg: Dict[str, Any]) -> None:
+        super().init(cfg)
+
+    def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if command_name == "gitlib":
+            url = params.get("url")
+            if not url:
+                rprint("[red]Usage:[/] gitlib <github-issue-url>")
+                return {"status": "error", "summary": "No URL provided"}
+            try:
+                data = fetch_github_issue(url)
+                console = Console(theme=_JSON_PRINT_THEME)
+                console.print(JSON.from_data(data, indent=2))
+                return {"status": "success", "data": data}
+            except ValueError as e:
+                rprint(f"[red]Invalid URL:[/] {e}")
+                return {"status": "error", "summary": str(e)}
+            except httpx.HTTPStatusError as e:
+                rprint(f"[red]API error:[/] {e.response.status_code}")
+                return {"status": "error", "summary": str(e)}
+            except httpx.RequestError as e:
+                rprint(f"[red]Network error:[/] {e}")
+                return {"status": "error", "summary": str(e)}
+        return None
+
 
 def fetch_github_issue(url: str, *, timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
     """Fetch a GitHub issue via the REST API.
@@ -38,47 +70,40 @@ def fetch_github_issue(url: str, *, timeout: float = DEFAULT_TIMEOUT) -> dict[st
         httpx.HTTPStatusError: If the API returns an error status.
         httpx.RequestError: If a network error occurs.
     """
-    # Parse the URL
     match = GITHUB_ISSUE_PATTERN.match(url)
     if not match:
         raise ValueError(f"Not a valid GitHub issue URL: {url}")
 
     owner, repo, issue_num = match.groups()
 
-    # Build API URLs
     api_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_num}"
     comments_url = f"{api_url}/timeline"
 
-    # Make API requests
     with httpx.Client(timeout=timeout) as client:
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "github-issue-fetcher/1.0",
         }
 
-        # Fetch issue data
         response = client.get(api_url, headers=headers)
         response.raise_for_status()
         issue = response.json()
 
-        # Fetch comments
-        # Mockingbird required for timeline endpoint!
         comments_header = {
-        "Accept": "application/vnd.github.mockingbird-preview+json", 
-        "User-Agent": "github-issue-fetcher/1.0",
+            "Accept": "application/vnd.github.mockingbird-preview+json",
+            "User-Agent": "github-issue-fetcher/1.0",
         }
 
         timeline_response = client.get(comments_url, headers=comments_header)
         comments = []
         if timeline_response.status_code == 200:
-                for e in timeline_response.json():
-                     if e.get("user", {}).get("login") and e.get("body"):
-                          comments.append({
-                               "author" : e.get("user", {}).get("login") ,
-                               "body" : e.get("body")
-                          })
+            for e in timeline_response.json():
+                if e.get("user", {}).get("login") and e.get("body"):
+                    comments.append({
+                        "author": e.get("user", {}).get("login"),
+                        "body": e.get("body")
+                    })
 
-        # Return structured data
         return {
             "url": url,
             "number": issue.get("number"),
@@ -94,14 +119,14 @@ def fetch_github_issue(url: str, *, timeout: float = DEFAULT_TIMEOUT) -> dict[st
 def driver() -> None:
     """CLI entry point."""
     if len(sys.argv) < 2:
-        rprint("[yellow]Try: python -m aye.model.fetch_github_issue <github_issue_url>[/]")
+        rprint("[yellow]Usage: python -m aye.plugins.gitlib.fetch_github_issue <github_issue_url>[/]")
         sys.exit(1)
 
     url = sys.argv[1]
 
     try:
         data = fetch_github_issue(url)
-        console = Console(theme =_JSON_PRINT_THEME)
+        console = Console(theme=_JSON_PRINT_THEME)
         console.print(JSON.from_data(data, indent=2))
     except ValueError as e:
         rprint(f"[red]Invalid URL:[/] {e}")

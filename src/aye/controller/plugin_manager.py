@@ -53,7 +53,7 @@ class PluginManager:
                 rprint(f"[yellow]Plugin directory not found: {plugin_dir}[/]")
             return
         
-        for f in plugin_dir.glob("*.py"):
+        for f in plugin_dir.rglob("*.py"):
             if f.name.startswith("__") or f.name == "plugin_base.py":
                 continue
             self._load(f)

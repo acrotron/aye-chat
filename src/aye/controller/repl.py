@@ -295,7 +295,7 @@ def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> N
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "shellcap", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm", "printraw", "raw"]
+    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "shellcap", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm", "printraw", "raw", "gitlib"]
 
     # Get the completion style setting
     completion_style = get_user_config("completion_style", "readline").lower()
@@ -496,6 +496,12 @@ def chat_repl(conf: Any) -> None:
                 elif lowered_first == "cd":
                     telemetry.record_command("cd", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_cd_command(tokens, conf)
+                elif lowered_first == "gitlib":
+                    telemetry.record_command("gitlib", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
+                    if len(tokens) < 2:
+                        rprint("[red]Usage:[/] gitlib <github-issue-url>")
+                    else:
+                        conf.plugin_manager.handle_command("gitlib", {"url": tokens[1]})
                 elif lowered_first == "db":
                     telemetry.record_command("db", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     if index_manager and hasattr(index_manager, 'collection') and index_manager.collection:
