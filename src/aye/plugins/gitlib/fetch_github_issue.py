@@ -40,8 +40,6 @@ class FetchGithubIssuePlugin(Plugin):
                 return {"status": "error", "summary": "No URL provided"}
             try:
                 data = fetch_github_issue(url)
-                console = Console(theme=_JSON_PRINT_THEME)
-                console.print(JSON.from_data(data, indent=2))
                 return {"status": "success", "data": data}
             except ValueError as e:
                 rprint(f"[red]Invalid URL:[/] {e}")
@@ -116,28 +114,30 @@ def fetch_github_issue(url: str, *, timeout: float = DEFAULT_TIMEOUT) -> dict[st
         }
 
 
-def driver() -> None:
-    """CLI entry point."""
-    if len(sys.argv) < 2:
-        rprint("[yellow]Usage: python -m aye.plugins.gitlib.fetch_github_issue <github_issue_url>[/]")
-        sys.exit(1)
+#TODO: remove driver?
 
-    url = sys.argv[1]
+# def driver() -> None:
+#     """CLI entry point."""
+#     if len(sys.argv) < 2:
+#         rprint("[yellow]Usage: python -m aye.plugins.gitlib.fetch_github_issue <github_issue_url>[/]")
+#         sys.exit(1)
 
-    try:
-        data = fetch_github_issue(url)
-        console = Console(theme=_JSON_PRINT_THEME)
-        console.print(JSON.from_data(data, indent=2))
-    except ValueError as e:
-        rprint(f"[red]Invalid URL:[/] {e}")
-        sys.exit(1)
-    except httpx.HTTPStatusError as e:
-        rprint(f"[red]API error:[/] {e.response.status_code}")
-        sys.exit(1)
-    except httpx.RequestError as e:
-        rprint(f"[red]Network error:[/] {e}")
-        sys.exit(1)
+#     url = sys.argv[1]
+
+#     try:
+#         data = fetch_github_issue(url)
+#         console = Console(theme=_JSON_PRINT_THEME)
+#         console.print(JSON.from_data(data, indent=2))
+#     except ValueError as e:
+#         rprint(f"[red]Invalid URL:[/] {e}")
+#         sys.exit(1)
+#     except httpx.HTTPStatusError as e:
+#         rprint(f"[red]API error:[/] {e.response.status_code}")
+#         sys.exit(1)
+#     except httpx.RequestError as e:
+#         rprint(f"[red]Network error:[/] {e}")
+#         sys.exit(1)
 
 
-if __name__ == "__main__":
-    driver()
+# if __name__ == "__main__":
+#     driver()

@@ -44,6 +44,7 @@ from aye.controller.command_handlers import (
     handle_autodiff_command,
     handle_shellcap_command,
     handle_printraw_command,
+    handle_gitlib_command
 )
 from aye.controller.shell_capture import capture_shell_result, maybe_attach_shell_result
 
@@ -498,10 +499,7 @@ def chat_repl(conf: Any) -> None:
                     handle_cd_command(tokens, conf)
                 elif lowered_first == "gitlib":
                     telemetry.record_command("gitlib", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
-                    if len(tokens) < 2:
-                        rprint("[red]Usage:[/] gitlib <github-issue-url>")
-                    else:
-                        conf.plugin_manager.handle_command("gitlib", {"url": tokens[1]})
+                    handle_gitlib_command(tokens, conf, console, chat_id, chat_id_file)
                 elif lowered_first == "db":
                     telemetry.record_command("db", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     if index_manager and hasattr(index_manager, 'collection') and index_manager.collection:
