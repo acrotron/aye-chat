@@ -1,6 +1,9 @@
 from pathlib import Path
 import os
-from typing import Union, Optional, Tuple
+from typing import Union, Optional, Tuple, Dict, Any
+import re
+import json
+from rich import print as rprint
 
 # The only marker we care about now is the index file inside the .aye directory
 PROJECT_MARKER = ".aye/file_index.json"
@@ -157,3 +160,39 @@ def is_truncated_json(raw_text: str) -> bool:
     
     # Doesn't look like JSON at all
     return False
+
+def has_url(prompt:str) -> bool:
+    URL_PATTERN = re.compile(r'https?://(?:www\.)?')
+    return URL_PATTERN.findall(prompt)
+
+def handle_url(    
+    prompt: str,
+    plugin_manager: Any,
+    verbose: bool = False) -> Dict[str, str]:
+    """Scan prompt for URLs and fetch them automatically.
+
+    Returns:
+    Dict mapping filenames to JSON content.
+    """
+
+    GITHUB_ISSUE_URL_PATTERN = re.compile(
+    r'https?://(?:www\.)?github\.com/[^/]+/[^/]+/issues/\d+/?')
+    
+    github_issues = GITHUB_ISSUE_URL_PATTERN.findall(prompt)
+
+    if not github_issues:
+        return {}
+
+    fetched_issues = {}
+
+    for url in github_issues:
+        result = plugin_manager.handle_command("fetch_github_issue", {"url": url, "verbose": verbose})
+        if result and result.get("status") == "success":
+            issue_data = result["data"]
+            # Use a descriptive filename for the LLM context
+            file_key = f"github_issue_{issue_data['author']}_{issue_data['title']}_{issue_data['number']}.json"
+            fetched_issues[file_key] = json.dumps(issue_data, indent=2)
+
+
+    return fetched_issues    
+

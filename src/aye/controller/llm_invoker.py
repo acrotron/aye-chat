@@ -1,5 +1,4 @@
 import json
-import re
 from typing import Any, Optional, Dict, Tuple, List
 from pathlib import Path
 
@@ -13,7 +12,7 @@ from aye.presenter.ui_utils import StoppableSpinner, DEFAULT_THINKING_MESSAGES
 from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
 from aye.model.offline_llm_manager import is_offline_model
-from aye.controller.util import is_truncated_json, discover_agents_file
+from aye.controller.util import is_truncated_json, discover_agents_file, has_url, handle_url
 from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB, CONTEXT_HARD_LIMIT_KB
 from aye.model import telemetry
 from aye.model.skills_system import SkillsResolver
@@ -88,46 +87,6 @@ def _get_context_hard_limit(model_id: str) -> int:
     if model_config and "max_prompt_kb" in model_config:
         return model_config["max_prompt_kb"] * 1024
     return CONTEXT_HARD_LIMIT_KB * 1024
-
-GITHUB_ISSUE_URL_PATTERN = re.compile(
-    r'https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/issues/(\d+)'
-)
-
-def _auto_fetch_url(prompt: str, conf: Any, plugin_manager: Any, verbose: bool) -> Dict[str, str]:
-    """Scan prompt for GitHub issue URLs and fetch them automatically.
-
-    Returns:
-        Dict mapping synthetic filenames to JSON content of fetched issues.
-    """
-    matches = GITHUB_ISSUE_URL_PATTERN.findall(prompt)
-    if not matches:
-        return {}
-
-    fetched_issues = {}
-
-    for owner, repo, issue_num in matches: url = f"https://github.com/{owner}/{repo}/issues/{issue_num}"
-
-    if verbose:
-        rprint(f"[cyan]Auto-fetching GitHub issue: {url}[/]")
-
-        # Call the plugin to fetch the issue tokens, conf, console, chat_id, chat_id_file
-    result = plugin_manager.handle_command("gitlib", {"url": url})
-
-    if result and result.get("status") == "success":
-        issue_data = result["data"]
-        # Use a descriptive filename for the LLM context
-        file_key = f"github_issue_{owner}_{repo}_{issue_num}.json"
-        fetched_issues[file_key] = json.dumps(issue_data, indent=2)
-
-        if verbose:
-            rprint(f"[green]✓ Fetched issue #{issue_num} from {owner}/{repo}[/]")
-    else:
-        if verbose:
-            rprint(f"[yellow]⚠ Could not fetch {url}[/]")
-
-    return fetched_issues
-
-    
 
 
 def _filter_ground_truth(files: Dict[str, str], conf: Any, verbose: bool) -> Dict[str, str]:
@@ -430,12 +389,13 @@ def invoke_llm(
         prompt, conf, verbose, explicit_source_files
     )
 
-    github_issues = _auto_fetch_url(prompt, conf, plugin_manager, verbose)
-    if github_issues:
-        # Merge fetched issues into source files
-        source_files = {**source_files, **github_issues}
-        if verbose:
-            rprint(f"[cyan]Added {len(github_issues)} GitHub issue(s) to context[/]")
+    if has_url(prompt):
+        url_data = handle_url(prompt, plugin_manager, verbose)
+        if url_data:
+            # Merge fetched issues into source files
+            source_files = {**source_files, **url_data}
+            if verbose:
+                rprint(f"[cyan]Added {len(url_data)} GitHub issue(s) to context[/]")
 
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
 

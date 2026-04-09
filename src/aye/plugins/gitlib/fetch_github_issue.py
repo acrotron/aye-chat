@@ -33,13 +33,14 @@ class FetchGithubIssuePlugin(Plugin):
         super().init(cfg)
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if command_name == "gitlib":
+        if command_name == "fetch_github_issue":
             url = params.get("url")
+            verbose = params.get("verbose")
             if not url:
-                rprint("[red]Usage:[/] gitlib <github-issue-url>")
+                rprint("[red]Usage:[/] fetch_github_issue <github-issue-url>")
                 return {"status": "error", "summary": "No URL provided"}
             try:
-                data = fetch_github_issue(url)
+                data = fetch_github_issue(url, verbose)
                 return {"status": "success", "data": data}
             except ValueError as e:
                 rprint(f"[red]Invalid URL:[/] {e}")
@@ -53,7 +54,7 @@ class FetchGithubIssuePlugin(Plugin):
         return None
 
 
-def fetch_github_issue(url: str, *, timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
+def fetch_github_issue(url: str, verbose: bool, *, timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
     """Fetch a GitHub issue via the REST API.
 
     Args:
@@ -71,6 +72,9 @@ def fetch_github_issue(url: str, *, timeout: float = DEFAULT_TIMEOUT) -> dict[st
     match = GITHUB_ISSUE_PATTERN.match(url)
     if not match:
         raise ValueError(f"Not a valid GitHub issue URL: {url}")
+    
+    if verbose:
+        rprint(f"[cyan]fetching GitHub issue: {url}[/]")
 
     owner, repo, issue_num = match.groups()
 
@@ -86,6 +90,12 @@ def fetch_github_issue(url: str, *, timeout: float = DEFAULT_TIMEOUT) -> dict[st
         response = client.get(api_url, headers=headers)
         response.raise_for_status()
         issue = response.json()
+
+        if response.status_code == 200 and verbose:
+            rprint(f"[blue]✓ Fetched issue #{issue_num} from {repo}[/]")
+        else:
+            if verbose:
+                rprint(f"[yellow]⚠ Could not fetch {url}[/]")
 
         comments_header = {
             "Accept": "application/vnd.github.mockingbird-preview+json",

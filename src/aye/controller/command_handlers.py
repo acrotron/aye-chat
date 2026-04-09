@@ -461,54 +461,6 @@ def handle_with_command(
         return None
 
 
-def handle_gitlib_command(
-        tokens: list, 
-        conf: Any,
-        console: Console,
-        chat_id: int,
-        chat_id_file: Path
-        ):
-
-    if len(tokens) < 2: 
-        rprint("[red]Usage:[/] gitlib <url> [your instructions]") 
-
-    else: 
-
-        url = tokens[1] 
-        extra_instructions = " ".join(tokens[2:]).strip()  # everything after URL 
-        result = conf.plugin_manager.handle_command("gitlib", {"url": url}) 
-
-        if result and result.get("status") == "success": 
-
-            # package the issue data as a source file for the LLM 
-            issue_data = result["data"]  # dict from fetch_github_issue() 
-
-            import json 
-
-            explicit_source_files = { 
-                f"github_issue_{issue_data['number']}.json": json.dumps(issue_data, indent=2) 
-            } 
-
-            prompt = extra_instructions or f"Summarize this GitHub issue: {url}" 
-
-            llm_response = invoke_llm( 
-                prompt=prompt, 
-                conf=conf, 
-                console=console, 
-                plugin_manager=conf.plugin_manager, 
-                chat_id=chat_id, 
-                verbose=conf.verbose, 
-                explicit_source_files=explicit_source_files, 
-            ) 
-            if llm_response: 
-                new_chat_id = process_llm_response( 
-                    response=llm_response, conf=conf, console=console, 
-                    prompt=prompt, 
-                    chat_id_file=chat_id_file if llm_response.chat_id else None 
-                ) 
-                if new_chat_id: 
-                    chat_id = new_chat_id 
-
 _BLOG_PROMPT_PREAMBLE = (
     "You are going to write a technical blog post as a deep dive into what we implemented in this chat session.\n"
     "\n"
