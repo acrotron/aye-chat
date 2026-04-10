@@ -390,12 +390,18 @@ def invoke_llm(
     )
 
     if has_url(prompt):
-        url_data = handle_url(prompt, plugin_manager, verbose)
-        if url_data:
-            # Merge fetched issues into source files
-            source_files = {**source_files, **url_data}
-            if verbose:
-                rprint(f"[cyan]Added {len(url_data)} GitHub issue(s) to context[/]")
+        try:
+            url_data = handle_url(prompt,conf.plugin_manager,conf.verbose)
+            if url_data:
+                if source_files:
+                    source_files = {**source_files, **url_data}
+                else:
+                    source_files = url_data
+        except ValueError as e:
+            if conf.verbose:
+                import traceback
+                traceback.print_exc()
+            raise ValueError(f"{e}")
 
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
 

@@ -43,13 +43,16 @@ class FetchGithubIssuePlugin(Plugin):
                 data = fetch_github_issue(url, verbose)
                 return {"status": "success", "data": data}
             except ValueError as e:
-                rprint(f"[red]Invalid URL:[/] {e}")
+                if verbose:
+                    rprint(f"[red]Invalid URL:[/] {e}")
                 return {"status": "error", "summary": str(e)}
             except httpx.HTTPStatusError as e:
-                rprint(f"[red]API error:[/] {e.response.status_code}")
+                if verbose:
+                    rprint(f"[red]API error:[/] {e.response.status_code}")
                 return {"status": "error", "summary": str(e)}
             except httpx.RequestError as e:
-                rprint(f"[red]Network error:[/] {e}")
+                if verbose:
+                    rprint(f"[red]Network error:[/] {e}")
                 return {"status": "error", "summary": str(e)}
         return None
 
@@ -92,7 +95,7 @@ def fetch_github_issue(url: str, verbose: bool, *, timeout: float = DEFAULT_TIME
         issue = response.json()
 
         if response.status_code == 200 and verbose:
-            rprint(f"[blue]✓ Fetched issue #{issue_num} from {repo}[/]")
+            rprint(f"[green]✓ Fetched issue #{issue_num} from {repo}[/]")
         else:
             if verbose:
                 rprint(f"[yellow]⚠ Could not fetch {url}[/]")
@@ -122,32 +125,3 @@ def fetch_github_issue(url: str, verbose: bool, *, timeout: float = DEFAULT_TIME
             "labels": [l.get("name") for l in issue.get("labels", [])],
             "comments": comments,
         }
-
-
-#TODO: remove driver?
-
-# def driver() -> None:
-#     """CLI entry point."""
-#     if len(sys.argv) < 2:
-#         rprint("[yellow]Usage: python -m aye.plugins.gitlib.fetch_github_issue <github_issue_url>[/]")
-#         sys.exit(1)
-
-#     url = sys.argv[1]
-
-#     try:
-#         data = fetch_github_issue(url)
-#         console = Console(theme=_JSON_PRINT_THEME)
-#         console.print(JSON.from_data(data, indent=2))
-#     except ValueError as e:
-#         rprint(f"[red]Invalid URL:[/] {e}")
-#         sys.exit(1)
-#     except httpx.HTTPStatusError as e:
-#         rprint(f"[red]API error:[/] {e.response.status_code}")
-#         sys.exit(1)
-#     except httpx.RequestError as e:
-#         rprint(f"[red]Network error:[/] {e}")
-#         sys.exit(1)
-
-
-# if __name__ == "__main__":
-#     driver()
