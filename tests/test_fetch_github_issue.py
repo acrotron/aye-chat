@@ -7,7 +7,6 @@ import httpx
 from aye.plugins.gitlib.fetch_github_issue import (
     FetchGithubIssuePlugin,
     fetch_github_issue,
-    driver,
     GITHUB_ISSUE_PATTERN,
     DEFAULT_TIMEOUT,
 )
@@ -475,76 +474,6 @@ class TestFetchGithubIssuePlugin:
         """Test that wrong command name returns None."""
         result = plugin.on_command("different_command", {"url": "test"})
         assert result is None
-
-
-class TestDriver:
-    """Tests for the driver CLI function."""
-
-    def test_driver_no_args(self):
-        """Test driver exits with error when no URL provided."""
-        with patch("sys.argv", ["fetch_github_issue"]):
-            with pytest.raises(SystemExit) as exc_info:
-                driver()
-            assert exc_info.value.code == 1
-
-    def test_driver_invalid_url(self):
-        """Test driver exits with error for invalid URL."""
-        with patch("sys.argv", ["fetch_github_issue", "not-a-valid-url"]):
-            with pytest.raises(SystemExit) as exc_info:
-                driver()
-            assert exc_info.value.code == 1
-
-    def test_driver_success(self):
-        """Test driver prints JSON on success."""
-        mock_data = {
-            "url": "https://github.com/owner/repo/issues/1",
-            "number": 1,
-            "title": "Test",
-            "author": "user",
-            "state": "open",
-            "body": "body",
-            "labels": [],
-            "comments": [],
-        }
-
-        with patch("sys.argv", ["fetch_github_issue", "https://github.com/owner/repo/issues/1"]), \
-             patch("aye.plugins.gitlib.fetch_github_issue.fetch_github_issue", return_value=mock_data), \
-             patch("aye.plugins.gitlib.fetch_github_issue.Console") as mock_console_class:
-            mock_console = MagicMock()
-            mock_console_class.return_value = mock_console
-
-            driver()
-
-            mock_console.print.assert_called_once()
-
-    def test_driver_http_error(self):
-        """Test driver exits with error on HTTP error."""
-        with patch("sys.argv", ["fetch_github_issue", "https://github.com/owner/repo/issues/1"]):
-            mock_response = MagicMock()
-            mock_response.status_code = 404
-
-            with patch(
-                "aye.plugins.gitlib.fetch_github_issue.fetch_github_issue",
-                side_effect=httpx.HTTPStatusError(
-                    "Not Found",
-                    request=MagicMock(),
-                    response=mock_response,
-                ),
-            ):
-                with pytest.raises(SystemExit) as exc_info:
-                    driver()
-                assert exc_info.value.code == 1
-
-    def test_driver_network_error(self):
-        """Test driver exits with error on network error."""
-        with patch("sys.argv", ["fetch_github_issue", "https://github.com/owner/repo/issues/1"]):
-            with patch(
-                "aye.plugins.gitlib.fetch_github_issue.fetch_github_issue",
-                side_effect=httpx.ConnectError("Connection failed"),
-            ):
-                with pytest.raises(SystemExit) as exc_info:
-                    driver()
-                assert exc_info.value.code == 1
 
 
 class TestTimelineFiltering:
