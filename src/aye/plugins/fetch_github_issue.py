@@ -95,7 +95,7 @@ def fetch_github_issue(url: str, verbose: bool, *, timeout: float = DEFAULT_TIME
         issue = response.json()
 
         if response.status_code == 200 and verbose:
-            rprint(f"[green]✓ Fetched issue #{issue_num} from {repo}[/]")
+            rprint(f"[green]✓ Fetched Issue #{issue_num} from {repo}[/]")
         else:
             if verbose:
                 rprint(f"[yellow]⚠ Could not fetch {url}[/]")
