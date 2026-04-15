@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 import httpx
 
-from aye.plugins.gitlib.fetch_github_issue import (
+from aye.plugins.fetch_github_issue import (
     FetchGithubIssuePlugin,
     fetch_github_issue,
     GITHUB_ISSUE_PATTERN,
@@ -121,7 +121,7 @@ class TestFetchGitHubIssue:
         url = "https://github.com/owner/repo/issues/42"
 
         with patch("httpx.Client") as mock_client_class, \
-             patch("aye.plugins.gitlib.fetch_github_issue.rprint") as mock_rprint:
+             patch("aye.plugins.fetch_github_issue.rprint") as mock_rprint:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -142,14 +142,14 @@ class TestFetchGitHubIssue:
             assert mock_rprint.call_count >= 2
             calls = [str(c) for c in mock_rprint.call_args_list]
             assert any("fetching GitHub issue" in c for c in calls)
-            assert any("Fetched issue #42" in c for c in calls)
+            assert any("Fetched Issue #42" in c for c in calls)
 
     def test_fetch_non_verbose_mode_no_prints(self, mock_issue_response, mock_timeline_response):
         """Test that non-verbose mode doesn't print messages."""
         url = "https://github.com/owner/repo/issues/42"
 
         with patch("httpx.Client") as mock_client_class, \
-             patch("aye.plugins.gitlib.fetch_github_issue.rprint") as mock_rprint:
+             patch("aye.plugins.fetch_github_issue.rprint") as mock_rprint:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -349,7 +349,7 @@ class TestFetchGithubIssuePlugin:
 
     def test_on_command_no_url(self, plugin):
         """Test that missing URL returns error."""
-        with patch("aye.plugins.gitlib.fetch_github_issue.rprint"):
+        with patch("aye.plugins.fetch_github_issue.rprint"):
             result = plugin.on_command("fetch_github_issue", {})
 
         assert result["status"] == "error"
@@ -367,7 +367,7 @@ class TestFetchGithubIssuePlugin:
 
     def test_on_command_invalid_url_verbose(self, plugin):
         """Test that invalid URL prints error in verbose mode."""
-        with patch("aye.plugins.gitlib.fetch_github_issue.rprint") as mock_rprint:
+        with patch("aye.plugins.fetch_github_issue.rprint") as mock_rprint:
             result = plugin.on_command("fetch_github_issue", {
                 "url": "https://github.com/owner/repo/pull/123",
                 "verbose": True
@@ -379,7 +379,7 @@ class TestFetchGithubIssuePlugin:
 
     def test_on_command_http_error(self, plugin):
         """Test that HTTP errors return error dict."""
-        with patch("aye.plugins.gitlib.fetch_github_issue.fetch_github_issue") as mock_fetch:
+        with patch("aye.plugins.fetch_github_issue.fetch_github_issue") as mock_fetch:
             mock_response = MagicMock()
             mock_response.status_code = 404
             mock_fetch.side_effect = httpx.HTTPStatusError(
@@ -398,8 +398,8 @@ class TestFetchGithubIssuePlugin:
 
     def test_on_command_http_error_verbose(self, plugin):
         """Test that HTTP errors print in verbose mode."""
-        with patch("aye.plugins.gitlib.fetch_github_issue.fetch_github_issue") as mock_fetch, \
-             patch("aye.plugins.gitlib.fetch_github_issue.rprint") as mock_rprint:
+        with patch("aye.plugins.fetch_github_issue.fetch_github_issue") as mock_fetch, \
+             patch("aye.plugins.fetch_github_issue.rprint") as mock_rprint:
             mock_response = MagicMock()
             mock_response.status_code = 404
             mock_fetch.side_effect = httpx.HTTPStatusError(
@@ -420,7 +420,7 @@ class TestFetchGithubIssuePlugin:
 
     def test_on_command_network_error(self, plugin):
         """Test that network errors return error dict."""
-        with patch("aye.plugins.gitlib.fetch_github_issue.fetch_github_issue") as mock_fetch:
+        with patch("aye.plugins.fetch_github_issue.fetch_github_issue") as mock_fetch:
             mock_fetch.side_effect = httpx.ConnectError("Connection failed")
 
             result = plugin.on_command("fetch_github_issue", {
@@ -433,8 +433,8 @@ class TestFetchGithubIssuePlugin:
 
     def test_on_command_network_error_verbose(self, plugin):
         """Test that network errors print in verbose mode."""
-        with patch("aye.plugins.gitlib.fetch_github_issue.fetch_github_issue") as mock_fetch, \
-             patch("aye.plugins.gitlib.fetch_github_issue.rprint") as mock_rprint:
+        with patch("aye.plugins.fetch_github_issue.fetch_github_issue") as mock_fetch, \
+             patch("aye.plugins.fetch_github_issue.rprint") as mock_rprint:
             mock_fetch.side_effect = httpx.ConnectError("Connection failed")
 
             result = plugin.on_command("fetch_github_issue", {
@@ -459,7 +459,7 @@ class TestFetchGithubIssuePlugin:
             "comments": [],
         }
 
-        with patch("aye.plugins.gitlib.fetch_github_issue.fetch_github_issue") as mock_fetch:
+        with patch("aye.plugins.fetch_github_issue.fetch_github_issue") as mock_fetch:
             mock_fetch.return_value = mock_data
 
             result = plugin.on_command("fetch_github_issue", {
