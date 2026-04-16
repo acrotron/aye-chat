@@ -149,8 +149,8 @@ def collect_and_send_feedback(chat_id: int):
     try:
         rprint("\n[bold cyan]Before you go:")
         rprint()
-        rprint("[bold cyan]Has Aye Chat replaced anything in your workflow?")
-        rprint("[bold cyan]If yes, what? If not, what would need to change for it to?")
+        rprint("[bold cyan]Would you recommend Aye Chat to a friend or colleague?")
+        rprint("[bold cyan]Why or why not?")
         rprint()
         rprint("[dim](Ctrl+C to finish.)")
         feedback = feedback_session.prompt("> ", multiline=True, key_bindings=bindings, reserve_space_for_menu=6)
