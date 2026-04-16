@@ -86,7 +86,7 @@ class TestFetchGitHubIssue:
         """Test successful fetch of a GitHub issue."""
         url = "https://github.com/owner/repo/issues/42"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class:
+        with patch("httpx.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -120,7 +120,7 @@ class TestFetchGitHubIssue:
         """Test that verbose mode prints status messages."""
         url = "https://github.com/owner/repo/issues/42"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class, \
+        with patch("httpx.Client") as mock_client_class, \
              patch("aye.plugins.fetch_github_issue.rprint") as mock_rprint:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
@@ -141,14 +141,14 @@ class TestFetchGitHubIssue:
             # Verify verbose messages were printed
             assert mock_rprint.call_count >= 2
             calls = [str(c) for c in mock_rprint.call_args_list]
-            assert any("fetching GitHub Issue" in c for c in calls)
+            assert any("fetching GitHub issue" in c for c in calls)
             assert any("Fetched Issue #42" in c for c in calls)
 
     def test_fetch_non_verbose_mode_no_prints(self, mock_issue_response, mock_timeline_response):
         """Test that non-verbose mode doesn't print messages."""
         url = "https://github.com/owner/repo/issues/42"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class, \
+        with patch("httpx.Client") as mock_client_class, \
              patch("aye.plugins.fetch_github_issue.rprint") as mock_rprint:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
@@ -173,7 +173,7 @@ class TestFetchGitHubIssue:
         """Test fetch when timeline endpoint returns non-200."""
         url = "https://github.com/owner/repo/issues/42"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class:
+        with patch("httpx.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -197,7 +197,7 @@ class TestFetchGitHubIssue:
         """Test fetch when issue has no labels."""
         url = "https://github.com/owner/repo/issues/1"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class:
+        with patch("httpx.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -238,7 +238,7 @@ class TestFetchGitHubIssue:
         """Test that 404 error is propagated."""
         url = "https://github.com/owner/repo/issues/99999"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class:
+        with patch("httpx.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -259,7 +259,7 @@ class TestFetchGitHubIssue:
         """Test that 403 rate limit error is propagated."""
         url = "https://github.com/owner/repo/issues/1"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class:
+        with patch("httpx.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -280,7 +280,7 @@ class TestFetchGitHubIssue:
         """Test that network errors are propagated."""
         url = "https://github.com/owner/repo/issues/1"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class:
+        with patch("httpx.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
             mock_client.get.side_effect = httpx.ConnectError("Connection failed")
@@ -292,7 +292,7 @@ class TestFetchGitHubIssue:
         """Test that custom timeout is passed to client."""
         url = "https://github.com/owner/repo/issues/42"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class:
+        with patch("httpx.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -315,7 +315,7 @@ class TestFetchGitHubIssue:
         """Test that default timeout is used when not specified."""
         url = "https://github.com/owner/repo/issues/42"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class:
+        with patch("httpx.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -363,7 +363,7 @@ class TestFetchGithubIssuePlugin:
         })
 
         assert result["status"] == "error"
-        assert "Not a valid GitHub Issue URL" in result["summary"]
+        assert "Not a valid GitHub issue URL" in result["summary"]
 
     def test_on_command_invalid_url_verbose(self, plugin):
         """Test that invalid URL prints error in verbose mode."""
@@ -483,7 +483,7 @@ class TestTimelineFiltering:
         """Test that events without user are filtered out."""
         url = "https://github.com/owner/repo/issues/1"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class:
+        with patch("httpx.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -518,7 +518,7 @@ class TestTimelineFiltering:
         """Test that events without body are filtered out."""
         url = "https://github.com/owner/repo/issues/1"
 
-        with patch("aye.plugins.fetch_github_issue.httpx.Client") as mock_client_class:
+        with patch("httpx.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client
 
