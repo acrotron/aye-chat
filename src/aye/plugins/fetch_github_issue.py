@@ -77,7 +77,7 @@ def fetch_github_issue(url: str, verbose: bool, *, timeout: float = DEFAULT_TIME
         raise ValueError(f"Not a valid GitHub issue URL: {url}")
     
     if verbose:
-        rprint(f"[cyan]fetching GitHub issue: {url}[/]")
+        rprint(f"[cyan]fetching GitHub Issue: {url}[/]")
 
     owner, repo, issue_num = match.groups()
 

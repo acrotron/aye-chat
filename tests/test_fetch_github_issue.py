@@ -141,7 +141,7 @@ class TestFetchGitHubIssue:
             # Verify verbose messages were printed
             assert mock_rprint.call_count >= 2
             calls = [str(c) for c in mock_rprint.call_args_list]
-            assert any("fetching GitHub issue" in c for c in calls)
+            assert any("fetching GitHub Issue" in c for c in calls)
             assert any("Fetched Issue #42" in c for c in calls)
 
     def test_fetch_non_verbose_mode_no_prints(self, mock_issue_response, mock_timeline_response):
