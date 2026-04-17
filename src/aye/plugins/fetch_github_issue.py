@@ -3,7 +3,7 @@ import sys
 import httpx
 
 from typing import Any, Dict, Optional
-from rich import print as rprint
+import rich
 from rich.console import Console
 from rich.json import JSON
 from rich.theme import Theme
@@ -24,6 +24,9 @@ DEFAULT_TIMEOUT = 30.0
 GITHUB_ISSUE_PATTERN = re.compile(
     r"^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/issues/(\d+)/?$"
 )
+
+# Direct module-level reference — cleanly patchable by unittest.mock.patch
+rprint = rich.print
 
 
 class FetchGithubIssuePlugin(Plugin):
@@ -62,6 +65,7 @@ def fetch_github_issue(url: str, verbose: bool, *, timeout: float = DEFAULT_TIME
 
     Args:
         url: GitHub issue URL (e.g., https://github.com/owner/repo/issues/123)
+        verbose: Enable verbose output.
         timeout: Request timeout in seconds.
 
     Returns:
@@ -75,7 +79,7 @@ def fetch_github_issue(url: str, verbose: bool, *, timeout: float = DEFAULT_TIME
     match = GITHUB_ISSUE_PATTERN.match(url)
     if not match:
         raise ValueError(f"Not a valid GitHub issue URL: {url}")
-    
+
     if verbose:
         rprint(f"[cyan]fetching GitHub Issue: {url}[/]")
 
