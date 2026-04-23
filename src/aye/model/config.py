@@ -156,17 +156,17 @@ MODELS = [
     {"id": "z-ai/glm-5.1", "name": "Z.ai: GLM 5.1", "max_prompt_kb": 120, "max_output_tokens": 16000, "context_target_kb": 150},
     {"id": "minimax/minimax-m2.1", "name": "MiniMax: MiniMax M2.1", "max_prompt_kb": 120, "max_output_tokens": 16000, "context_target_kb": 150},
     {"id": "google/gemini-3-flash-preview", "name": "Google: Gemini 3 Flash Preview", "max_prompt_kb": 340, "max_output_tokens": 32000, "context_target_kb": 250},
-    {"id": "openai/gpt-5.1-codex-mini", "name": "OpenAI: GPT-5.1-Codex-Mini", "max_prompt_kb": 220, "max_output_tokens": 32000, "context_target_kb": 200},
     {"id": "moonshotai/kimi-k2-0905", "name": "MoonshotAI: Kimi K2 0905", "max_prompt_kb": 170, "max_output_tokens": 32000, "context_target_kb": 150},
     {"id": "google/gemini-3.1-pro-preview", "name": "Google: Gemini 3.1 Pro Preview", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
     {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
     {"id": "anthropic/claude-sonnet-4.6", "name": "Anthropic: Claude Sonnet 4.6", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
-    {"id": "openai/gpt-5.1-codex", "name": "OpenAI: GPT-5.1-Codex", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
     {"id": "openai/gpt-5.2-codex", "name": "OpenAI: GPT-5.2-Codex", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
+    {"id": "openai/gpt-5.3-codex", "name": "OpenAI: GPT-5.3-Codex", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
     {"id": "openai/gpt-5.2", "name": "OpenAI: GPT-5.2", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
+    {"id": "openai/gpt-5.4", "name": "OpenAI: GPT-5.4", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180},
     {"id": "anthropic/claude-opus-4.5", "name": "Anthropic: Claude Opus 4.5", "max_prompt_kb": 130, "max_output_tokens": 16000, "context_target_kb": 130},
-    {"id": "anthropic/claude-opus-4.6", "name": "Anthropic: Claude Opus 4.6", "max_prompt_kb": 130, "max_output_tokens": 16000, "context_target_kb": 130},
-    
+    {"id": "anthropic/claude-opus-4.7", "name": "Anthropic: Claude Opus 4.7", "max_prompt_kb": 130, "max_output_tokens": 16000, "context_target_kb": 130},
+
     # Offline models
     {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.7, "max_prompt_kb": 60, "max_output_tokens": 8000, "context_target_kb": 40},
 ]
