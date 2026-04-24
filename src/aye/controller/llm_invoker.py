@@ -12,7 +12,7 @@ from aye.presenter.ui_utils import StoppableSpinner, DEFAULT_THINKING_MESSAGES
 from aye.model.source_collector import collect_sources
 from aye.model.auth import get_user_config
 from aye.model.offline_llm_manager import is_offline_model
-from aye.controller.util import is_truncated_json, discover_agents_file, has_url, handle_url
+from aye.controller.util import is_truncated_json, discover_agents_file, handle_url
 from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB, CONTEXT_HARD_LIMIT_KB
 from aye.model import telemetry
 from aye.model.skills_system import SkillsResolver
@@ -389,19 +389,9 @@ def invoke_llm(
         prompt, conf, verbose, explicit_source_files
     )
 
-    if has_url(prompt):
-        try:
-            url_data = handle_url(prompt,conf.plugin_manager,conf.verbose)
-            if url_data:
-                if source_files:
-                    source_files = {**source_files, **url_data}
-                else:
-                    source_files = url_data
-        except ValueError as e:
-            if conf.verbose:
-                import traceback
-                traceback.print_exc()
-            raise ValueError(f"{e}")
+    url_data = handle_url(prompt, plugin_manager, verbose)
+    if url_data:
+        source_files = {**source_files, **url_data}
 
     _print_context_message(source_files, use_all_files, explicit_source_files, verbose)
 

@@ -1,23 +1,12 @@
 import re
-import sys
 import httpx
 
 from typing import Any, Dict, Optional
 import rich
-from rich.console import Console
 from rich.json import JSON
 from rich.theme import Theme
 
 from aye.plugins.plugin_base import Plugin
-
-_JSON_PRINT_THEME = Theme({
-    "json.key": "bold turquoise2",
-    "json.str": "steel_blue",
-    "json.number": "steel_blue",
-    "json.bool_true": "bold sea_green2",
-    "json.bool_false": "bold indian_red1",
-    "json.null": "bold khaki1",
-})
 
 DEFAULT_TIMEOUT = 30.0
 
@@ -30,33 +19,28 @@ rprint = rich.print
 
 
 class FetchGithubIssuePlugin(Plugin):
-    name = "fetch_github_issue"
+    name = "process_url"
 
     def init(self, cfg: Dict[str, Any]) -> None:
         super().init(cfg)
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if command_name == "fetch_github_issue":
+      
+        if command_name == "process_url":
             url = params.get("url")
             verbose = params.get("verbose")
-            if not url:
-                rprint("[red]Usage:[/] fetch_github_issue <github-issue-url>")
-                return {"status": "error", "summary": "No URL provided"}
-            try:
-                data = fetch_github_issue(url, verbose)
-                return {"status": "success", "data": data}
-            except ValueError as e:
-                if verbose:
-                    rprint(f"[red]Invalid URL:[/] {e}")
-                return {"status": "error", "summary": str(e)}
-            except httpx.HTTPStatusError as e:
-                if verbose:
-                    rprint(f"[red]API error:[/] {e.response.status_code}")
-                return {"status": "error", "summary": str(e)}
-            except httpx.RequestError as e:
-                if verbose:
-                    rprint(f"[red]Network error:[/] {e}")
-                return {"status": "error", "summary": str(e)}
+         
+            if GITHUB_ISSUE_PATTERN.match(url):
+                try:
+                    data = fetch_github_issue(url, verbose)
+                    return {"status": "success", "data": data}
+                except ValueError as e:
+                    return None
+                except httpx.HTTPStatusError as e:
+                    return None
+                except httpx.RequestError as e:
+                    return None
+          
         return None
 
 
@@ -76,13 +60,10 @@ def fetch_github_issue(url: str, verbose: bool, *, timeout: float = DEFAULT_TIME
         httpx.HTTPStatusError: If the API returns an error status.
         httpx.RequestError: If a network error occurs.
     """
-    match = GITHUB_ISSUE_PATTERN.match(url)
-    if not match:
-        raise ValueError(f"Not a valid GitHub issue URL: {url}")
-
     if verbose:
         rprint(f"[cyan]fetching GitHub Issue: {url}[/]")
 
+    match = GITHUB_ISSUE_PATTERN.match(url)
     owner, repo, issue_num = match.groups()
 
     api_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_num}"

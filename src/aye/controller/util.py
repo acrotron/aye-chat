@@ -161,39 +161,26 @@ def is_truncated_json(raw_text: str) -> bool:
     # Doesn't look like JSON at all
     return False
 
-def has_url(prompt:str) -> bool:
-    URL_PATTERN = re.compile(r'https?://(?:www\.)?')
-    return URL_PATTERN.findall(prompt)
-
 def handle_url(    
     prompt: str,
     plugin_manager: Any,
     verbose: bool = False) -> Dict[str, str]:
-    """Scan prompt for URLs and fetch them automatically.
 
-    Returns:
-    Dict mapping filenames to JSON content.
     """
-
-    GITHUB_ISSUE_URL_PATTERN = re.compile(
-    r'https?://(?:www\.)?github\.com/[^/]+/[^/]+/issues/\d+/?')
-    
-    github_issues = GITHUB_ISSUE_URL_PATTERN.findall(prompt)
-    if github_issues:
-        fetched_issues = {}
-
-        for url in github_issues:
-            result = plugin_manager.handle_command("fetch_github_issue", {"url": url, "verbose": verbose})
-            
-            if result is None or result.get("status") == "error":
-                error_msg = result.get("summary", "Unknown error")
-                raise ValueError(f"Failed to fetch {url}: {error_msg}")
-
+    Scan prompt for URLs and fetch them automatically.
+    """
+    URL_RE = re.compile(
+    r'https?://[^\s]+',
+    re.IGNORECASE,
+    )
+    urls = URL_RE.findall(prompt)
+    if urls:
+        responses = {}
+        for url in urls:
+            result = plugin_manager.handle_command("process_url", {"url": url, "verbose": verbose})
             if result.get("status") == "success":
                 issue_data = result["data"]
-                file_key = f"github_issue_{issue_data['author']}_{issue_data['title']}_{issue_data['number']}.json"
-                fetched_issues[file_key] = json.dumps(issue_data, indent=2)
+                responses[json.dumps(url)] = json.dumps(issue_data, indent=2)
 
-        return fetched_issues    
-
-
+        return responses
+    return None
