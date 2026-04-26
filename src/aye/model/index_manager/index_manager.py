@@ -19,6 +19,7 @@ from aye.model.models import VectorIndexResult
 from aye.model.source_collector import get_project_files, get_project_files_with_limit
 from aye.model import vector_db, onnx_manager
 from aye.model.config import SMALL_PROJECT_FILE_LIMIT
+from aye.model.hybrid_retrieval import BM25, hybrid_rerank
 
 from .index_manager_utils import register_manager, set_discovery_thread_low_priority
 from .index_manager_file_ops import FileCategorizer, IndexPersistence, get_deleted_files
@@ -62,6 +63,11 @@ class IndexManager:  # pylint: disable=too-many-instance-attributes
         # Locks
         self._state_lock = threading.Lock()
         self._save_lock = threading.Lock()
+        self._bm25_lock = threading.Lock()
+
+        # Lazy BM25 index cache (built on first query, invalidated on target_index change).
+        self._bm25_cache: Optional[BM25] = None
+        self._bm25_cache_key: tuple = ()
 
         # Helper objects
         self._persistence = IndexPersistence(
@@ -559,7 +565,7 @@ class IndexManager:  # pylint: disable=too-many-instance-attributes
             return []
 
         try:
-            return vector_db.query_index(
+            vector_results = vector_db.query_index(
                 collection=self._init_coordinator.collection,
                 query_text=query_text,
                 n_results=n_results,
@@ -576,3 +582,35 @@ class IndexManager:  # pylint: disable=too-many-instance-attributes
                 return []
             # Not a corruption error, re-raise
             raise
+
+        with self._state_lock:
+            all_file_paths = list(self._state.target_index.keys())
+
+        bm25 = self._get_or_build_bm25(all_file_paths)
+        return hybrid_rerank(vector_results, query_text, bm25, all_file_paths)
+
+    def _get_or_build_bm25(self, file_paths: List[str]) -> Optional[BM25]:
+        """Return a BM25 index over the current indexed files, building lazily.
+
+        The cache is keyed by the sorted tuple of file paths; when the indexed
+        set changes (e.g. after a refinement pass), the next query rebuilds.
+        """
+        if not file_paths:
+            return None
+
+        cache_key = tuple(sorted(file_paths))
+        with self._bm25_lock:
+            if self._bm25_cache is not None and self._bm25_cache_key == cache_key:
+                return self._bm25_cache
+
+            docs: Dict[str, str] = {}
+            for fp in cache_key:
+                try:
+                    full = self.config.root_path / fp
+                    docs[fp] = full.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+
+            self._bm25_cache = BM25.from_documents(docs) if docs else None
+            self._bm25_cache_key = cache_key
+            return self._bm25_cache
