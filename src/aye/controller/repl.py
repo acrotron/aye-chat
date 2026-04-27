@@ -624,9 +624,6 @@ def chat_repl(conf: Any) -> None:
                             url_files = handle_url(cleaned_prompt, conf.plugin_manager, verbose=conf.verbose)
                             if url_files:
                                 explicit_files = {**(explicit_files or {}), **url_files}
-                                if conf.verbose:
-                                    rprint(f"[cyan]Including {len(url_files)} fetched URL(s) as context.[/cyan]")
-
                         # This is the LLM path.
                         if used_at:
                             telemetry.record_llm_prompt("LLM @")
