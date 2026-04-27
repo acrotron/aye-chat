@@ -160,27 +160,3 @@ def is_truncated_json(raw_text: str) -> bool:
     
     # Doesn't look like JSON at all
     return False
-
-def handle_url(    
-    prompt: str,
-    plugin_manager: Any,
-    verbose: bool = False) -> Dict[str, str]:
-
-    """
-    Scan prompt for URLs and fetch them automatically.
-    """
-    URL_RE = re.compile(
-    r'https?://[^\s]+',
-    re.IGNORECASE,
-    )
-    urls = URL_RE.findall(prompt)
-    if urls:
-        responses = {}
-        for url in urls:
-            result = plugin_manager.handle_command("process_url", {"url": url, "verbose": verbose})
-            if result.get("status") == "success":
-                issue_data = result["data"]
-                responses[json.dumps(url)] = json.dumps(issue_data, indent=2)
-
-        return responses
-    return None

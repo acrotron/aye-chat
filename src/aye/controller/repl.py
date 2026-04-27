@@ -1,7 +1,8 @@
 import os
 import json
+import re
 from pathlib import Path
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Dict
 import shlex
 import threading
 import glob
@@ -58,6 +59,57 @@ _FEEDBACK_OPT_IN_KEY = "feedback_opt_in"
 _AYE_PREFIX = "aye:"
 _CMD_PREFIX = "cmd:"
 
+# Regex to detect URLs in a prompt
+_URL_RE = re.compile(r'https?://[^\s]+', re.IGNORECASE)
+
+
+# ---------------------------------------------------------------------------
+# URL handling
+# ---------------------------------------------------------------------------
+
+def handle_url(prompt: str, plugin_manager: Any, verbose: bool = False) -> Optional[Dict[str, str]]:
+    """Scan *prompt* for HTTP/HTTPS URLs and fetch each one via the plugin manager.
+
+    Mirrors the structure of the ``parse_at_references`` plugin command:
+    returns a ``file_contents`` dict keyed by a virtual filename so the
+    caller can merge it into ``explicit_source_files`` before calling
+    ``invoke_llm``.
+
+    Args:
+        prompt:         The raw user prompt string.
+        plugin_manager: The active plugin manager instance.
+        verbose:        If True, log which URLs are being fetched.
+
+    Returns:
+        A dict mapping virtual filenames (e.g. ``'url.txt'``) to fetched
+        content strings, or ``None`` if no URLs were found or all fetches
+        failed.
+    """
+    responses: Dict[str, str] = {}
+    for url in enumerate(urls):
+        if verbose:
+            rprint(f"[cyan]Fetching URL: {url}[/]")
+        try:
+            result = plugin_manager.handle_command("process_url", {"url": url, "verbose": verbose})
+            if result and result.get("status") == "success":
+                virtual_key = f"{url}.txt"
+                responses[virtual_key] = json.dumps(result["data"], indent=2)
+        except Exception as exc:
+            if verbose:
+                rprint(f"[yellow]Warning: could not fetch {url}: {exc}[/]")
+            continue
+
+    return responses if responses else None
+
+
+def has_url(text: str) -> bool:
+    """Return True if *text* contains at least one HTTP/HTTPS URL."""
+    return bool(_URL_RE.search(text))
+
+
+# ---------------------------------------------------------------------------
+# Telemetry / feedback helpers
+# ---------------------------------------------------------------------------
 
 def _prompt_for_telemetry_consent_if_needed() -> bool:
     """Ask once for telemetry consent and persist the decision.
@@ -547,7 +599,7 @@ def chat_repl(conf: Any) -> None:
                         cmd_str = " ".join([original_first] + tokens[1:])
                         capture_shell_result(conf, cmd=cmd_str, shell_response=shell_response)
                     else:
-                        # Check for @file references before invoking LLM
+                        # --- Step 1: resolve @file references ---
                         at_response = conf.plugin_manager.handle_command("parse_at_references", {
                             "text": prompt,
                             "project_root": str(conf.root)
@@ -564,6 +616,14 @@ def chat_repl(conf: Any) -> None:
 
                             if conf.verbose and explicit_files:
                                 rprint(f"[cyan]Including {len(explicit_files)} file(s) from @ references: {', '.join(explicit_files.keys())}[/cyan]")
+
+                        # --- Step 2: resolve URLs ---
+                        if has_url(cleaned_prompt):
+                            url_files = handle_url(cleaned_prompt, conf.plugin_manager, verbose=conf.verbose)
+                            if url_files:
+                                explicit_files = {**(explicit_files or {}), **url_files}
+                                if conf.verbose:
+                                    rprint(f"[cyan]Including {len(url_files)} fetched URL(s) as context.[/cyan]")
 
                         # This is the LLM path.
                         if used_at:
