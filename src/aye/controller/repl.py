@@ -81,18 +81,20 @@ def handle_url(prompt: str, plugin_manager: Any, verbose: bool = False) -> Optio
         verbose:        If True, log which URLs are being fetched.
 
     Returns:
-        A dict mapping virtual filenames (e.g. ``'url.txt'``) to fetched
+        A dict mapping virtual filenames (e.g. ``'url_0.txt'``) to fetched
         content strings, or ``None`` if no URLs were found or all fetches
         failed.
     """
+    urls = _URL_RE.findall(prompt)
+    if not urls:
+        return None
+
     responses: Dict[str, str] = {}
-    for url in enumerate(urls):
-        if verbose:
-            rprint(f"[cyan]Fetching URL: {url}[/]")
+    for idx, url in enumerate(urls):
         try:
             result = plugin_manager.handle_command("process_url", {"url": url, "verbose": verbose})
             if result and result.get("status") == "success":
-                virtual_key = f"{url}.txt"
+                virtual_key = f"url_{idx}.txt"
                 responses[virtual_key] = json.dumps(result["data"], indent=2)
         except Exception as exc:
             if verbose:
