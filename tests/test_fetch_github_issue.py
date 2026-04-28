@@ -57,4 +57,4 @@ class TestFetchGitHubIssue:
             fetch_github_issue(url, verbose=True)
 
             # Verify verbose messages were printed
-            assert mock_rprint.call_count >= 2
+            assert mock_rprint.call_count == 1

@@ -1,7 +1,8 @@
 import os
 import json
+import re
 from pathlib import Path
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Dict
 import shlex
 import threading
 import glob
@@ -58,6 +59,59 @@ _FEEDBACK_OPT_IN_KEY = "feedback_opt_in"
 _AYE_PREFIX = "aye:"
 _CMD_PREFIX = "cmd:"
 
+# Regex to detect URLs in a prompt
+_URL_RE = re.compile(r'https?://[^\s]+', re.IGNORECASE)
+
+
+# ---------------------------------------------------------------------------
+# URL handling
+# ---------------------------------------------------------------------------
+
+def handle_url(prompt: str, plugin_manager: Any, verbose: bool = False) -> Optional[Dict[str, str]]:
+    """Scan *prompt* for HTTP/HTTPS URLs and fetch each one via the plugin manager.
+
+    Returned content is keyed by virtual filename for formatting, but should be
+    appended to the LLM prompt before calling ``invoke_llm``. This lets normal
+    context selection/RAG use the fetched URL content unless explicit ``@`` file
+    references intentionally bypass RAG.
+
+    Args:
+        prompt:         The raw user prompt string.
+        plugin_manager: The active plugin manager instance.
+        verbose:        If True, log which URLs are being fetched.
+
+    Returns:
+        A dict mapping virtual filenames (e.g. ``'url_0.txt'``) to fetched
+        content strings, or ``None`` if no URLs were found or all fetches
+        failed.
+    """
+    urls = _URL_RE.findall(prompt)
+    if not urls:
+        return None
+
+    responses: Dict[str, str] = {}
+    for idx, url in enumerate(urls):
+        try:
+            result = plugin_manager.handle_command("process_url", {"url": url, "verbose": verbose})
+            if result and result.get("status") == "success":
+                virtual_key = f"url_{idx}.txt"
+                responses[virtual_key] = json.dumps(result["data"], indent=2)
+        except Exception as exc:
+            if verbose:
+                rprint(f"[yellow]Warning: could not fetch {url}: {exc}[/]")
+            continue
+
+    return responses if responses else None
+
+
+def has_url(text: str) -> bool:
+    """Return True if *text* contains at least one HTTP/HTTPS URL."""
+    return bool(_URL_RE.search(text))
+
+
+# ---------------------------------------------------------------------------
+# Telemetry / feedback helpers
+# ---------------------------------------------------------------------------
 
 def _prompt_for_telemetry_consent_if_needed() -> bool:
     """Ask once for telemetry consent and persist the decision.
@@ -350,7 +404,7 @@ def chat_repl(conf: Any) -> None:
                 # Show indexing progress only if index_manager exists and is active
                 if index_manager and index_manager.is_indexing() and conf.verbose:
                     progress = index_manager.get_progress_display()
-                    prompt_str = f"(\u30C4 ({progress}) \u00BB "
+                    prompt_str = f"(ツ ({progress}) » "
 
                 # IMPORTANT: prompt_toolkit reserves space at the bottom of the terminal
                 # for the completion menu. Default is ~8 lines, which can look like
@@ -489,7 +543,7 @@ def chat_repl(conf: Any) -> None:
                     chat_id_file.unlink(missing_ok=True)
                     chat_id = -1
                     conf.plugin_manager.handle_command("new_chat", {"root": conf.root})
-                    console.print("[green]\u2705 New chat session started.[/]")
+                    console.print("[green]✅ New chat session started.[/]")
                 elif lowered_first == "help":
                     telemetry.record_command("help", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     print_help_message()
@@ -547,7 +601,7 @@ def chat_repl(conf: Any) -> None:
                         cmd_str = " ".join([original_first] + tokens[1:])
                         capture_shell_result(conf, cmd=cmd_str, shell_response=shell_response)
                     else:
-                        # Check for @file references before invoking LLM
+                        # --- Step 1: resolve @file references ---
                         at_response = conf.plugin_manager.handle_command("parse_at_references", {
                             "text": prompt,
                             "project_root": str(conf.root)
@@ -565,6 +619,12 @@ def chat_repl(conf: Any) -> None:
                             if conf.verbose and explicit_files:
                                 rprint(f"[cyan]Including {len(explicit_files)} file(s) from @ references: {', '.join(explicit_files.keys())}[/cyan]")
 
+                        # --- Step 2: resolve URLs ---
+                        if has_url(cleaned_prompt):
+                            url_context = handle_url(cleaned_prompt, conf.plugin_manager, verbose=conf.verbose)
+                            if url_context:
+                                cleaned_prompt = f"{cleaned_prompt}\n\n---\nAttached URL context:\n{url_context}\n---\n"
+                                telemetry.record_command("has_url", has_args=False, prefix=_AYE_PREFIX)
                         # This is the LLM path.
                         if used_at:
                             telemetry.record_llm_prompt("LLM @")
