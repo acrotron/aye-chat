@@ -70,10 +70,10 @@ _URL_RE = re.compile(r'https?://[^\s]+', re.IGNORECASE)
 def handle_url(prompt: str, plugin_manager: Any, verbose: bool = False) -> Optional[Dict[str, str]]:
     """Scan *prompt* for HTTP/HTTPS URLs and fetch each one via the plugin manager.
 
-    Mirrors the structure of the ``parse_at_references`` plugin command:
-    returns a ``file_contents`` dict keyed by a virtual filename so the
-    caller can merge it into ``explicit_source_files`` before calling
-    ``invoke_llm``.
+    Returned content is keyed by virtual filename for formatting, but should be
+    appended to the LLM prompt before calling ``invoke_llm``. This lets normal
+    context selection/RAG use the fetched URL content unless explicit ``@`` file
+    references intentionally bypass RAG.
 
     Args:
         prompt:         The raw user prompt string.
@@ -404,7 +404,7 @@ def chat_repl(conf: Any) -> None:
                 # Show indexing progress only if index_manager exists and is active
                 if index_manager and index_manager.is_indexing() and conf.verbose:
                     progress = index_manager.get_progress_display()
-                    prompt_str = f"(\u30C4 ({progress}) \u00BB "
+                    prompt_str = f"(ツ ({progress}) » "
 
                 # IMPORTANT: prompt_toolkit reserves space at the bottom of the terminal
                 # for the completion menu. Default is ~8 lines, which can look like
@@ -543,7 +543,7 @@ def chat_repl(conf: Any) -> None:
                     chat_id_file.unlink(missing_ok=True)
                     chat_id = -1
                     conf.plugin_manager.handle_command("new_chat", {"root": conf.root})
-                    console.print("[green]\u2705 New chat session started.[/]")
+                    console.print("[green]✅ New chat session started.[/]")
                 elif lowered_first == "help":
                     telemetry.record_command("help", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     print_help_message()
@@ -621,9 +621,10 @@ def chat_repl(conf: Any) -> None:
 
                         # --- Step 2: resolve URLs ---
                         if has_url(cleaned_prompt):
-                            url_files = handle_url(cleaned_prompt, conf.plugin_manager, verbose=conf.verbose)
-                            if url_files:
-                                explicit_files = {**(explicit_files or {}), **url_files}
+                            url_context = handle_url(cleaned_prompt, conf.plugin_manager, verbose=conf.verbose)
+                            if url_context:
+                                cleaned_prompt = f"{cleaned_prompt}\n\n---\nAttached URL context:\n{url_context}\n---\n"
+                                telemetry.record_command("has_url", has_args=False, prefix=_AYE_PREFIX)
                         # This is the LLM path.
                         if used_at:
                             telemetry.record_llm_prompt("LLM @")
