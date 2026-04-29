@@ -7,7 +7,9 @@ from pathlib import Path
 try:
     from aye.model.hybrid_retrieval import (
         BM25,
+        SymbolIndex,
         compute_filename_boost,
+        compute_symbol_boost,
         extract_path_mentions,
         hybrid_rerank,
         rrf_fuse,
@@ -19,7 +21,9 @@ except ImportError:
     sys.path.insert(0, str(project_root / "src"))
     from aye.model.hybrid_retrieval import (
         BM25,
+        SymbolIndex,
         compute_filename_boost,
+        compute_symbol_boost,
         extract_path_mentions,
         hybrid_rerank,
         rrf_fuse,
@@ -204,6 +208,97 @@ class TestRrfFuse(unittest.TestCase):
         self.assertEqual(rrf_fuse([[], []]), {})
 
 
+class TestSymbolIndex(unittest.TestCase):
+    def test_basic_lookup(self):
+        idx = SymbolIndex()
+        idx.add("auth.py", ["authenticate_user", "login"])
+        idx.add("other.py", ["unrelated"])
+        self.assertEqual(idx.files_for("authenticate_user"), ["auth.py"])
+
+    def test_case_insensitive_lookup(self):
+        idx = SymbolIndex()
+        idx.add("auth.py", ["AuthenticateUser"])
+        self.assertEqual(idx.files_for("authenticateuser"), ["auth.py"])
+        self.assertEqual(idx.files_for("AUTHENTICATEUSER"), ["auth.py"])
+
+    def test_ambiguous_symbol_suppressed(self):
+        idx = SymbolIndex(max_symbol_files=2)
+        for fp in ["a.py", "b.py", "c.py"]:
+            idx.add(fp, ["init"])
+        # `init` is defined in 3 files > threshold 2; return empty.
+        self.assertEqual(idx.files_for("init"), [])
+
+    def test_unique_name_within_threshold(self):
+        idx = SymbolIndex(max_symbol_files=5)
+        for fp in ["a.py", "b.py", "c.py"]:
+            idx.add(fp, ["shared"])
+        self.assertEqual(set(idx.files_for("shared")), {"a.py", "b.py", "c.py"})
+
+    def test_missing_symbol_returns_empty(self):
+        idx = SymbolIndex()
+        idx.add("auth.py", ["authenticate"])
+        self.assertEqual(idx.files_for("nonexistent"), [])
+
+    def test_add_is_idempotent(self):
+        idx = SymbolIndex()
+        idx.add("auth.py", ["foo"])
+        idx.add("auth.py", ["foo"])
+        self.assertEqual(idx.files_for("foo"), ["auth.py"])
+
+    def test_empty_index(self):
+        idx = SymbolIndex()
+        self.assertEqual(len(idx), 0)
+        self.assertEqual(idx.files_for("anything"), [])
+
+    def test_skips_empty_symbols(self):
+        idx = SymbolIndex()
+        idx.add("a.py", ["", None, "valid"])  # type: ignore[list-item]
+        self.assertEqual(len(idx), 1)
+        self.assertEqual(idx.files_for("valid"), ["a.py"])
+
+
+class TestComputeSymbolBoost(unittest.TestCase):
+    def test_identifier_in_query_promotes_defining_file(self):
+        idx = SymbolIndex()
+        idx.add("auth.py", ["authenticate_user"])
+        idx.add("other.py", ["unrelated_func"])
+        scores = compute_symbol_boost(
+            "fix the bug in authenticate_user please", idx
+        )
+        self.assertIn("auth.py", scores)
+        self.assertNotIn("other.py", scores)
+
+    def test_plain_english_word_does_not_match_symbol(self):
+        idx = SymbolIndex()
+        # A file happens to define a function named `fix`.
+        idx.add("linter.py", ["fix"])
+        scores = compute_symbol_boost("please fix the bug", idx)
+        self.assertNotIn("linter.py", scores)
+
+    def test_camelcase_identifier_matches(self):
+        idx = SymbolIndex()
+        idx.add("svc.py", ["AuthService"])
+        scores = compute_symbol_boost("update AuthService to return early", idx)
+        self.assertIn("svc.py", scores)
+
+    def test_uppercase_constant_matches(self):
+        idx = SymbolIndex()
+        idx.add("config.py", ["SECRET_KEY"])
+        scores = compute_symbol_boost("rotate SECRET_KEY", idx)
+        self.assertIn("config.py", scores)
+
+    def test_no_symbol_index_returns_empty(self):
+        self.assertEqual(compute_symbol_boost("fetchUser", None), {})
+
+    def test_empty_index_returns_empty(self):
+        self.assertEqual(compute_symbol_boost("fetchUser", SymbolIndex()), {})
+
+    def test_empty_query_returns_empty(self):
+        idx = SymbolIndex()
+        idx.add("a.py", ["foo"])
+        self.assertEqual(compute_symbol_boost("", idx), {})
+
+
 class TestHybridRerank(unittest.TestCase):
     def _vr(self, path, score, content="..."):
         return VectorIndexResult(file_path=path, content=content, score=score)
@@ -318,6 +413,42 @@ class TestHybridRerank(unittest.TestCase):
         )
         self.assertGreater(len(out), 0)
         self.assertEqual(out[0].file_path, "auth.py")
+
+    def test_symbol_mention_promotes_defining_file(self):
+        # Vector ranks defining file last; a symbol mention in the query lifts it.
+        idx = SymbolIndex()
+        idx.add("auth.py", ["authenticate_user"])
+        idx.add("utils.py", ["helper"])
+
+        vector = [
+            self._vr("utils.py", 0.95),
+            self._vr("auth.py", 0.10),
+        ]
+        out = hybrid_rerank(
+            vector,
+            "make authenticate_user return None on failure",
+            bm25=None,
+            all_file_paths=["auth.py", "utils.py"],
+            symbol_index=idx,
+        )
+        self.assertEqual(out[0].file_path, "auth.py")
+
+    def test_symbol_boost_does_not_interfere_with_plain_query(self):
+        # A plain-English query with no identifier-like tokens should behave
+        # like symbol_index was absent.
+        idx = SymbolIndex()
+        idx.add("a.py", ["fix"])  # Function named `fix` in a.py.
+
+        vector = [self._vr("b.py", 0.9), self._vr("a.py", 0.3)]
+        out = hybrid_rerank(
+            vector,
+            "please fix the thing",
+            bm25=None,
+            all_file_paths=["a.py", "b.py"],
+            symbol_index=idx,
+        )
+        # b.py should still rank first; plain-word `fix` can't trigger symbol boost.
+        self.assertEqual(out[0].file_path, "b.py")
 
 
 if __name__ == "__main__":
