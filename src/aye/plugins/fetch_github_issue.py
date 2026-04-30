@@ -30,7 +30,7 @@ class FetchGithubIssuePlugin(Plugin):
             url = params.get("url")
             verbose = params.get("verbose")
          
-            if GITHUB_ISSUE_PATTERN.match(url):
+            if url and GITHUB_ISSUE_PATTERN.match(url):
                 try:
                     data = fetch_github_issue(url, verbose)
                     return {"status": "success", "data": data}
