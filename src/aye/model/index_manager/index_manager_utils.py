@@ -10,10 +10,9 @@ This module contains:
 import os
 import hashlib
 import threading
-import weakref
 import atexit
 import concurrent.futures
-from concurrent.futures.thread import _worker
+import concurrent.futures.thread as _cf_thread
 from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -37,40 +36,38 @@ except (ImportError, NotImplementedError):
 # Custom Daemon ThreadPoolExecutor
 # =============================================================================
 
+class _DaemonThread(threading.Thread):
+    """A threading.Thread subclass that always runs as a daemon."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs["daemon"] = True
+        super().__init__(*args, **kwargs)
+
+
+_adjust_thread_count_lock = threading.Lock()
+
+
 class DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
     """
-    A ThreadPoolExecutor that creates daemon threads.
-    
-    This is a workaround for the standard ThreadPoolExecutor not creating 
-    daemon threads. Daemon threads are necessary so that background indexing 
-    does not block the main application from exiting.
-    
-    This implementation is based on the CPython 3.9+ source.
+    A ThreadPoolExecutor that creates daemon worker threads so background
+    indexing does not block the main application from exiting.
+
+    Rather than re-implementing ``_adjust_thread_count`` (whose body uses
+    private attributes that change between CPython releases — e.g. Python 3.14
+    refactored ``_initializer``/``_initargs`` storage), this temporarily swaps
+    the ``threading.Thread`` reference used inside
+    ``concurrent.futures.thread`` for a daemon subclass, then delegates to the
+    standard implementation.
     """
-    
+
     def _adjust_thread_count(self):
-        if self._idle_semaphore.acquire(blocking=False):
-            return
-
-        def weak_ref_cb(_, q=self._work_queue):
-            q.put(None)
-
-        num_threads = len(self._threads)
-        if num_threads < self._max_workers:
-            thread_name = f"{self._thread_name_prefix or self}_{num_threads}"
-            t = threading.Thread(
-                name=thread_name,
-                target=_worker,
-                args=(
-                    weakref.ref(self, weak_ref_cb),
-                    self._work_queue,
-                    self._initializer,
-                    self._initargs,
-                ),
-            )
-            t.daemon = True  # Key change: make thread a daemon
-            t.start()
-            self._threads.add(t)
+        with _adjust_thread_count_lock:
+            original = _cf_thread.threading.Thread
+            _cf_thread.threading.Thread = _DaemonThread
+            try:
+                super()._adjust_thread_count()
+            finally:
+                _cf_thread.threading.Thread = original
 
 
 # =============================================================================
