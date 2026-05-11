@@ -2,6 +2,7 @@ import re
 import httpx
 from typing import Any, Dict, Optional
 import rich
+import urllib.parse
 
 from aye.model.auth import get_user_config
 from aye.plugins.plugin_base import Plugin
@@ -10,7 +11,7 @@ import json
 
 DEFAULT_TIMEOUT = 30.0
 JIRA_TICKET_PATTERN = re.compile(
-    r'^https?://([^/]+)\.atlassian\.net/browse/([A-Z]+-\d+)/?$'
+    r'^https?://([^/]+)\.atlassian\.net/browse/([A-Z0-9]+-\d+)/?$'
 )
 
 # Direct module-level reference — cleanly patchable by unittest.mock.patch
@@ -24,22 +25,35 @@ class FetchJiraPlugin(Plugin):
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if command_name == "process_url":
-
             url = params.get("url")
             verbose = params.get("verbose", False)
 
-            if url and JIRA_TICKET_PATTERN.match(url):
+            normalized = normalize_jira_url(url)
+            
+            if normalized and JIRA_TICKET_PATTERN.match(normalized):
                 try: 
-                    data = fetch_jira_ticket(url, verbose)
+                    data = fetch_jira_ticket(normalized, verbose)
                     return {"status": "success", "data": data}
                 except ValueError:
                     return None
-                except httpx.HTTPStatusError:
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        rprint("[red]✗ Ticket not found (404)[/]")
+                        rprint("[dim]Set JIRA_EMAIL and JIRA_TOKEN in ~/.ayecfg[/]")
                     return None
                 except httpx.RequestError:
                     return None
         return None
     
+def normalize_jira_url(url: str) -> Optional[str]:
+    """Convert board URLs to browse URLs."""
+    parsed = urllib.parse.urlparse(url)
+    params = urllib.parse.parse_qs(parsed.query)
+
+    if 'selectedIssue' in params:
+        issue_key = params['selectedIssue'][0]
+        return f"https://{parsed.netloc}/browse/{issue_key}"
+    return url
 
 def fetch_jira_ticket(url: str, verbose: bool, *, timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
     """Fetch a Jira ticket via the REST API.
@@ -59,7 +73,6 @@ def fetch_jira_ticket(url: str, verbose: bool, *, timeout: float = DEFAULT_TIMEO
     """
     match = JIRA_TICKET_PATTERN.match(url) 
     if not match:
-        rprint(f"[red]in NOT match")
         return None
         
     domain, issue_key = match.groups()
@@ -70,9 +83,11 @@ def fetch_jira_ticket(url: str, verbose: bool, *, timeout: float = DEFAULT_TIMEO
     # Retrieve auth credentials from ~/.ayecfg or environment variables
     email = get_user_config("JIRA_EMAIL")
     token = get_user_config("JIRA_TOKEN")
-
     auth = (email, token) if email and token else None
     
+    # Warn if no credentials provided
+    if not auth and verbose:
+        rprint("[yellow]⚠ No Jira credentials found. Attempting anonymous access...[/]")
 
     with httpx.Client(timeout=timeout) as client:
         headers = {
@@ -81,15 +96,15 @@ def fetch_jira_ticket(url: str, verbose: bool, *, timeout: float = DEFAULT_TIMEO
         }
 
         response = client.get(api_url, headers=headers, auth=auth)
-
         response.raise_for_status()
+
         issue = response.json()
 
         if response.status_code == 200 and verbose:
             rprint(f"[green]✓ Fetched Jira Ticket {issue_key}[/]")
         elif verbose:
             rprint(f"[yellow]⚠ Could not fetch {url}[/]")
-
+        
         fields = issue.get("fields", {})
 
         return {
@@ -102,4 +117,12 @@ def fetch_jira_ticket(url: str, verbose: bool, *, timeout: float = DEFAULT_TIMEO
             "reporter": fields.get("reporter", {}).get("displayName"),
             "priority": fields.get("priority", {}).get("name"),
             "labels": fields.get("labels", []),
+            "comments": [
+            {
+                "author": c.get("author", {}).get("displayName"),
+                "body": c.get("body"),
+                "created": c.get("created"),
+            }
+            for c in fields.get("comment", {}).get("comments", [])
+        ],
         }
