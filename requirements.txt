@@ -9,6 +9,6 @@ chromadb==1.5.9
 rapidfuzz
 
 # Development dependencies
-coverage==7.13.5
+coverage==7.14.0
 pytest==9.0.3
 pexpect==4.9.0
