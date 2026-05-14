@@ -69,7 +69,7 @@ class TestGetConfig:
         """Test that environment variables override config file."""
         os.environ['AYE_JIRA_EMAIL'] = 'env@example.com'
         
-        with patch('aye.plugins.fetch_jira.get_user_config', return_value='config@example.com'):
+        with patch.object(fetch_module, 'get_user_config', return_value='config@example.com'):
             result = _get_config('AYE_JIRA_EMAIL', 'jira_email')
             
             assert result == 'env@example.com'
@@ -79,7 +79,7 @@ class TestGetConfig:
         # Ensure env var is not set
         assert 'AYE_JIRA_EMAIL' not in os.environ
         
-        with patch('aye.plugins.fetch_jira.get_user_config', return_value='config@example.com'):
+        with patch.object(fetch_module, 'get_user_config', return_value='config@example.com'):
             result = _get_config('AYE_JIRA_EMAIL', 'jira_email')
             
             assert result == 'config@example.com'
@@ -89,7 +89,7 @@ class TestGetConfig:
         # Ensure env var is not set
         assert 'AYE_JIRA_EMAIL' not in os.environ
         
-        with patch('aye.plugins.fetch_jira.get_user_config', return_value=None):
+        with patch.object(fetch_module, 'get_user_config', return_value=None):
             result = _get_config('AYE_JIRA_EMAIL', 'jira_email')
             
             assert result is None
