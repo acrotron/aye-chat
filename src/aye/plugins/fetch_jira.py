@@ -38,7 +38,6 @@ class FetchJiraPlugin(Plugin):
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if command_name == "process_url":
             url = params.get("url")
-            # verbose = params.get("verbose", False)
 
             normalized = _normalize_jira_url(url)
             
