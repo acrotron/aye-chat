@@ -77,4 +77,4 @@ def load_ignore_patterns(root: Path) -> pathspec.PathSpec:
         
         current_path = current_path.parent
 
-    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+    return pathspec.PathSpec.from_lines("gitignore", patterns)

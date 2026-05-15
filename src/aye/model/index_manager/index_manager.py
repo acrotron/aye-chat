@@ -19,7 +19,8 @@ from aye.model.models import VectorIndexResult
 from aye.model.source_collector import get_project_files, get_project_files_with_limit
 from aye.model import vector_db, onnx_manager
 from aye.model.config import SMALL_PROJECT_FILE_LIMIT
-from aye.model.hybrid_retrieval import BM25, hybrid_rerank
+from aye.model.hybrid_retrieval import BM25, SymbolIndex, hybrid_rerank
+from aye.model.ast_chunker import extract_symbols, get_language_from_file_path
 
 from .index_manager_utils import register_manager, set_discovery_thread_low_priority
 from .index_manager_file_ops import FileCategorizer, IndexPersistence, get_deleted_files
@@ -65,9 +66,11 @@ class IndexManager:  # pylint: disable=too-many-instance-attributes
         self._save_lock = threading.Lock()
         self._bm25_lock = threading.Lock()
 
-        # Lazy BM25 index cache (built on first query, invalidated on target_index change).
+        # Lazy search-aux caches: built from disk on first query and
+        # invalidated whenever the indexed file set changes.
         self._bm25_cache: Optional[BM25] = None
-        self._bm25_cache_key: tuple = ()
+        self._symbol_cache: Optional[SymbolIndex] = None
+        self._aux_cache_key: tuple = ()
 
         # Helper objects
         self._persistence = IndexPersistence(
@@ -586,31 +589,47 @@ class IndexManager:  # pylint: disable=too-many-instance-attributes
         with self._state_lock:
             all_file_paths = list(self._state.target_index.keys())
 
-        bm25 = self._get_or_build_bm25(all_file_paths)
-        return hybrid_rerank(vector_results, query_text, bm25, all_file_paths)
+        bm25, symbols = self._get_or_build_search_aux(all_file_paths)
+        return hybrid_rerank(
+            vector_results,
+            query_text,
+            bm25,
+            all_file_paths,
+            symbol_index=symbols,
+        )
 
-    def _get_or_build_bm25(self, file_paths: List[str]) -> Optional[BM25]:
-        """Return a BM25 index over the current indexed files, building lazily.
+    def _get_or_build_search_aux(
+        self, file_paths: List[str]
+    ) -> tuple:
+        """Return (BM25, SymbolIndex) for the current indexed files, lazily built.
 
-        The cache is keyed by the sorted tuple of file paths; when the indexed
-        set changes (e.g. after a refinement pass), the next query rebuilds.
+        Both indexes share a single file-read pass and a single cache key.
+        When the indexed set changes (e.g. after a refinement pass), the next
+        query rebuilds. Symbol extraction is skipped for files whose language
+        isn't supported by the AST chunker; those files still contribute to BM25.
         """
         if not file_paths:
-            return None
+            return None, None
 
         cache_key = tuple(sorted(file_paths))
         with self._bm25_lock:
-            if self._bm25_cache is not None and self._bm25_cache_key == cache_key:
-                return self._bm25_cache
+            if self._aux_cache_key == cache_key and self._bm25_cache is not None:
+                return self._bm25_cache, self._symbol_cache
 
             docs: Dict[str, str] = {}
+            symbols = SymbolIndex()
             for fp in cache_key:
                 try:
                     full = self.config.root_path / fp
-                    docs[fp] = full.read_text(encoding="utf-8", errors="replace")
+                    content = full.read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     continue
+                docs[fp] = content
+                language = get_language_from_file_path(fp)
+                if language:
+                    symbols.add(fp, extract_symbols(content, language))
 
             self._bm25_cache = BM25.from_documents(docs) if docs else None
-            self._bm25_cache_key = cache_key
-            return self._bm25_cache
+            self._symbol_cache = symbols if len(symbols) > 0 else None
+            self._aux_cache_key = cache_key
+            return self._bm25_cache, self._symbol_cache
