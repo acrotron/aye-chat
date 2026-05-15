@@ -75,7 +75,7 @@ class TestPluginManager(TestCase):
 
         # 4. Assert plugin was registered
         self.assertIn('test_plugin', self.plugin_manager.registry)
-        self.assertIsInstance(self.plugin_manager.registry['test_plugin'], TestPlugin)
+        self.assertIsInstance(self.plugin_manager.registry['test_plugin'][0], TestPlugin)
         mock_rprint.assert_called_once_with("[bold cyan]Plugins loaded: test_plugin[/]")
 
     @patch('importlib.util.spec_from_file_location')
@@ -134,12 +134,69 @@ class TestPluginManager(TestCase):
 
     def test_handle_command_with_plugin(self):
         test_plugin = TestPlugin()
-        self.plugin_manager.registry['test_plugin'] = test_plugin
+        self.plugin_manager.registry['test_plugin'] = [test_plugin]
 
         with patch.object(test_plugin, 'on_command', return_value={'data': 'test'}) as mock_on_command:
             response = self.plugin_manager.handle_command('test_command', {'param': 1})
             self.assertEqual(response, {'data': 'test'})
             mock_on_command.assert_called_once_with('test_command', {'param': 1})
+
+    def test_handle_command_falls_through_to_second_plugin_with_same_name(self):
+        """When two plugins share the same name, the second is tried if the first returns None."""
+        class FirstPlugin(Plugin):
+            name = "process_url"
+            version = "1.0.0"
+            premium = "free"
+            def on_command(self, command_name, params=None):
+                return None  # doesn't handle this
+
+        class SecondPlugin(Plugin):
+            name = "process_url"
+            version = "1.0.0"
+            premium = "free"
+            def on_command(self, command_name, params=None):
+                return {"status": "handled by second"}
+
+        self.plugin_manager.registry['process_url'] = [FirstPlugin(), SecondPlugin()]
+
+        response = self.plugin_manager.handle_command('process_url', {})
+        self.assertEqual(response, {"status": "handled by second"})
+
+    def test_handle_command_returns_none_when_all_plugins_return_none(self):
+        """Returns None when all registered plugins return None."""
+        class NoopPlugin(Plugin):
+            name = "process_url"
+            version = "1.0.0"
+            premium = "free"
+            def on_command(self, command_name, params=None):
+                return None
+
+        self.plugin_manager.registry['process_url'] = [NoopPlugin(), NoopPlugin()]
+
+        response = self.plugin_manager.handle_command('process_url', {})
+        self.assertIsNone(response)
+
+    def test_multiple_plugins_same_name_registered(self):
+        """Two plugins with the same name are both stored in the registry list."""
+        class PluginA(Plugin):
+            name = "process_url"
+            version = "1.0.0"
+            premium = "free"
+            def on_command(self, command_name, params=None):
+                return None
+
+        class PluginB(Plugin):
+            name = "process_url"
+            version = "1.0.0"
+            premium = "free"
+            def on_command(self, command_name, params=None):
+                return None
+
+        self.plugin_manager.registry.setdefault('process_url', []).append(PluginA())
+        self.plugin_manager.registry.setdefault('process_url', []).append(PluginB())
+
+        self.assertEqual(len(self.plugin_manager.registry['process_url']), 2)
+        self.assertEqual(len(self.plugin_manager.all()), 2)
 
     @patch('importlib.util.spec_from_file_location')
     @patch('importlib.util.module_from_spec')
