@@ -17,7 +17,6 @@ except Exception:  # pragma: no cover - fallback if package layout differs
         
 from aye.plugins.plugin_base import Plugin
 
-import json
 
 DEFAULT_TIMEOUT = 30.0
 JIRA_TICKET_PATTERN = re.compile(
