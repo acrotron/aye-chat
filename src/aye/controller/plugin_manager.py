@@ -13,7 +13,7 @@ class PluginManager:
     def __init__(self, tier: str = "free", verbose: bool = False) -> None:
         self.tier = tier
         self.verbose = verbose
-        self.registry: Dict[str, Plugin] = {}
+        self.registry: Dict[str, List[Plugin]] = {}
         self.failed_plugins: Dict[str, str] = {}  # plugin name -> error message
 
         if _is_debug():
@@ -29,13 +29,13 @@ class PluginManager:
             mod = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = mod
             spec.loader.exec_module(mod)
-        
+
             for n, m in vars(mod).items():
                 if isinstance(m, type) and issubclass(m, Plugin) and m is not Plugin:
                     plug = m()
                     if self._allowed(plug.premium):
                         plug.init({"verbose": self.verbose, "debug": _is_debug()})
-                        self.registry[plug.name] = plug
+                        self.registry.setdefault(plug.name, []).append(plug)
         except Exception as e:
             self.failed_plugins[file.stem] = str(e)
             if self.verbose:
@@ -52,7 +52,7 @@ class PluginManager:
             if self.verbose:
                 rprint(f"[yellow]Plugin directory not found: {plugin_dir}[/]")
             return
-        
+
         for f in plugin_dir.glob("*.py"):
             if f.name.startswith("__") or f.name == "plugin_base.py":
                 continue
@@ -67,7 +67,7 @@ class PluginManager:
             rprint(f"[bold red]Plugins not loaded: {failed}[/]")
 
     def all(self) -> List[Plugin]:
-        return list(self.registry.values())
+        return [plug for plugins in self.registry.values() for plug in plugins]
 
     def handle_command(self, command_name: str, params: Dict[str, Any] = {}) -> Optional[Dict[str, Any]]:
         """Let plugins handle a command, return the first non-None response."""
