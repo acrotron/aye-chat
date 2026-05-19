@@ -29,6 +29,7 @@ from aye.model.auth import get_user_config
 from aye.plugins.plugin_base import Plugin
 
 
+
 # ---------------------------------------------------------------------------
 # URL patterns
 # ---------------------------------------------------------------------------
@@ -57,6 +58,8 @@ _LEGACY_HOST_RE = re.compile(r"^([^\.]+)\.visualstudio\.com$", re.IGNORECASE)
 # Configuration
 # ---------------------------------------------------------------------------
 
+_TIMEOUT = 30
+
 def _get_config(env_key: str, cfg_key: str) -> Optional[str]:
     val = os.environ.get(env_key)
     if val:
@@ -65,17 +68,6 @@ def _get_config(env_key: str, cfg_key: str) -> Optional[str]:
     if cfg_val:
         return str(cfg_val).strip()
     return None
-
-
-def _get_timeout() -> float:
-    """Get request timeout from config or environment variable."""
-    timeout_str = _get_config("AYE_ADO_TIMEOUT", "ado_timeout")
-    if timeout_str:
-        try:
-            return float(timeout_str)
-        except ValueError:
-            pass
-    return 30.0
 
 
 def _ssl_verify() -> bool:
@@ -210,16 +202,6 @@ def _fetch_with_retry(
                 limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),  # No pooling
             ) as client:
                 response = client.get(url, headers=headers)
-                
-                # Check for redirect (302) - this means authentication failed
-                if response.status_code in (301, 302, 303, 307, 308):
-                    raise httpx.HTTPStatusError(
-                        f"Authentication required (redirected to sign-in). "
-                        f"Verify your PAT token has 'Work Items (Read)' permission.",
-                        request=response.request,
-                        response=response
-                    )
-                
                 response.raise_for_status()
                 return response
                 
@@ -286,21 +268,15 @@ def fetch_azure_devops_item(
 
     # Build auth header (Basic auth: empty username + PAT as password)
     pat = _get_config("AYE_ADO_TOKEN","ado_token")
-    if not pat:
-        raise ValueError(
-            "Azure DevOps PAT token is required. "
-            "Set AYE_ADO_TOKEN environment variable or ado_token in ~/.ayecfg. "
-            "Get a token from: https://dev.azure.com/{org}/_usersSettings/tokens"
-        )
     
     headers: Dict[str, str] = {
         "Accept": "application/json",
     }
-    token_b64 = base64.b64encode(f":{pat}".encode()).decode()
-    headers["Authorization"] = f"Basic {token_b64}"
+    token_b64 = base64.b64encode(f":{pat}".encode()).decode() if pat else None
+    headers["Authorization"] = f"Basic {token_b64}" if token_b64 else None
 
     if timeout is None:
-        timeout = _get_timeout()
+        timeout = _TIMEOUT
     
     # Use shorter timeout per request for retry logic
     request_timeout = min(timeout, 10.0)
@@ -442,11 +418,11 @@ class FetchAzureDevOpsPlugin(Plugin):
                 rprint(f"[red]ADO configuration error:[/] {e}")
             return None
         except httpx.HTTPStatusError as exc:
-            if self.verbose:
+            if self.debug:
                 status = exc.response.status_code if hasattr(exc.response, 'status_code') else '?'
                 rprint(f"[red]ADO HTTP error {status}:[/] {exc}")
             return None
         except httpx.RequestError as exc:
-            if self.verbose:
+            if self.debug:
                 rprint(f"[red]ADO network error for {normalized}:[/] {exc}")
             return None
