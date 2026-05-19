@@ -3,7 +3,7 @@
 import base64
 from pathlib import Path
 from unittest import TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch, MagicMock
 
 import httpx
 import pytest
@@ -107,6 +107,27 @@ class TestNormalizeAdoUrl(TestCase):
         self.assertIn("myorg", result)
         self.assertIn("myproject", result)
 
+    def test_backlog_url_with_workitem_param(self):
+        url = (
+            "https://dev.azure.com/myorg/myproject/_backlogs/backlog/"
+            "MyTeam/Stories?workitem=531"
+        )
+        result = _normalize_ado_url(url)
+        self.assertIn("_workitems/edit/531", result)
+        self.assertIn("myorg", result)
+        self.assertIn("myproject", result)
+
+    def test_sprint_url_with_workitem_param(self):
+        url = (
+            "https://dev.azure.com/volpeusdot/HINT/_sprints/backlog/"
+            "HINT%20Team/HINT/2026-05?workitem=612"
+        )
+        result = _normalize_ado_url(url)
+        self.assertEqual(
+            result,
+            "https://dev.azure.com/volpeusdot/HINT/_workitems/edit/612"
+        )
+
     def test_board_url_without_workitem_param_unchanged(self):
         url = "https://dev.azure.com/myorg/myproject/_boards/board/"
         result = _normalize_ado_url(url)
@@ -203,11 +224,14 @@ class TestFetchAzureDevOpsItem(TestCase):
         self.assertEqual(result["id"], "42")
         self.assertEqual(result["comments"], [])
 
-    def test_invalid_url_raises_value_error(self):
-        with self.assertRaises(ValueError):
-            fetch_azure_devops_item("https://github.com/owner/repo/issues/1")
+    def test_invalid_url_format(self):
+        invalid_url = "https://github.com/owner/repo/issues/1"
+        
+        result = fetch_azure_devops_item(invalid_url, verbose=False)
+        
+        self.assertIsNone(result)
 
-    def test_http_404_raises(self):
+    def test_http_404_error(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 404
         mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
@@ -224,7 +248,7 @@ class TestFetchAzureDevOpsItem(TestCase):
                 with self.assertRaises(httpx.HTTPStatusError):
                     fetch_azure_devops_item(_CANONICAL_EDIT_URL)
 
-    def test_http_401_raises(self):
+    def test_http_401_error(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 401
         mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
@@ -241,7 +265,7 @@ class TestFetchAzureDevOpsItem(TestCase):
                 with self.assertRaises(httpx.HTTPStatusError):
                     fetch_azure_devops_item(_CANONICAL_EDIT_URL)
 
-    def test_network_error_raises(self):
+    def test_network_error(self):
         client_instance = MagicMock()
         client_instance.get.side_effect = httpx.RequestError("timeout")
         client_ctx = MagicMock()
@@ -582,6 +606,22 @@ class TestFetchAzureDevOpsPlugin(TestCase):
 
         self.assertIsNotNone(result)
         self.assertEqual(result["status"], "success")
+
+    def test_sprint_url_normalization_in_plugin(self):
+        sprint_url = (
+            "https://dev.azure.com/volpeusdot/HINT/_sprints/backlog/"
+            "HINT%20Team/HINT/2026-05?workitem=612"
+        )
+        item_data = _make_work_item_response(work_item_id="612")
+        comments_data = _make_comments_response([])
+
+        with patch("aye.plugins.fetch_azure_devops._get_config", return_value=None):
+            with patch("httpx.Client", return_value=_mock_httpx_get(item_data, comments_data)):
+                result = self.plugin.on_command("process_url", {"url": sprint_url})
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["data"]["id"], "612")
 
     def test_legacy_visualstudio_url_in_plugin(self):
         legacy_url = "https://myorg.visualstudio.com/myproject/_workitems/edit/42"

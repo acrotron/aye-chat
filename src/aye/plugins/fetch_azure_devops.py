@@ -7,6 +7,7 @@ Supported URL formats:
 - https://dev.azure.com/{org}/{project}/_workitems/edit/{id}
 - https://dev.azure.com/{org}/{project}/_boards/board/...?workitem={id}
 - https://dev.azure.com/{org}/{project}/_backlogs/backlog/...?workitem={id}
+- https://dev.azure.com/{org}/{project}/_sprints/backlog/...?workitem={id}
 - https://{org}.visualstudio.com/{project}/_workitems/edit/{id}  (legacy)
 
 Configuration (env var or ~/.ayecfg):
@@ -29,7 +30,6 @@ from aye.model.auth import get_user_config
 from aye.plugins.plugin_base import Plugin
 
 
-
 # ---------------------------------------------------------------------------
 # URL patterns
 # ---------------------------------------------------------------------------
@@ -42,11 +42,11 @@ AZURE_DEVOPS_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Matches board and backlog URLs with ?workitem= query param
-_BOARD_OR_BACKLOG_URL_RE = re.compile(
+# Matches board, backlog, and sprint URLs with ?workitem= query param
+_BOARD_BACKLOG_SPRINT_URL_RE = re.compile(
     r"^https?://"
     r"(?:dev\.azure\.com/([^/]+)|([^\.]+)\.visualstudio\.com)"
-    r"/([^/]+)/_(boards|backlogs)/",
+    r"/([^/]+)/_(boards|backlogs|sprints)/",
     re.IGNORECASE,
 )
 
@@ -96,6 +96,7 @@ def _normalize_ado_url(url: str) -> str:
     Handles:
     - Board URLs with ``?workitem=<id>`` query param
     - Backlog URLs with ``?workitem=<id>`` query param
+    - Sprint URLs with ``?workitem=<id>`` query param
     - Legacy ``{org}.visualstudio.com`` URLs
 
     Args:
@@ -111,15 +112,15 @@ def _normalize_ado_url(url: str) -> str:
     legacy_match = _LEGACY_HOST_RE.match(hostname)
     org_from_host = legacy_match.group(1).lower() if legacy_match else None
 
-    # Handle board and backlog URLs with ?workitem=<id>
-    if _BOARD_OR_BACKLOG_URL_RE.match(url):
+    # Handle board, backlog, and sprint URLs with ?workitem=<id>
+    if _BOARD_BACKLOG_SPRINT_URL_RE.match(url):
         qs = parse_qs(parsed.query)
         workitem_ids = qs.get("workitem")
         if workitem_ids:
             work_item_id = workitem_ids[0]
             path_parts = [p for p in parsed.path.split("/") if p]
             
-            # Legacy visualstudio.com: path is /{project}/_boards/ or /_backlogs/...
+            # Legacy visualstudio.com: path is /{project}/_boards/ or /_backlogs/ or /_sprints/...
             # org comes from hostname
             if org_from_host and len(path_parts) >= 1:
                 project = path_parts[0]
@@ -128,7 +129,7 @@ def _normalize_ado_url(url: str) -> str:
                     f"/_workitems/edit/{work_item_id}"
                 )
             
-            # dev.azure.com: path is /{org}/{project}/_boards/ or /_backlogs/...
+            # dev.azure.com: path is /{org}/{project}/_boards/ or /_backlogs/ or /_sprints/...
             if len(path_parts) >= 2:
                 org = path_parts[0]
                 project = path_parts[1]
