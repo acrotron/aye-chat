@@ -164,6 +164,7 @@ def _fetch_with_retry(
     verify: bool,
     max_retries: int = 5,
     verbose: bool = False,
+    debug:bool = False,
 ) -> httpx.Response:
     """Fetch URL with retry logic for connection resets.
     
@@ -209,7 +210,7 @@ def _fetch_with_retry(
             # Windows connection reset (WinError 10054) or protocol errors
             if attempt < max_retries - 1:
                 delay = min(2 ** attempt, 8)  # Cap at 8s
-                if verbose:
+                if debug:
                     rprint(f"[yellow]Connection reset (attempt {attempt + 1}/{max_retries}), retrying in {delay}s...[/]")
                     rprint(f"[dim]Error: {e}[/]")
                 time.sleep(delay)
@@ -235,6 +236,7 @@ def _fetch_with_retry(
 def fetch_azure_devops_item(
     url: str,
     verbose: bool = False,
+    debug: bool = False,
     *,
     timeout: Optional[float] = None,
 ) -> Dict[str, Any]:
@@ -256,7 +258,7 @@ def fetch_azure_devops_item(
     """
     match = AZURE_DEVOPS_RE.match(url)
     if not match:
-        raise ValueError(f"URL does not match Azure DevOps work item pattern: {url}")
+        return None
 
     # Extract org, project, and work item id from the URL
     org = (match.group(1) or match.group(2)).lower()
@@ -264,7 +266,7 @@ def fetch_azure_devops_item(
     work_item_id = match.group(4)
 
     if verbose:
-        rprint(f"[green]Fetching ADO work item from {org}/{project}[/]")
+        rprint(f"[green]Fetching ADO work item from {org}/{project}...[/]")
 
     # Build auth header (Basic auth: empty username + PAT as password)
     pat = _get_config("AYE_ADO_TOKEN","ado_token")
@@ -282,8 +284,6 @@ def fetch_azure_devops_item(
     request_timeout = min(timeout, 10.0)
 
     verify = _ssl_verify()
-    if verbose and not verify:
-        rprint("[yellow]Warning: SSL certificate verification is disabled[/]")
 
     api_base = f"https://dev.azure.com/{org}/{project}/_apis"
     item_url = (
@@ -297,7 +297,8 @@ def fetch_azure_devops_item(
         headers=headers,
         timeout=request_timeout,
         verify=verify,
-        verbose=verbose
+        verbose=verbose,
+        debug=debug
     )
     item_data = response.json()
 
@@ -411,6 +412,7 @@ class FetchAzureDevOpsPlugin(Plugin):
             data = fetch_azure_devops_item(
                 normalized,
                 verbose=self.verbose,
+                debug=self.debug
             )
             return {"status": "success", "data": data}
         except ValueError as e:
