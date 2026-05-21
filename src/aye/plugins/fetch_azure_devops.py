@@ -12,7 +12,6 @@ Supported URL formats:
 
 Configuration (env var or ~/.ayecfg):
 - AYE_ADO_TOKEN / ado_token  - Personal Access Token (REQUIRED)
-- AYE_ADO_TIMEOUT / (default: 30) - Request timeout in seconds
 - AYE_SSLVERIFY / sslverify - SSL certificate verification (on/off)
 """
 
@@ -28,6 +27,14 @@ from rich import print as rprint
 
 from aye.model.auth import get_user_config
 from aye.plugins.plugin_base import Plugin
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+# Request timeout in seconds
+REQUEST_TIMEOUT = 30.0
 
 
 # ---------------------------------------------------------------------------
@@ -55,10 +62,8 @@ _LEGACY_HOST_RE = re.compile(r"^([^\.]+)\.visualstudio\.com$", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration helpers
 # ---------------------------------------------------------------------------
-
-_TIMEOUT = 30
 
 def _get_config(env_key: str, cfg_key: str) -> Optional[str]:
     val = os.environ.get(env_key)
@@ -159,30 +164,23 @@ def _normalize_ado_url(url: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _fetch_with_retry(
+    client: httpx.Client,
     url: str,
     headers: Dict[str, str],
-    timeout: float,
-    verify: bool,
     max_retries: int = 5,
-    verbose: bool = False,
-    debug:bool = False,
+    debug: bool = False,
 ) -> httpx.Response:
     """Fetch URL with retry logic for connection resets.
     
-    Windows can forcibly close connections (WinError 10054) due to:
-    - HTTP/2 protocol issues
-    - Antivirus/firewall interference  
-    - Connection pooling problems
-    
-    This uses aggressive retry with fresh connections each time.
+    Uses an existing httpx.Client to enable connection reuse across retries.
+    This is more efficient and works better with Windows networking.
     
     Args:
+        client: Existing httpx.Client instance (connection will be reused)
         url: URL to fetch
         headers: Request headers
-        timeout: Request timeout
-        verify: SSL certificate verification
         max_retries: Maximum number of retry attempts
-        verbose: Print retry information
+        debug: Print retry information
         
     Returns:
         httpx.Response object
@@ -193,24 +191,14 @@ def _fetch_with_retry(
     """
     for attempt in range(max_retries):
         try:
-            # IMPORTANT: Create a FRESH client for each attempt
-            # This prevents connection pool reuse issues on Windows
-            # Force HTTP/1.1 to avoid HTTP/2 negotiation problems
-            with httpx.Client(
-                timeout=timeout,
-                verify=verify,
-                follow_redirects=False,
-                http2=False,  # Force HTTP/1.1 - more reliable on Windows
-                limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),  # No pooling
-            ) as client:
-                response = client.get(url, headers=headers)
-                response.raise_for_status()
-                return response
+            response = client.get(url, headers=headers)
+            response.raise_for_status()
+            return response
                 
         except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError) as e:
             # Windows connection reset (WinError 10054) or protocol errors
             if attempt < max_retries - 1:
-                delay = min(2 ** attempt, 8)  # Cap at 8s
+                delay = min(2 ** attempt, 4)  # Cap at 4s
                 if debug:
                     rprint(f"[yellow]Connection reset (attempt {attempt + 1}/{max_retries}), retrying in {delay}s...[/]")
                     rprint(f"[dim]Error: {e}[/]")
@@ -246,7 +234,7 @@ def fetch_azure_devops_item(
     Args:
         url: Canonical ``https://dev.azure.com/{org}/{project}/_workitems/edit/{id}`` URL.
         verbose: Print debug information to stdout.
-        timeout: HTTP request timeout in seconds (default: from config or 30s).
+        timeout: HTTP request timeout in seconds (default: 30.0).
 
     Returns:
         Dict with keys: url, id, title, description, state, type, assignee,
@@ -270,7 +258,7 @@ def fetch_azure_devops_item(
         rprint(f"[green]Fetching ADO work item from {org}/{project}...[/]")
 
     # Build auth header (Basic auth: empty username + PAT as password)
-    pat = _get_config("AYE_ADO_TOKEN","ado_token")
+    pat = _get_config("AYE_ADO_TOKEN", "ado_token")
     
     headers: Dict[str, str] = {
         "Accept": "application/json",
@@ -279,7 +267,7 @@ def fetch_azure_devops_item(
     headers["Authorization"] = f"Basic {token_b64}" if token_b64 else None
 
     if timeout is None:
-        timeout = _TIMEOUT
+        timeout = REQUEST_TIMEOUT
     
     # Use shorter timeout per request for retry logic
     request_timeout = min(timeout, 10.0)
@@ -291,84 +279,89 @@ def fetch_azure_devops_item(
         f"{api_base}/wit/workItems/{work_item_id}"
         "?$expand=all&api-version=7.0"
     )
-    
-    # Fetch work item with retry logic (fresh client each time)
-    response = _fetch_with_retry(
-        url=item_url,
-        headers=headers,
-        timeout=request_timeout,
-        verify=verify,
-        verbose=verbose,
-        debug=debug
-    )
-    item_data = response.json()
-
-    if verbose:
-        rprint(f"[green]✓ Fetched ADO work item {work_item_id}[/]")
-    
-    fields: Dict[str, Any] = item_data.get("fields", {})
-
-    # Parse the AssignedTo field (can be a dict or None)
-    assigned_to_raw = fields.get("System.AssignedTo")
-    if isinstance(assigned_to_raw, dict):
-        assignee = assigned_to_raw.get("displayName")
-    else:
-        assignee = assigned_to_raw
-
-    # Tags are semicolon-separated strings in ADO
-    tags_raw: str = fields.get("System.Tags", "") or ""
-    tags: List[str] = [
-        t.strip() for t in tags_raw.split(";") if t.strip()
-    ]
-
-    result: Dict[str, Any] = {
-        "url": url,
-        "id": work_item_id,
-        "title": fields.get("System.Title"),
-        "description": fields.get("System.Description"),
-        "state": fields.get("System.State"),
-        "type": fields.get("System.WorkItemType"),
-        "assignee": assignee,
-        "priority": fields.get("Microsoft.VSTS.Common.Priority"),
-        "area": fields.get("System.AreaPath"),
-        "iteration": fields.get("System.IterationPath"),
-        "tags": tags,
-        "comments": [],
-    }
-
-    # Fetch comments (secondary call - also with fresh client)
     comments_url = (
         f"{api_base}/wit/workItems/{work_item_id}/comments"
         "?api-version=7.0-preview.3"
     )
     
-    try:
-        comments_response = _fetch_with_retry(
-            url=comments_url,
+    # Create a single HTTP client for both requests
+    # This enables connection reuse between work item and comments calls
+    # Force HTTP/1.1 for better Windows compatibility
+    with httpx.Client(
+        timeout=request_timeout,
+        verify=verify,
+        follow_redirects=False,
+        http2=False,  # Force HTTP/1.1 - more reliable on Windows
+    ) as client:
+        # Fetch work item with retry logic using the shared client
+        response = _fetch_with_retry(
+            client=client,
+            url=item_url,
             headers=headers,
-            timeout=request_timeout,
-            verify=verify,
-            verbose=verbose
+            debug=debug
         )
+        item_data = response.json()
 
-        if comments_response.status_code == 200:
-            comments_data = comments_response.json()
-            for c in comments_data.get("comments", []):
-                author_raw = c.get("createdBy", {})
-                author = (
-                    author_raw.get("displayName")
-                    if isinstance(author_raw, dict)
-                    else author_raw
-                )
-                result["comments"].append({
-                    "author": author,
-                    "body": c.get("text"),
-                    "created": c.get("createdDate"),
-                })
-    except Exception as e:
-        # Don't fail the entire request if comments fail
         if verbose:
-            rprint(f"[yellow]Warning: Could not fetch comments: {e}[/]")
+            rprint(f"[green]✓ Fetched ADO work item {work_item_id}[/]")
+        
+        fields: Dict[str, Any] = item_data.get("fields", {})
+
+        # Parse the AssignedTo field (can be a dict or None)
+        assigned_to_raw = fields.get("System.AssignedTo")
+        if isinstance(assigned_to_raw, dict):
+            assignee = assigned_to_raw.get("displayName")
+        else:
+            assignee = assigned_to_raw
+
+        # Tags are semicolon-separated strings in ADO
+        tags_raw: str = fields.get("System.Tags", "") or ""
+        tags: List[str] = [
+            t.strip() for t in tags_raw.split(";") if t.strip()
+        ]
+
+        result: Dict[str, Any] = {
+            "url": url,
+            "id": work_item_id,
+            "title": fields.get("System.Title"),
+            "description": fields.get("System.Description"),
+            "state": fields.get("System.State"),
+            "type": fields.get("System.WorkItemType"),
+            "assignee": assignee,
+            "priority": fields.get("Microsoft.VSTS.Common.Priority"),
+            "area": fields.get("System.AreaPath"),
+            "iteration": fields.get("System.IterationPath"),
+            "tags": tags,
+            "comments": [],
+        }
+
+        # Fetch comments using the SAME client (connection reuse!)
+        try:
+            comments_response = _fetch_with_retry(
+                client=client,
+                url=comments_url,
+                headers=headers,
+                debug=debug
+            )
+
+            if comments_response.status_code == 200:
+                comments_data = comments_response.json()
+                for c in comments_data.get("comments", []):
+                    author_raw = c.get("createdBy", {})
+                    author = (
+                        author_raw.get("displayName")
+                        if isinstance(author_raw, dict)
+                        else author_raw
+                    )
+                    result["comments"].append({
+                        "author": author,
+                        "body": c.get("text"),
+                        "created": c.get("createdDate"),
+                    })
+        except Exception as e:
+            # Don't fail the entire request if comments fail
+            if verbose:
+                rprint(f"[yellow]Warning: Could not fetch comments: {e}[/]")
 
     return result
 
@@ -413,7 +406,7 @@ class FetchAzureDevOpsPlugin(Plugin):
             data = fetch_azure_devops_item(
                 normalized,
                 verbose=self.verbose,
-                debug=self.debug
+                debug=self.verbose
             )
             return {"status": "success", "data": data}
         except ValueError as e:
