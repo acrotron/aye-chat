@@ -406,7 +406,7 @@ class FetchAzureDevOpsPlugin(Plugin):
             data = fetch_azure_devops_item(
                 normalized,
                 verbose=self.verbose,
-                debug=self.verbose
+                debug=self.debug
             )
             return {"status": "success", "data": data}
         except ValueError as e:
