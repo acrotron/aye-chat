@@ -159,6 +159,35 @@ class TestIndexManagerHybridRetrieval(unittest.TestCase):
         "aye.model.index_manager.index_manager.onnx_manager.get_model_status",
         return_value="READY",
     )
+    @patch("aye.model.index_manager.index_manager.extract_symbols")
+    @patch("aye.model.vector_db.query_index")
+    def test_symbol_mention_promotes_defining_file(
+        self, mock_query, mock_extract, _mock_status
+    ):
+        """A function name in the query should surface its defining file."""
+        self._setup_ready_collection()
+
+        def _symbols(_content, _language):
+            # auth.py defines `authenticate_user`; others have generic symbols.
+            if "authenticate_user" in _content:
+                return ["authenticate_user"]
+            return []
+
+        mock_extract.side_effect = _symbols
+        mock_query.return_value = [
+            VectorIndexResult(file_path="config.py", content="cfg", score=0.95),
+            VectorIndexResult(file_path="auth.py", content="...", score=0.10),
+        ]
+
+        results = self.manager.query(
+            "make authenticate_user return None on failure"
+        )
+        self.assertEqual(results[0].file_path, "auth.py")
+
+    @patch(
+        "aye.model.index_manager.index_manager.onnx_manager.get_model_status",
+        return_value="READY",
+    )
     @patch("aye.model.vector_db.query_index")
     def test_bm25_skips_unreadable_files(self, mock_query, _mock_status):
         """Files that can't be read should be skipped silently when building BM25."""

@@ -118,40 +118,65 @@ def get_language_from_file_path(file_path: str) -> Optional[str]:
     suffix = Path(file_path).suffix.lower()
     return LANGUAGE_MAP.get(suffix)
 
+def _parse_and_capture(content: str, language_name: str) -> Optional[list]:
+    """Parse `content` and run the language's CHUNK_QUERIES, returning captures.
+
+    Returns None if tree-sitter is missing, the language is unsupported, or
+    parsing/querying raised. Returns a (possibly empty) list on success; an
+    empty list means the grammar ran cleanly but matched nothing.
+    """
+    if not TREE_SITTER_AVAILABLE:
+        return None
+
+    query_string = CHUNK_QUERIES.get(language_name)
+    if not query_string:
+        return None
+
+    try:
+        language = get_language(language_name)
+        parser = get_parser(language_name)
+        tree = parser.parse(bytes(content, "utf8"))
+        query = language.query(query_string)
+        return query.captures(tree.root_node)
+    except Exception:
+        return None
+
+
+def extract_symbols(content: str, language_name: str) -> List[str]:
+    """Return top-level function/class/method names defined in the source.
+
+    Uses the same AST queries as `ast_chunker` but captures the `name` field
+    of each matched node. Returns an empty list if tree-sitter is unavailable,
+    the language has no query, parsing fails, or the grammar's captured node
+    doesn't expose a 'name' field (e.g. CSS rule sets, HTML elements).
+    """
+    captures = _parse_and_capture(content, language_name)
+    if captures is None:
+        return []
+
+    symbols: List[str] = []
+    for node, _ in captures:
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            continue
+        try:
+            symbols.append(name_node.text.decode("utf8"))
+        except Exception:
+            continue
+    return symbols
+
+
 def ast_chunker(content: str, language_name: str) -> List[str]:
     """
     Chunks code using tree-sitter to extract AST-based chunks.
     Returns an empty list if tree-sitter is not available, the language is
     not supported, or no chunks are found.
     """
-    if not TREE_SITTER_AVAILABLE:
+    captures = _parse_and_capture(content, language_name)
+    if captures is None:
         return []
 
-    try:
-        language = get_language(language_name)
-        parser = get_parser(language_name)
-    except Exception:
-        # Language not supported or tree-sitter-languages not fully installed
-        return []
-
-    tree = parser.parse(bytes(content, "utf8"))
-    root_node = tree.root_node
-
-    query_string = CHUNK_QUERIES.get(language_name)
-    if not query_string:
-        return []  # No query defined for this language
-
-    try:
-        query = language.query(query_string)
-        captures = query.captures(root_node)
-    except Exception:
-        # tree-sitter might fail on invalid syntax or query errors
-        return []
-
-    chunks = []
-    for node, _ in captures:
-        chunk_text = node.text.decode('utf8')
-        chunks.append(chunk_text)
+    chunks = [node.text.decode('utf8') for node, _ in captures]
 
     # If no high-level chunks are found, but the file has content,
     # return the whole file as a single chunk. This is better than nothing.

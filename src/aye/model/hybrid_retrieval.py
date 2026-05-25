@@ -30,9 +30,18 @@ _PATH_LIKE_RE = re.compile(r"[A-Za-z0-9_./\\-]*[A-Za-z0-9_][A-Za-z0-9_./\\-]*\.[
 # explicitly mentioned and bypasses fusion to take a top slot.
 BOOST_FULL_PATH = 1.0
 BOOST_BASENAME = 0.9
+# Slightly below basename: a symbol mention is strong evidence, but when both
+# a filename and a symbol are named we prefer the filename as the more
+# deliberate reference.
+BOOST_SYMBOL = 0.85
 BOOST_PARTIAL_PATH = 0.7
 BOOST_STEM = 0.5
 STRONG_MENTION_THRESHOLD = BOOST_BASENAME
+
+# Symbols shared by more than this many files are considered ambiguous and
+# excluded from the boost. A name like `init` or `get` typically appears in
+# dozens of files; boosting all of them is noise.
+MAX_SYMBOL_FILES = 3
 
 
 def tokenize(text: str) -> List[str]:
@@ -213,6 +222,95 @@ class BM25:  # pylint: disable=too-many-instance-attributes
         return scores
 
 
+class SymbolIndex:
+    """Maps symbol names (function/class identifiers) to the files defining them.
+
+    Lookups are case-insensitive. Names that appear in more than
+    `MAX_SYMBOL_FILES` files are suppressed on lookup to avoid boosting every
+    file that happens to define a common name like `init` or `get`.
+    """
+
+    def __init__(self, max_symbol_files: int = MAX_SYMBOL_FILES):
+        self._by_name: Dict[str, List[str]] = {}
+        self._max = max_symbol_files
+
+    def add(self, file_path: str, symbols: List[str]) -> None:
+        """Record `symbols` as defined in `file_path`."""
+        for sym in symbols:
+            if not sym:
+                continue
+            key = sym.lower()
+            bucket = self._by_name.setdefault(key, [])
+            if file_path not in bucket:
+                bucket.append(file_path)
+
+    def files_for(self, name: str) -> List[str]:
+        """Return files defining `name`, or [] if absent or ambiguous."""
+        bucket = self._by_name.get(name.lower())
+        if not bucket or len(bucket) > self._max:
+            return []
+        return list(bucket)
+
+    def __len__(self) -> int:
+        """Return the number of unique symbol names (not the number of files)."""
+        return len(self._by_name)
+
+
+def compute_symbol_boost(
+    query: str,
+    symbol_index: Optional["SymbolIndex"],
+    query_tokens: Optional[List[str]] = None,  # pylint: disable=unused-argument
+) -> Dict[str, float]:
+    """Return files defining any identifier-like token present in the query.
+
+    Only tokens that look like source identifiers (snake_case, camelCase,
+    SCREAMING_CASE, or containing a digit — i.e. unlikely to be prose) are
+    used, so common words like `fix` or `update` never match symbols even
+    when a file happens to define a function with that exact name. The
+    `query_tokens` parameter is accepted for API symmetry but not used, since
+    symbol matching needs case-preserving tokens that `tokenize()` discards.
+    """
+    if symbol_index is None or len(symbol_index) == 0 or not query:
+        return {}
+
+    candidates = {t.lower() for t in _identifier_like_tokens(query)}
+    if not candidates:
+        return {}
+
+    scores: Dict[str, float] = {}
+    for candidate in candidates:
+        for fp in symbol_index.files_for(candidate):
+            if fp not in scores:
+                scores[fp] = BOOST_SYMBOL
+    return scores
+
+
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _identifier_like_tokens(query: str) -> List[str]:
+    """Pull tokens from the query that plausibly name a source identifier.
+
+    We consider a token identifier-like if it contains an underscore, a digit,
+    or a lower→upper case transition (camelCase). Plain English words are
+    excluded so that `fix`, `update`, `the` can't accidentally match a symbol.
+    """
+    out: List[str] = []
+    for tok in _IDENT_RE.findall(query or ""):
+        if "_" in tok or any(c.isdigit() for c in tok):
+            out.append(tok)
+            continue
+        # camelCase / PascalCase detection: a lower-then-upper transition.
+        has_lower_upper = any(
+            tok[i].islower() and tok[i + 1].isupper() for i in range(len(tok) - 1)
+        )
+        # A pure-uppercase token of length >= 2 is also plausibly an identifier
+        # (e.g. HTTPServer, SECRET_KEY constant referenced as SECRET).
+        if has_lower_upper or (len(tok) >= 2 and tok.isupper()):
+            out.append(tok)
+    return out
+
+
 def rrf_fuse(rankings: List[List[str]], k: int = 60) -> Dict[str, float]:
     """Combine multiple ranked lists into a single score map via Reciprocal Rank Fusion.
 
@@ -232,19 +330,21 @@ def hybrid_rerank(
     query: str,
     bm25: Optional[BM25],
     all_file_paths: List[str],
+    symbol_index: Optional[SymbolIndex] = None,
 ) -> List[VectorIndexResult]:
-    """Re-rank a list of vector results using BM25 and filename-match signals.
+    """Re-rank a list of vector results using BM25, filename, and symbol signals.
 
     The input is a list of per-chunk results (as returned by the vector DB);
     the output is a list of per-file results in the recommended examination
-    order. Files mentioned explicitly by name or path in the query are placed
-    at the top; the remainder is fused from vector, BM25, and weak filename
-    rankings using Reciprocal Rank Fusion.
+    order. Files mentioned explicitly by name or path in the query, or files
+    defining an identifier named in the query, are placed at the top; the
+    remainder is fused from vector, BM25, and weak filename rankings using
+    Reciprocal Rank Fusion.
 
-    If no ancillary signals are available (no BM25 index and no known file
-    paths), the function is a no-op that returns the input unchanged.
+    If no ancillary signals are available (no BM25, no known file paths, no
+    symbol index), the function is a no-op that returns the input unchanged.
     """
-    if bm25 is None and not all_file_paths:
+    if bm25 is None and not all_file_paths and symbol_index is None:
         return list(vector_results)
 
     file_to_best: Dict[str, VectorIndexResult] = {}
@@ -255,10 +355,18 @@ def hybrid_rerank(
 
     q_tokens = tokenize(query)
     filename_scores = compute_filename_boost(query, all_file_paths, query_tokens=q_tokens)
+    symbol_scores = compute_symbol_boost(query, symbol_index, query_tokens=q_tokens)
+
+    # Strong mentions include both explicit filename/path matches and symbol
+    # definitions: either one is a near-certain signal of user intent.
+    strong_candidates = dict(symbol_scores)
+    for fp, s in filename_scores.items():
+        if s >= STRONG_MENTION_THRESHOLD:
+            strong_candidates[fp] = max(strong_candidates.get(fp, 0.0), s)
 
     strong_mentions = sorted(
-        (fp for fp, s in filename_scores.items() if s >= STRONG_MENTION_THRESHOLD),
-        key=lambda fp: (-filename_scores[fp], fp),
+        strong_candidates,
+        key=lambda fp: (-strong_candidates[fp], fp),
     )
 
     vector_ranked = sorted(

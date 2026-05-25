@@ -1,4 +1,6 @@
+import concurrent.futures.thread as _cf_thread
 import hashlib
+import threading
 from unittest.mock import MagicMock
 
 import aye.model.index_manager.index_manager_utils as utils
@@ -29,6 +31,103 @@ def test_daemon_thread_pool_executor_creates_daemon_threads():
         assert len(ex._threads) >= 1
         t = next(iter(ex._threads))
         assert t.daemon is True
+
+
+def test_daemon_thread_pool_executor_all_workers_are_daemon():
+    # With max_workers>1 and enough concurrent work to force every slot
+    # to spin up its own thread, every created thread must be daemon.
+    barrier = threading.Barrier(4)
+
+    def hold_until_all_in():
+        barrier.wait(timeout=5)
+        return True
+
+    with utils.DaemonThreadPoolExecutor(max_workers=4, thread_name_prefix="test") as ex:
+        futures = [ex.submit(hold_until_all_in) for _ in range(4)]
+        for f in futures:
+            assert f.result(timeout=5) is True
+
+        assert len(ex._threads) == 4
+        assert all(t.daemon is True for t in ex._threads)
+
+
+def test_daemon_thread_pool_executor_restores_threading_thread_reference():
+    # The implementation swaps concurrent.futures.thread.threading.Thread for
+    # the duration of _adjust_thread_count. Ensure the original reference is
+    # restored after submit() completes — even after many calls.
+    original = _cf_thread.threading.Thread
+    with utils.DaemonThreadPoolExecutor(max_workers=2, thread_name_prefix="test") as ex:
+        for _ in range(5):
+            ex.submit(lambda: None).result(timeout=2)
+            assert _cf_thread.threading.Thread is original
+
+    assert _cf_thread.threading.Thread is original
+
+
+def test_daemon_thread_pool_executor_restores_thread_reference_on_exception(monkeypatch):
+    # Even if the standard _adjust_thread_count raises, the original
+    # threading.Thread reference must be restored (try/finally invariant).
+    original = _cf_thread.threading.Thread
+
+    def boom(self):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(
+        "concurrent.futures.ThreadPoolExecutor._adjust_thread_count", boom
+    )
+
+    ex = utils.DaemonThreadPoolExecutor(max_workers=1, thread_name_prefix="test")
+    try:
+        try:
+            ex.submit(lambda: None)
+        except RuntimeError:
+            pass
+        assert _cf_thread.threading.Thread is original
+    finally:
+        ex.shutdown(wait=False)
+
+
+def test_daemon_thread_pool_executor_concurrent_submits_all_produce_daemon_threads():
+    # Concurrent submits from many threads exercise the
+    # _adjust_thread_count_lock. All resulting workers must be daemon and
+    # the threading.Thread reference must be restored at the end.
+    original = _cf_thread.threading.Thread
+    submitter_count = 8
+
+    with utils.DaemonThreadPoolExecutor(max_workers=4, thread_name_prefix="test") as ex:
+        results: list = []
+        results_lock = threading.Lock()
+
+        def submitter():
+            fut = ex.submit(lambda: threading.current_thread().daemon)
+            with results_lock:
+                results.append(fut.result(timeout=5))
+
+        submitters = [threading.Thread(target=submitter) for _ in range(submitter_count)]
+        for s in submitters:
+            s.start()
+        for s in submitters:
+            s.join(timeout=5)
+
+        assert len(results) == submitter_count
+        assert all(results), "every worker thread should report daemon=True"
+        assert all(t.daemon is True for t in ex._threads)
+
+    assert _cf_thread.threading.Thread is original
+
+
+def test_daemon_thread_pool_executor_reuses_idle_thread():
+    # Sequential submits within max_workers should reuse the same daemon
+    # worker thread instead of spinning up new ones each time.
+    with utils.DaemonThreadPoolExecutor(max_workers=2, thread_name_prefix="test") as ex:
+        seen_thread_ids = set()
+        for _ in range(5):
+            tid = ex.submit(threading.get_ident).result(timeout=2)
+            seen_thread_ids.add(tid)
+
+        assert len(ex._threads) <= 2
+        assert len(seen_thread_ids) <= 2
+        assert all(t.daemon is True for t in ex._threads)
 
 
 def test_set_low_priority_calls_os_nice_when_available(monkeypatch):

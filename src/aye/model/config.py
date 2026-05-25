@@ -173,4 +173,4 @@ MODELS = [
 ]
 
 # Default model identifier
-DEFAULT_MODEL_ID = "google/gemini-3-pro-preview"
+DEFAULT_MODEL_ID = "anthropic/claude-sonnet-4.6"
