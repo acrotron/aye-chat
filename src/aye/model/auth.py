@@ -109,7 +109,7 @@ def _generate_demo_token() -> str:
 
 
 def get_token() -> Optional[str]:
-    """Return the stored token (env → file). If None or invalid, generate a demo token."""
+    """Return the stored token (env \ file). If None or invalid, generate a demo token."""
     token = get_user_config("token")
     if token is None or not _is_valid_token(token):
         demo_token = _generate_demo_token()
@@ -133,13 +133,56 @@ def delete_token() -> None:
 
 
 def login_flow() -> None:
+    """Login flow that passes the previous token to the backend for user association.
+
+    Steps:
+    1. Read the currently stored token (without triggering demo token generation).
+    2. Prompt the user for a new token.
+    3. Validate format locally.
+    4. Call the backend /plugins endpoint with the new token as auth and the
+       old token in the payload (previous_token). This lets the backend
+       associate the new token with the existing user.
+    5. Store the new token only after backend success.
     """
-    Small login flow:
-    1. Prompt user to obtain token at https://ayechat.ai
-    2. User enters/pastes the token in terminal (hidden input)
-    3. Save the token to ~/.ayecfg or value from AYE_TOKEN_FILE environment variable (if AYE_TOKEN not set)
-    """
+    # Step 1: Read old token without generating a demo token.
+    # Do NOT use get_token() here as it auto-generates demo tokens.
+    old_token = get_user_config("token")
+    old_token = str(old_token).strip() if old_token else None
+
+    # Warn if AYE_TOKEN env var is set (it will override the saved token)
+    if os.getenv(TOKEN_ENV_VAR):
+        rprint(
+            "[yellow]Note: AYE_TOKEN environment variable is set. "
+            "The saved token will not be used until that variable is removed.[/]"
+        )
+
+    # Step 2: Prompt for new token
     rprint("[yellow]Obtain your personal access token at https://ayechat.ai[/]")
-    token = typer.prompt("Paste your token", hide_input=True)
-    store_token(token.strip())
-    typer.secho("✅ Token saved.", fg=typer.colors.GREEN)
+    token = typer.prompt("Paste your token", hide_input=True).strip()
+
+    # Step 3: Validate format locally
+    if not _is_valid_token(token):
+        typer.secho("Invalid token format.", fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+    # Step 4: Call backend with both tokens before storing.
+    # Use a local import to avoid circular dependency (api.py imports from auth.py).
+    try:
+        from aye.model.api import fetch_plugin_manifest
+
+        fetch_plugin_manifest(
+            dry_run=False,
+            token_override=token,
+            previous_token=old_token,
+        )
+    except Exception as e:
+        typer.secho(
+            f"Login failed: could not verify token with the backend. "
+            f"Existing token was not changed. ({e})",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(1)
+
+    # Step 5: Store the new token only after backend success
+    store_token(token)
+    typer.secho("\u2705 Token saved.", fg=typer.colors.GREEN)
