@@ -59,8 +59,14 @@ def _ssl_verify() -> bool:
     return True
 
 
-def _auth_headers() -> Dict[str, str]:
-    token = get_token()
+def _auth_headers(token_override: Optional[str] = None) -> Dict[str, str]:
+    """Build authorization headers.
+
+    Args:
+        token_override: If provided, use this token instead of the stored one.
+            This is used during login before the new token is persisted.
+    """
+    token = token_override or get_token()
     if not token:
         raise RuntimeError("No auth token – run `aye auth login` first.")
     return {"Authorization": f"Bearer {token}"}
@@ -316,20 +322,43 @@ def cli_invoke(
 
 
 
-def fetch_plugin_manifest(dry_run: bool = False):
-    """Fetch the plugin manifest from the server."""
+def fetch_plugin_manifest(
+    dry_run: bool = False,
+    *,
+    token_override: Optional[str] = None,
+    previous_token: Optional[str] = None,
+):
+    """Fetch the plugin manifest from the server.
+
+    Args:
+        dry_run: If True, request a dry-run manifest.
+        token_override: Optional token to use in the Authorization header.
+            This is used during login before the new token is stored locally.
+        previous_token: Optional previously configured token. Sent to the
+            backend so it can associate the replacement with the same user.
+    """
     url = f"{BASE_URL}/plugins"
-    payload = {"dry_run": dry_run}
+    payload: Dict[str, Any] = {"dry_run": dry_run}
+
+    # Include previous_token only when it is present and different from
+    # the token being used to authenticate.
+    if previous_token and previous_token != token_override:
+        payload["previous_token"] = previous_token
 
     if _is_debug():
         print(f"[DEBUG] Sending request to {url}")
         print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
         print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
+        print(f"[DEBUG] previous_token included: {bool(payload.get('previous_token'))}")
 
     verify = _ssl_verify()
 
     with httpx.Client(timeout=TIMEOUT, verify=verify) as client:
-        resp = client.post(url, json=payload, headers=_auth_headers())
+        resp = client.post(
+            url,
+            json=payload,
+            headers=_auth_headers(token_override=token_override),
+        )
         if _is_debug():
             print(f"[DEBUG] Response status: {resp.status_code}")
         _check_response(resp)
