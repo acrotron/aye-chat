@@ -31,10 +31,16 @@ from aye.model.offline_llm_manager import (
 # History file name for this plugin
 HISTORY_FILENAME = "chat_history.json"
 
+_UNSUPPORTED_IMAGE_MESSAGE = (
+    "Offline models do not support image attachments. "
+    "Switch to a multimodal model (e.g. an Anthropic Claude Sonnet or "
+    "OpenAI GPT-5 variant) or remove the image reference and try again."
+)
+
 
 class OfflineLLMPlugin(Plugin):
     name = "offline_llm"
-    version = "1.0.1"  # Version bump for new_chat fix
+    version = "1.0.2"  # Phase 6: image-attachment rejection
     premium = "free"
 
     def __init__(self):
@@ -108,7 +114,7 @@ class OfflineLLMPlugin(Plugin):
                 self._current_model_id = model_id
                 
                 if self.verbose:
-                    rprint(f"[green]✅ {model_id} loaded and ready for inference.[/]")
+                    rprint(f"[green]\u2705 {model_id} loaded and ready for inference.[/]")
                 
                 return True
                 
@@ -203,7 +209,7 @@ class OfflineLLMPlugin(Plugin):
                 
             # Check if already downloaded
             if get_model_status(model_id) == "READY":
-                rprint(f"[green]✅ {model_name} is already downloaded and ready.[/]")
+                rprint(f"[green]\u2705 {model_name} is already downloaded and ready.[/]")
                 return {"success": True}
                 
             # Download the model
@@ -227,7 +233,13 @@ class OfflineLLMPlugin(Plugin):
             # Only handle offline models
             if not is_offline_model(model_id):
                 return None
-                
+
+            # Phase 6: reject image attachments for offline models.
+            # Do this BEFORE the readiness check so the user gets the right error.
+            attachments = params.get("attachments") or []
+            if attachments:
+                return create_error_response(_UNSUPPORTED_IMAGE_MESSAGE, self.verbose)
+
             # Check if model is ready
             if get_model_status(model_id) != "READY":
                 msg = f"Offline model '{model_id}' is not ready. Please download it via the 'model' command."

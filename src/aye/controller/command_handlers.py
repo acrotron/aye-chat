@@ -9,6 +9,7 @@ from rich.console import Console
 
 from aye.model.auth import get_user_config, set_user_config, delete_user_config
 from aye.model.config import MODELS
+from aye.model.attachments import IMAGE_EXTENSIONS
 from aye.presenter.repl_ui import print_error
 from aye.controller.llm_invoker import invoke_llm
 from aye.controller.llm_handler import process_llm_response, handle_llm_error
@@ -368,6 +369,11 @@ def _expand_file_patterns(patterns: list[str], conf: Any) -> list[str]:
     return expanded_files
 
 
+def _image_files_in(paths: List[str]) -> List[str]:
+    """Return paths whose extension matches a known image type."""
+    return [p for p in paths if Path(p).suffix.lower() in IMAGE_EXTENSIONS]
+
+
 def handle_with_command(
     prompt: str,
     conf: Any,
@@ -376,6 +382,10 @@ def handle_with_command(
     chat_id_file: Path
 ) -> Optional[int]:
     """Handle the 'with' command for file-specific prompts with wildcard support.
+
+    Image attachments are not supported via ``with`` (only via ``@`` references,
+    see ``issue.md`` Section 1.5). Image-extension paths in the file list are
+    rejected before any file reads or LLM calls.
 
     Args:
         prompt: The full prompt string starting with 'with'
@@ -402,11 +412,40 @@ def handle_with_command(
         # Parse file patterns (can include wildcards)
         file_patterns = [f.strip() for f in file_list_str.replace(",", " ").split() if f.strip()]
 
+        # Reject image extensions in patterns BEFORE any file reads or LLM call.
+        # We check the raw patterns (covers direct refs and image-targeted globs
+        # like "*.png"); a second sweep after expansion catches images pulled in
+        # by generic globs.
+        offending_patterns = _image_files_in(file_patterns)
+        if offending_patterns:
+            rprint(
+                "[red]Error:[/red] Image files are not supported with the "
+                "`with` command. Use `@filename` to attach images to your prompt."
+            )
+            rprint(
+                f"[red]Offending entr{'y' if len(offending_patterns) == 1 else 'ies'}:[/red] "
+                f"{', '.join(offending_patterns)}"
+            )
+            return None
+
         # Expand wildcards to get actual file paths
         expanded_files = _expand_file_patterns(file_patterns, conf)
 
         if not expanded_files:
             rprint("[red]Error: No files found matching the specified patterns.[/red]")
+            return None
+
+        # Second sweep: a generic glob like `*.*` could still pull in images.
+        offending_expanded = _image_files_in(expanded_files)
+        if offending_expanded:
+            rprint(
+                "[red]Error:[/red] Image files are not supported with the "
+                "`with` command. Use `@filename` to attach images to your prompt."
+            )
+            rprint(
+                f"[red]Offending file{'s' if len(offending_expanded) > 1 else ''}:[/red] "
+                f"{', '.join(offending_expanded)}"
+            )
             return None
 
         explicit_source_files = {}

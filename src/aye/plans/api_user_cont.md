@@ -1,0 +1,226 @@
+# Backend API Changes: Token Replacement via `/plugins`
+
+## Overview
+
+When a user runs `aye auth login`, the CLI sends both:
+
+- The **new token** in the `Authorization: Bearer <new-token>` header
+- The **old token** (if any) in the JSON body as `previous_token`
+
+The backend must handle the association so that any history/data accumulated under the old (demo) token is transferred to the real authenticated user.
+
+## Request Shape
+
+```http
+POST /plugins
+Authorization: Bearer <new-token>
+Content-Type: application/json
+```
+
+```json
+{
+  "dry_run": false,
+  "previous_token": "aye_demo_abc1234567"
+}
+```
+
+- `previous_token` is optional. Older clients will not send it.
+- `previous_token` may be `null`, empty, or absent.
+
+## Core Logic: Reassign `user_id` on the Old Token
+
+The main operation is:
+
+> **Overwrite the `user_id` associated with the old token so that it points to the newly authenticated user instead of the original demo user.**
+
+This means any chat history, feedback, telemetry, or session data that was recorded under the old token now belongs to the real user.
+
+### Pseudocode
+
+```python
+def handle_plugins(request):
+    # 1. Authenticate with the new token (standard auth middleware)
+    new_token = extract_bearer_token(request.headers)
+    new_user = authenticate(new_token)  # raises 401 if invalid
+
+    # 2. Check for previous_token in body
+    body = request.json()
+    previous_token = body.get("previous_token")
+
+    # 3. Perform token replacement if applicable
+    if previous_token and previous_token != new_token:
+        try_reassign_old_token(previous_token, new_user)
+
+    # 4. Return plugin manifest as before (unchanged)
+    return build_plugin_manifest(new_user)
+```
+
+### `try_reassign_old_token()` Implementation
+
+```python
+def try_reassign_old_token(old_token: str, new_user: User) -> None:
+    """
+    Reassign the user_id on the old token record from the demo user
+    to the newly authenticated user.
+
+    This is a side-effect-only operation. Failures here must NOT
+    cause the /plugins endpoint to fail.
+    """
+    try:
+        old_token_record = db.tokens.find_one({"token": old_token})
+
+        if old_token_record is None:
+            # Old token doesn't exist in DB (expired, never stored, etc.)
+            return
+
+        old_user_id = old_token_record["user_id"]
+
+        # Only reassign if the old token belongs to a demo user.
+        # This prevents hijacking tokens from other real users.
+        old_user = db.users.find_one({"id": old_user_id})
+        if old_user is None or not old_user.get("is_demo", False):
+            # Old token belongs to a real user or is unknown — do not touch.
+            return
+
+        # Core operation: point old token's user_id to the new user
+        db.tokens.update_one(
+            {"token": old_token},
+            {"$set": {"user_id": new_user.id}}
+        )
+
+        # Additionally: migrate any data owned by the old demo user
+        # to the new user (chats, feedback, telemetry, etc.)
+        migrate_demo_user_data(old_user_id, new_user.id)
+
+    except Exception:
+        # Never fail /plugins because of reassignment issues.
+        # Log internally but do not propagate.
+        log.warning(f"Failed to reassign old token", exc_info=True)
+```
+
+## Data Migration: `migrate_demo_user_data()`
+
+When the old demo user's token is reassigned, also migrate related records:
+
+```python
+def migrate_demo_user_data(old_demo_user_id: str, new_user_id: str) -> None:
+    """
+    Transfer all data accumulated under the demo user to the real user.
+
+    This should be idempotent — safe to run multiple times.
+    """
+    # Chat sessions
+    db.chats.update_many(
+        {"user_id": old_demo_user_id},
+        {"$set": {"user_id": new_user_id}}
+    )
+
+    # Feedback entries
+    db.feedback.update_many(
+        {"user_id": old_demo_user_id},
+        {"$set": {"user_id": new_user_id}}
+    )
+
+    # Telemetry
+    db.telemetry.update_many(
+        {"user_id": old_demo_user_id},
+        {"$set": {"user_id": new_user_id}}
+    )
+
+    # Optionally: mark the old demo user as merged
+    db.users.update_one(
+        {"id": old_demo_user_id},
+        {"$set": {"merged_into": new_user_id, "is_demo": True}}
+    )
+```
+
+## Safety Rules
+
+| Rule | Rationale |
+|------|----------|
+| Only reassign if old token belongs to a demo user (`is_demo=True`) | Prevents a user from claiming another real user's history by passing their token as `previous_token`. |
+| Do not fail `/plugins` if reassignment fails | The primary purpose of the endpoint is plugin delivery. Token linking is a best-effort side effect. |
+| Make the operation idempotent | The client might retry. Running the same reassignment twice must not break anything. |
+| Do not reassign if `previous_token == new_token` | No-op case; client already filters this but backend should guard too. |
+| Never log raw token values | Log only prefixes or hashed identifiers for debugging. |
+
+## How to Identify a Demo User
+
+Demo tokens generated by the CLI have the format:
+
+```
+aye_demo_<10-char-hex>
+```
+
+The backend can identify demo users by:
+
+1. Token prefix: `aye_demo_` — simplest check.
+2. A `is_demo` flag on the user record — more robust if token format changes.
+3. Both (belt and suspenders).
+
+Recommended: use the `is_demo` flag on the user record as the source of truth. The token prefix is a hint for logging/debugging only.
+
+## What Happens to the Old Demo User After Migration
+
+After data is migrated:
+
+- The old demo user record can remain in the DB with `merged_into` set.
+- The old token record now points to `new_user.id`.
+- If the old token is ever used again (e.g., from another machine), it will authenticate as the real user — which is the desired behavior.
+- Alternatively, the old token can be invalidated after migration. This is optional and depends on whether you want the demo token to keep working.
+
+## Backward Compatibility
+
+- Older CLI clients that do not send `previous_token` are unaffected.
+- The `/plugins` response shape does not change.
+- No new endpoint required.
+- No new authentication scheme required.
+
+## Sequence Diagram
+
+```
+CLI                                 Backend
+ |                                      |
+ |  POST /plugins                       |
+ |  Authorization: Bearer <new-token>   |
+ |  {"dry_run": false,                  |
+ |   "previous_token": "aye_demo_xxx"}  |
+ |------------------------------------->|
+ |                                      |
+ |           1. Authenticate new-token  |
+ |           2. Look up old token       |
+ |           3. Verify old token is     |
+ |              owned by a demo user    |
+ |           4. UPDATE old token's      |
+ |              user_id = new_user.id   |
+ |           5. Migrate demo user data  |
+ |           6. Return plugin manifest  |
+ |                                      |
+ |  200 OK {plugin manifest}            |
+ |<-------------------------------------|
+ |                                      |
+```
+
+## Edge Cases
+
+| Case | Behavior |
+|------|----------|
+| `previous_token` is missing / null / empty | Skip reassignment, return plugins normally. |
+| `previous_token` == new token | Skip reassignment (no-op). |
+| `previous_token` not found in DB | Skip silently. |
+| `previous_token` belongs to a real (non-demo) user | Skip reassignment. Do NOT transfer data from one real user to another. |
+| `previous_token` already reassigned to this user | Idempotent no-op. |
+| `previous_token` already reassigned to a different real user | Skip. This means a previous login already claimed it. |
+| New token is invalid | Return 401 as usual. Do not process `previous_token`. |
+| DB error during migration | Log, do not fail `/plugins`. |
+
+## Summary
+
+1. Accept optional `previous_token` in `/plugins` request body.
+2. Authenticate normally using the new token from `Authorization` header.
+3. If `previous_token` is present, valid, and belongs to a demo user:
+   - Overwrite its `user_id` to point to the newly authenticated user.
+   - Migrate all data (chats, feedback, telemetry) from the demo user to the real user.
+4. Return the plugin manifest as before.
+5. Never fail the endpoint due to reassignment errors.
+6. Make everything idempotent.

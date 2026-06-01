@@ -10,6 +10,7 @@ Responsibilities:
   - the prompt symbol
   - an assistant response block (Markdown inside a Panel)
   - status messages after file operations
+  - one-line image attachment summaries (Phase 5 of image support)
 
 Design notes:
 - Most strings use Rich markup tags like `[ui.success]...[/]`.
@@ -59,6 +60,7 @@ deep_ocean_theme = Theme({
     "ui.error": "bold indian_red1",
     "ui.border": "dim slate_blue3",
     "ui.stall_spinner": "dim yellow",
+    "ui.attachment": "sky_blue3",
 })
 
 # Shared console used by the REPL.
@@ -90,7 +92,7 @@ def get_last_assistant_response() -> Optional[str]:
 
 def print_welcome_message():
     """Display the welcome message for the Aye Chat REPL."""
-    console.print("Aye Chat \u2013 type `help` for available commands, `exit` or Ctrl+D to quit", style="ui.welcome")
+    console.print("Aye Chat – type `help` for available commands, `exit` or Ctrl+D to quit", style="ui.welcome")
 
 
 def print_help_message():
@@ -107,7 +109,10 @@ def print_help_message():
         ("", ""),
 
         ("Prompt Context & Augmentation", ""),
-        ("  @filename", "Include a file in your prompt inline (e.g., \"explain @main.py\"). Supports wildcards (e.g., @*.py, @src/*.js)."),
+        ("  @filename", "Include a file inline, or attach an image for multimodal models (e.g., `explain @main.py`, `describe @screenshot.png`)."),
+        ("", "Supports wildcards for source files and explicit image globs (e.g., `@*.py`, `@*.png`, `@src/*.js`)."),
+        ("", "Supported image types: .png, .jpg, .jpeg, .gif, .webp, .bmp."),
+        ("", "Use `@image` syntax for images; the `with ...:` command does not support image files."),
         (r"  shellcap \[none|fail|all]", "Shell output capture: 'none' (default), 'fail' (failing commands), or 'all' (all commands)"),
         # skills: multi-line
         ("  skills", "Apply repo-local skills by file name (no '.md') from the nearest (non-ignored) `skills/` directory found by walking upward. "),
@@ -140,7 +145,6 @@ def print_help_message():
     ]
 
     for cmd, desc in commands:
-        #console.print(f"  [ui.help.command]{cmd:<28}[/]\t- [ui.help.text]{desc}[/]")
         sep = '-' if cmd and desc else ' '
         console.print(f"  [ui.help.command]{cmd:<28}[/]\t{sep} [ui.help.text]{desc}[/]")
 
@@ -150,7 +154,7 @@ def print_help_message():
 
 def print_prompt():
     """Return the prompt symbol for user input."""
-    return "(\u30c4\u00bb "
+    return "(ツ» "
 
 
 def print_assistant_response(summary: str):
@@ -159,7 +163,7 @@ def print_assistant_response(summary: str):
 
     console.print()
 
-    pulse = "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]\u25cf[/] [ui.response_symbol.waves]))[/]"
+    pulse = "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]●[/] [ui.response_symbol.waves]))[/]"
 
     grid = Table.grid(padding=(0, 1))
     grid.add_column()
@@ -200,3 +204,36 @@ def print_files_updated(console_arg: Console, file_names: list):
 def print_error(exc: Exception):
     """Display a generic error message."""
     console.print(f"[ui.error]Error:[/] {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: image attachment summary
+# ---------------------------------------------------------------------------
+
+def _format_image_size(size_bytes: int) -> str:
+    """Render a byte count as a short human-readable string."""
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    if size_bytes >= 1024:
+        return f"{size_bytes / 1024:.0f} KB"
+    return f"{size_bytes} B"
+
+
+def print_attachment_summary(name: str, mime: str, size_bytes: int) -> None:
+    """Print a one-line summary for an image attachment.
+
+    Format (per ``issue.md`` Section 1.4)::
+
+        📎 attached: screenshot.png (image/png, 142 KB)
+    """
+    try:
+        size_str = _format_image_size(int(size_bytes))
+    except (TypeError, ValueError):
+        size_str = "unknown size"
+
+    safe_name = name or "<unknown>"
+    safe_mime = mime or "application/octet-stream"
+
+    console.print(
+        f"[ui.attachment]📎 attached: {safe_name} ({safe_mime}, {size_str})[/]"
+    )

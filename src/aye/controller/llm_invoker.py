@@ -65,6 +65,19 @@ def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _model_supports_images(model_id: str) -> bool:
+    """Return True if the model is flagged as image-capable.
+
+    Defaults to False for unknown model IDs and for entries missing the
+    ``supports_images`` key. See ``issue.md`` Section 5 and
+    ``image_phases.md`` Phase 3 for context.
+    """
+    config = _get_model_config(model_id)
+    if config is None:
+        return False
+    return bool(config.get("supports_images", False))
+
+
 def _get_context_target_size(model_id: str) -> int:
     """Get the target context size for RAG queries based on model configuration."""
     env_override = os.environ.get("AYE_CONTEXT_TARGET")
@@ -375,6 +388,15 @@ def _print_token_usage(token_usage: Dict[str, int], verbose: bool) -> None:
     )
 
 
+class UnsupportedImageModelError(ValueError):
+    """Raised when image attachments are sent to a non-multimodal model.
+
+    Subclasses ``ValueError`` so existing test patterns and exception
+    handlers continue to work, but allows callers to distinguish
+    capability-gating errors when needed.
+    """
+
+
 def invoke_llm(
     prompt: str,
     conf: Any,
@@ -382,9 +404,31 @@ def invoke_llm(
     plugin_manager: Any,
     chat_id: Optional[int] = None,
     verbose: bool = False,
-    explicit_source_files: Optional[Dict[str, str]] = None
+    explicit_source_files: Optional[Dict[str, str]] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> LLMResponse:
-    """Unified LLM invocation with streaming display and routing."""
+    """Unified LLM invocation with streaming display and routing.
+
+    Args:
+        attachments: Optional list of image attachment dicts to forward to
+            the backend (and to local-model plugins so they can reject
+            cleanly). When None or empty, behavior is unchanged from the
+            text-only path.
+
+    Raises:
+        UnsupportedImageModelError: If ``attachments`` is non-empty and the
+            currently selected model does not advertise ``supports_images``.
+            This is a defensive check; the REPL is expected to gate before
+            calling this function (see ``image_phases.md`` Phase 5).
+    """
+    # Defensive capability gate: refuse image prompts for unsupported models
+    # before doing any work (file scans, RAG, etc.).
+    if attachments and not _model_supports_images(conf.selected_model):
+        raise UnsupportedImageModelError(
+            f"The selected model '{conf.selected_model}' does not support "
+            "image input. Choose a multimodal model or remove the image reference."
+        )
+
     source_files, use_all_files, prompt = _determine_source_files(
         prompt, conf, verbose, explicit_source_files
     )
@@ -420,7 +464,8 @@ def invoke_llm(
             "chat_id": chat_id,
             "root": conf.root,
             "system_prompt": system_prompt,
-            "max_output_tokens": max_output_tokens
+            "max_output_tokens": max_output_tokens,
+            "attachments": attachments or [],
         })
 
         if local_response is not None:
@@ -452,7 +497,8 @@ def invoke_llm(
             system_prompt=system_prompt,
             max_output_tokens=max_output_tokens,
             telemetry=telemetry_payload,
-            on_stream_update=stream_callback
+            on_stream_update=stream_callback,
+            attachments=attachments,
         )
 
         if telemetry_payload is not None:
