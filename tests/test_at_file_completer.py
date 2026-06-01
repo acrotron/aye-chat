@@ -265,7 +265,7 @@ class TestAtFileCompleterPlugin(TestCase):
 
     def test_plugin_metadata(self):
         self.assertEqual(self.plugin.name, "at_file_completer")
-        self.assertEqual(self.plugin.version, "2.0.0")
+        self.assertEqual(self.plugin.version, "2.1.0")
         self.assertEqual(self.plugin.premium, "free")
 
     def test_plugin_init(self):

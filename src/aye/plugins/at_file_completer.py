@@ -10,6 +10,14 @@ Usage:
     - Supports wildcards in file patterns: @src/*.py, @*.py, @tests/test_*.py
     - Supports recursive globs: @src/**/*.py, @**/*.py
     - Supports directories: @src/ (includes all files in directory recursively)
+    - Supports image attachments: @screenshot.png, @design/mockup.jpg
+
+Image expansion rules (Phase 2 of image support):
+    - Direct file references (e.g. @photo.png) always include the file, image or not.
+    - Image-targeted globs (e.g. @*.png, @shots/*.jpg, @assets/**/*.webp)
+      include matching images.
+    - Directory references (e.g. @src/, implicit @src) exclude images.
+    - Generic globs (e.g. @*.*, @src/**/*) exclude images.
 
 Examples:
     "I want to update @main.py with a driver function"
@@ -19,6 +27,8 @@ Examples:
     "Fix tests in @tests/test_*.py"
     "Refactor @src/**/*.py to use dependency injection"
     "Analyze @src/ for code quality issues"
+    "Describe @screenshot.png"
+    "Review @src/ui.py using @design/mockup.png"
 '''
 
 import os
@@ -32,6 +42,12 @@ from rich import print as rprint
 
 from .plugin_base import Plugin
 from aye.model.ignore_patterns import load_ignore_patterns
+from aye.model.attachments import (
+    IMAGE_EXTENSIONS,
+    _is_image_path,
+    _is_image_targeted_pattern,
+    load_image_attachment,
+)
 
 
 class AtFileCompleter(Completer):
@@ -325,11 +341,12 @@ class AtFileCompleterPlugin(Plugin):
         get_at_file_completer: Returns a completer instance for prompt_toolkit
         invalidate_file_cache: Clears the file cache (call after file changes)
         parse_at_references: Parses @file references from text, returns file contents
+                             and image attachments.
         has_at_references: Quick check if text contains @file references
     """
 
     name = "at_file_completer"
-    version = "2.0.0"  # Version bump for directory and recursive glob support
+    version = "2.1.0"  # Phase 2 of image support: @-image references
     premium = "free"
     debug = False
     verbose = False
@@ -383,96 +400,124 @@ class AtFileCompleterPlugin(Plugin):
 
         return references, cleaned
 
-    def _expand_file_patterns(self, patterns: List[str], project_root: Path) -> List[str]:
-        """Expand file patterns (including wildcards and directories) to actual file paths.
-        
+    def _expand_file_patterns(
+        self,
+        patterns: List[str],
+        project_root: Path,
+    ) -> Tuple[List[str], List[str]]:
+        """Expand file patterns to (source_files, image_files).
+
+        Applies the glob/directory image expansion rule (issue.md Section 3.1):
+        - Direct file refs include the file regardless of type.
+        - Image-targeted globs (e.g. ``*.png``, ``shots/*.jpg``) include images.
+        - Directory refs (``src/`` or implicit) and generic globs (``*.*``,
+          ``src/**/*``) exclude images.
+
         Supports:
-        - Direct file paths: src/main.py
-        - Wildcards: *.py, src/*.py, tests/test_*.py
+        - Direct file paths: src/main.py, photo.png
+        - Wildcards: *.py, *.png, src/*.py, tests/test_*.py
         - Question mark wildcards: file?.py
         - Recursive globs: **/*.py, src/**/*.py
         - Directories: src/ (expands to all files in directory recursively)
+
+        Returns:
+            (source_files, image_files): two lists of POSIX-style relative paths.
+            Deduplicated and order-preserving.
         """
-        expanded = []
+        source_files: List[str] = []
+        image_files: List[str] = []
+        seen_source: set = set()
+        seen_image: set = set()
+
         ignore_spec = load_ignore_patterns(project_root)
 
-        for pattern in patterns:
-            pattern = pattern.strip()
+        def _add_file(rel_path_str: str, file_path: Path, include_images: bool) -> None:
+            # Skip hidden files/dirs (consistent with project scanning).
+            try:
+                rel_parts = Path(rel_path_str).parts
+            except Exception:
+                return
+            if any(part.startswith('.') for part in rel_parts):
+                return
+            if ignore_spec.match_file(rel_path_str):
+                return
+
+            if _is_image_path(file_path):
+                if include_images and rel_path_str not in seen_image:
+                    seen_image.add(rel_path_str)
+                    image_files.append(rel_path_str)
+                # else: image explicitly excluded by expansion rule
+            else:
+                if rel_path_str not in seen_source:
+                    seen_source.add(rel_path_str)
+                    source_files.append(rel_path_str)
+
+        for raw_pattern in patterns:
+            pattern = raw_pattern.strip()
             if not pattern:
                 continue
-            
-            # Check if pattern is a directory reference (ends with /)
+
+            # Classify the pattern BEFORE any normalization
             is_directory_ref = pattern.endswith('/')
+            has_wildcard = ('*' in pattern) or ('?' in pattern)
+            is_direct_ref = (not has_wildcard) and (not is_directory_ref)
+            is_image_targeted = _is_image_targeted_pattern(pattern)
+
+            # Default include-images flag based on pattern shape.
+            include_images = is_direct_ref or is_image_targeted
+
             if is_directory_ref:
                 pattern = pattern.rstrip('/')
-            
-            # Check if pattern contains wildcards
-            has_wildcard = '*' in pattern or '?' in pattern
-            
-            if not has_wildcard and not is_directory_ref:
-                # Direct file path - check if it exists
+
+            if is_direct_ref:
                 direct_path = project_root / pattern
                 if direct_path.is_file():
-                    expanded.append(pattern)
+                    try:
+                        rel_path = direct_path.relative_to(project_root)
+                        _add_file(rel_path.as_posix(), direct_path, include_images)
+                    except ValueError:
+                        pass
                     continue
-                
-                # Check if it's a directory without trailing slash - treat as directory
-                if direct_path.is_dir():
+                elif direct_path.is_dir():
+                    # Implicit directory reference (no trailing slash) -
+                    # treat like @dir/ and exclude images.
                     is_directory_ref = True
+                    include_images = False
                 else:
+                    # Does not exist; nothing to expand for this pattern.
                     continue
-            
+
             if is_directory_ref:
-                # Directory reference - expand to all files in that directory recursively
                 dir_path = project_root / pattern
                 if dir_path.is_dir():
                     for file_path in dir_path.rglob('*'):
-                        if file_path.is_file():
-                            try:
-                                rel_path = file_path.relative_to(project_root)
-                                rel_path_str = rel_path.as_posix()
-                                
-                                # Skip hidden files and ignored files
-                                if any(part.startswith('.') for part in rel_path.parts):
-                                    continue
-                                if ignore_spec.match_file(rel_path_str):
-                                    continue
-                                    
-                                expanded.append(rel_path_str)
-                            except ValueError:
-                                pass
-            else:
-                # Pattern contains wildcards - use glob expansion
-                matched = list(project_root.glob(pattern))
-                for match in matched:
-                    if match.is_file():
+                        if not file_path.is_file():
+                            continue
                         try:
-                            rel_path = match.relative_to(project_root)
-                            rel_path_str = rel_path.as_posix()
-                            
-                            # Skip hidden files and ignored files
-                            if any(part.startswith('.') for part in rel_path.parts):
-                                continue
-                            if ignore_spec.match_file(rel_path_str):
-                                continue
-                                
-                            expanded.append(rel_path_str)
+                            rel_path = file_path.relative_to(project_root)
+                            _add_file(rel_path.as_posix(), file_path, include_images)
                         except ValueError:
                             pass
+            else:
+                # Wildcard glob
+                for file_path in project_root.glob(pattern):
+                    if not file_path.is_file():
+                        continue
+                    try:
+                        rel_path = file_path.relative_to(project_root)
+                        _add_file(rel_path.as_posix(), file_path, include_images)
+                    except ValueError:
+                        pass
 
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_expanded = []
-        for f in expanded:
-            if f not in seen:
-                seen.add(f)
-                unique_expanded.append(f)
-        
-        return unique_expanded
+        return source_files, image_files
 
     def _read_files(self, file_paths: List[str], project_root: Path) -> Dict[str, str]:
-        """Read file contents for the given paths."""
-        contents = {}
+        """Read text source-file contents for the given paths.
+
+        Image-extension files should NOT be passed here; they are handled by
+        ``_load_images``.
+        """
+        contents: Dict[str, str] = {}
 
         for file_path in file_paths:
             full_path = project_root / file_path
@@ -488,6 +533,39 @@ class AtFileCompleterPlugin(Plugin):
                     rprint(f"[yellow]Could not read {file_path}: {e}[/]")
 
         return contents
+
+    def _load_images(
+        self,
+        image_paths: List[str],
+        project_root: Path,
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """Load image files into attachment dicts.
+
+        Returns:
+            (attachments, errors)
+            - attachments: list of plain dicts compatible with ``ImageAttachment``.
+            - errors: list of human-readable error strings, one per failed image.
+              Images are never silently dropped (issue.md Section 1.3).
+        """
+        attachments: List[Dict[str, Any]] = []
+        errors: List[str] = []
+
+        for rel_path in image_paths:
+            full_path = project_root / rel_path
+            try:
+                attachment = load_image_attachment(full_path, project_root)
+                attachments.append(attachment)
+            except FileNotFoundError as e:
+                errors.append(f"{rel_path}: {e}")
+            except ValueError as e:
+                # Size limit / unsupported extension
+                errors.append(f"{rel_path}: {e}")
+            except OSError as e:
+                errors.append(f"{rel_path}: I/O error: {e}")
+            except Exception as e:  # pragma: no cover - defensive
+                errors.append(f"{rel_path}: unexpected error: {e}")
+
+        return attachments, errors
 
     def on_command(self, command_name: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Handle commands for the at-file completer plugin."""
@@ -516,31 +594,47 @@ class AtFileCompleterPlugin(Plugin):
             if not references:
                 return None  # No @references found
 
-            # Expand patterns to actual files (handles wildcards and directories)
-            expanded_files = self._expand_file_patterns(references, project_root)
+            # Expand patterns into source files and image files separately,
+            # applying the glob/directory image rule.
+            source_files, image_files = self._expand_file_patterns(
+                references, project_root
+            )
+            expanded_files = source_files + image_files
 
             if not expanded_files:
                 return {
                     "error": "No files found matching the @references",
-                    "references": references
-                }
-
-            # Read file contents
-            file_contents = self._read_files(expanded_files, project_root)
-
-            if not file_contents:
-                return {
-                    "error": "Could not read any of the referenced files",
                     "references": references,
-                    "expanded_files": expanded_files
                 }
 
-            return {
+            # Read text source files.
+            file_contents = self._read_files(source_files, project_root)
+
+            # Load image attachments (never silently dropped).
+            attachments, image_errors = self._load_images(image_files, project_root)
+
+            # Build the response. Preserve legacy keys and add new ones.
+            result: Dict[str, Any] = {
                 "references": references,
                 "expanded_files": expanded_files,
                 "file_contents": file_contents,
-                "cleaned_prompt": cleaned_prompt
+                "attachments": attachments,
+                "image_errors": image_errors,
+                "has_image_references": bool(image_files),
+                "has_source_references": bool(file_contents),
+                "cleaned_prompt": cleaned_prompt,
             }
+
+            # Surface a clear error when nothing usable was loaded.
+            if not file_contents and not attachments:
+                if image_errors:
+                    result["error"] = (
+                        "Failed to load image(s): " + "; ".join(image_errors)
+                    )
+                else:
+                    result["error"] = "Could not read any of the referenced files"
+
+            return result
 
         if command_name == "has_at_references":
             # Quick check if text contains @references

@@ -19,18 +19,19 @@ from rich import print as rprint
 from rich.prompt import Confirm
 
 from aye.model.api import send_feedback
-from aye.model.auth import get_user_config, set_user_config
+from aye.model.auth import get_token, get_user_config, set_user_config
 from aye.model.config import MODELS, DEFAULT_MODEL_ID
 from aye.model import telemetry
 from aye.presenter.repl_ui import (
     print_welcome_message,
     print_help_message,
     print_prompt,
-    print_error
+    print_error,
+    print_attachment_summary,
 )
 from aye.presenter import cli_ui, diff_presenter
 from aye.controller.tutorial import run_first_time_tutorial_if_needed
-from aye.controller.llm_invoker import invoke_llm
+from aye.controller.llm_invoker import invoke_llm, _model_supports_images
 from aye.controller.llm_handler import process_llm_response, handle_llm_error
 from aye.controller import commands
 from aye.controller.command_handlers import (
@@ -68,23 +69,7 @@ _URL_RE = re.compile(r'https?://[^\s]+', re.IGNORECASE)
 # ---------------------------------------------------------------------------
 
 def handle_url(prompt: str, plugin_manager: Any, verbose: bool = False) -> Optional[Dict[str, str]]:
-    """Scan *prompt* for HTTP/HTTPS URLs and fetch each one via the plugin manager.
-
-    Returned content is keyed by virtual filename for formatting, but should be
-    appended to the LLM prompt before calling ``invoke_llm``. This lets normal
-    context selection/RAG use the fetched URL content unless explicit ``@`` file
-    references intentionally bypass RAG.
-
-    Args:
-        prompt:         The raw user prompt string.
-        plugin_manager: The active plugin manager instance.
-        verbose:        If True, log which URLs are being fetched.
-
-    Returns:
-        A dict mapping virtual filenames (e.g. ``'url_0.txt'``) to fetched
-        content strings, or ``None`` if no URLs were found or all fetches
-        failed.
-    """
+    """Scan *prompt* for HTTP/HTTPS URLs and fetch each one via the plugin manager."""
     urls = _URL_RE.findall(prompt)
     if not urls:
         return None
@@ -114,11 +99,7 @@ def has_url(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _prompt_for_telemetry_consent_if_needed() -> bool:
-    """Ask once for telemetry consent and persist the decision.
-
-    Returns:
-        True if telemetry is enabled, False otherwise.
-    """
+    """Ask once for telemetry consent and persist the decision."""
     current = get_user_config(_TELEMETRY_OPT_IN_KEY)
     if isinstance(current, str) and current.lower() in {"on", "off"}:
         return current.lower() == "on"
@@ -149,19 +130,24 @@ def _prompt_for_telemetry_consent_if_needed() -> bool:
 
 
 def _is_feedback_prompt_enabled() -> bool:
-    """Return True if the exit feedback prompt is enabled.
-
-    Config key:
-        feedback_opt_in: on|off
-
-    Default:
-        on
-
-    This is read from the Aye Chat settings file (~/.ayecfg) via get_user_config,
-    and can also be overridden via environment variable AYE_FEEDBACK_OPT_IN.
-    """
+    """Return True if the exit feedback prompt is enabled."""
     val = get_user_config(_FEEDBACK_OPT_IN_KEY, "on")
     return str(val).lower() == "on"
+
+
+def _maybe_print_demo_registration_hint() -> None:
+    """Print a brief startup hint when the CLI is using a demo token."""
+    try:
+        token = get_token()
+    except Exception:
+        return
+
+    if token and token.startswith("aye_demo_"):
+        rprint(
+            "[yellow]You're using a demo account.[/]\n"
+            "[yellow]Register at https://ayechat.ai before the beta period ends.[/]\n"
+            "[yellow]Early registered users will automatically receive Beta status and additional usage after launch.[/]\n"
+        )
 
 
 def print_startup_header(conf: Any):
@@ -179,15 +165,7 @@ def print_startup_header(conf: Any):
 
 
 def collect_and_send_feedback(chat_id: int):
-    """Prompts user for feedback and sends it before exiting.
-
-    Updated requirement: only send feedback (and include telemetry) if the user
-    entered feedback text. If feedback is empty, do not send anything.
-
-    This prompt can be disabled globally with:
-        feedback_opt_in=off
-    in the Aye Chat settings file (~/.ayecfg) or via env var AYE_FEEDBACK_OPT_IN.
-    """
+    """Prompts user for feedback and sends it before exiting."""
     if not _is_feedback_prompt_enabled():
         rprint("[cyan]Goodbye![/cyan]")
         return
@@ -211,7 +189,6 @@ def collect_and_send_feedback(chat_id: int):
         if feedback and feedback.strip():
             feedback_text = feedback.strip()
     except (EOFError, KeyboardInterrupt):
-        # No feedback entered
         feedback_text = ""
     except Exception:
         feedback_text = ""
@@ -230,49 +207,29 @@ def collect_and_send_feedback(chat_id: int):
 
 
 def create_key_bindings() -> KeyBindings:
-    """
-    Create custom key bindings for the prompt session.
-
-    Key behaviors:
-    - Enter when a completion is selected: Accept the selected completion
-    - Enter when completion menu is visible but nothing selected: Accept first completion
-    - Enter when no completion menu: Submit the input
-    - Tab: Cycle through completions (default behavior)
-    """
+    """Create custom key bindings for the prompt session."""
     bindings = KeyBindings()
 
     @bindings.add(Keys.Enter, filter=completion_is_selected)
     def accept_selected_completion(event):
-        """
-        When a specific completion is selected (highlighted),
-        accept it on Enter instead of submitting the input.
-        """
         buffer = event.app.current_buffer
         complete_state = buffer.complete_state
 
         if complete_state and complete_state.current_completion:
-            # Apply the completion by inserting its text at the correct position
             completion = complete_state.current_completion
             buffer.apply_completion(completion)
 
-        # Clear the completion state after applying
         buffer.complete_state = None
 
     @bindings.add(Keys.Enter, filter=has_completions & ~completion_is_selected)
     def accept_first_completion(event):
-        """
-        When completions are visible but none is explicitly selected,
-        accept the first completion on Enter.
-        """
         buffer = event.app.current_buffer
         complete_state = buffer.complete_state
 
         if complete_state and complete_state.completions:
-            # Get the first completion and apply it
             first_completion = complete_state.completions[0]
             buffer.apply_completion(first_completion)
 
-        # Clear the completion state after applying
         buffer.complete_state = None
 
     return bindings
@@ -280,30 +237,9 @@ def create_key_bindings() -> KeyBindings:
 
 
 def create_prompt_session(completer: Any, completion_style: str = "readline") -> PromptSession:
-    """
-    Create a PromptSession with multi-column completion display.
-
-    We always use MULTI_COLUMN style to ensure @ file completions display
-    in a nice grid format. The 'completion_style' parameter controls whether
-    non-@ completions require TAB (readline behavior) or auto-trigger (multi).
-
-    The DynamicAutoCompleteCompleter handles the logic of when to show
-    completions based on the completion_style setting:
-    - 'readline': @ completions auto-trigger, others require TAB
-    - 'multi': all completions auto-trigger
-
-    Custom key bindings ensure that Enter accepts a completion when the
-    menu is visible, rather than submitting the input.
-
-    Args:
-        completer: The completer instance to use
-        completion_style: 'readline' or 'multi' - controls auto-trigger behavior
-    """
-    # Create custom key bindings for completion behavior
+    """Create a PromptSession with multi-column completion display."""
     key_bindings = create_key_bindings()
 
-    # Always use MULTI_COLUMN for nice grid display of @ file completions
-    # The DynamicAutoCompleteCompleter controls when completions appear
     return PromptSession(
         history=InMemoryHistory(),
         completer=completer,
@@ -314,15 +250,7 @@ def create_prompt_session(completer: Any, completion_style: str = "readline") ->
 
 
 def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> None:
-    """Execute a shell command with force flag (bypasses command validation).
-    
-    Used when user prefixes input with '!' to force shell execution.
-    
-    Args:
-        command: The command to execute
-        args: List of arguments to pass to the command
-        conf: Configuration object with plugin_manager
-    """
+    """Execute a shell command with force flag (bypasses command validation)."""
     telemetry.record_command(command, has_args=len(args) > 0, prefix=_CMD_PREFIX)
     shell_response = conf.plugin_manager.handle_command(
         "execute_shell_command", 
@@ -339,7 +267,6 @@ def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> N
         elif "message" in shell_response:
             rprint(shell_response["message"])
 
-        # Capture failing command output for auto-attach to next LLM prompt
         cmd_str = " ".join([command] + args)
         capture_shell_result(conf, cmd=cmd_str, shell_response=shell_response)
     else:
@@ -351,7 +278,6 @@ def chat_repl(conf: Any) -> None:
 
     BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "shellcap", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm", "printraw", "raw"]
 
-    # Get the completion style setting
     completion_style = get_user_config("completion_style", "readline").lower()
 
     completer_response = conf.plugin_manager.handle_command("get_completer", {
@@ -365,10 +291,8 @@ def chat_repl(conf: Any) -> None:
 
     print_startup_header(conf)
 
-    # Telemetry consent prompt (once) + in-memory enable/disable
     telemetry.set_enabled(_prompt_for_telemetry_consent_if_needed())
 
-    # Start background indexing if needed (only for large projects with index_manager)
     index_manager = getattr(conf, 'index_manager', None)
     if index_manager and index_manager.has_work():
         if conf.verbose:
@@ -376,13 +300,10 @@ def chat_repl(conf: Any) -> None:
         thread = threading.Thread(target=index_manager.run_sync_in_background, daemon=True)
         thread.start()
 
-    # Only auto-print help in verbose mode.
-    # First run (tutorial) should not spam the help screen.
     if conf.verbose:
         print_help_message()
         rprint("")
 
-    # Keep first-run behavior of showing model prompt, but without forcing help.
     if conf.verbose or is_first_run:
         handle_model_command(None, MODELS, conf, ['model'])
 
@@ -397,28 +318,24 @@ def chat_repl(conf: Any) -> None:
         except (ValueError, TypeError):
             chat_id_file.unlink(missing_ok=True)
 
+    _maybe_print_demo_registration_hint()
+
     try:
         while True:
             try:
                 prompt_str = print_prompt()
-                # Show indexing progress only if index_manager exists and is active
                 if index_manager and index_manager.is_indexing() and conf.verbose:
                     progress = index_manager.get_progress_display()
-                    prompt_str = f"(ツ ({progress}) » "
+                    prompt_str = f"(\u30c4 ({progress}) \u00bb "
 
-                # IMPORTANT: prompt_toolkit reserves space at the bottom of the terminal
-                # for the completion menu. Default is ~8 lines, which can look like
-                # "prompt stuck above bottom" with empty lines below.
-                # Setting this to 0 fixes the issue.
                 prompt = session.prompt(prompt_str, reserve_space_for_menu=6)
 
-                # Check for '!' prefix - force shell execution
                 force_shell = False
                 if prompt.strip().startswith('!'):
                     force_shell = True
-                    prompt = prompt.strip()[1:]  # Remove the '!'
+                    prompt = prompt.strip()[1:]
                     if not prompt.strip():
-                        continue  # Nothing after the '!', skip
+                        continue
 
                 if not prompt.strip():
                     continue
@@ -433,27 +350,23 @@ def chat_repl(conf: Any) -> None:
 
             original_first, lowered_first = tokens[0], tokens[0].lower()
 
-            # If force_shell is True, execute as shell command directly and skip all other checks
             if force_shell:
                 _execute_forced_shell_command(original_first, tokens[1:], conf)
                 continue
 
-            # Normalize slash-prefixed commands: /restore -> restore, /model -> model, etc.
             if lowered_first.startswith('/'):
-                lowered_first = lowered_first[1:]  # Remove leading slash
-                tokens[0] = tokens[0][1:]  # Update token as well
-                original_first = tokens[0]  # Update original_first so shell commands work too
+                lowered_first = lowered_first[1:]
+                tokens[0] = tokens[0][1:]
+                original_first = tokens[0]
 
-            # Check if user entered a number from 1-12 as a model selection shortcut
             if len(tokens) == 1:
                 try:
                     model_num = int(tokens[0])
                     if 1 <= model_num <= len(MODELS):
-                        # Convert to model command
                         tokens = ['model', str(model_num)]
                         lowered_first = 'model'
                 except ValueError:
-                    pass  # Not a number, continue with normal processing
+                    pass
 
             try:
                 if lowered_first in {"exit", "quit", ":q"}:
@@ -482,14 +395,12 @@ def chat_repl(conf: Any) -> None:
                     telemetry.record_command("completion", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     new_style = handle_completion_command(tokens)
                     if new_style:
-                        # Recreate the completer with the new style setting
                         completer_response = conf.plugin_manager.handle_command("get_completer", {
                             "commands": BUILTIN_COMMANDS,
                             "project_root": str(conf.root),
                             "completion_style": new_style
                         })
                         completer = completer_response["completer"] if completer_response else None
-                        # Recreate the session with the new completer
                         session = create_prompt_session(completer, new_style)
                         rprint(f"[green]Completion style is now active.[/]")
                 elif lowered_first == "llm":
@@ -523,9 +434,6 @@ def chat_repl(conf: Any) -> None:
                     file_name = args[1] if len(args) > 1 else None
                     commands.restore_from_snapshot(ordinal, file_name)
                     cli_ui.print_restore_feedback(ordinal, file_name)
-
-                    # Persist a global flag so we stop showing the restore breadcrumb tip.
-                    # NOTE: tutorial restore does NOT hit this code path.
                     set_user_config("has_used_restore", "on")
                 elif lowered_first == "keep":
                     telemetry.record_command("keep", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
@@ -543,7 +451,7 @@ def chat_repl(conf: Any) -> None:
                     chat_id_file.unlink(missing_ok=True)
                     chat_id = -1
                     conf.plugin_manager.handle_command("new_chat", {"root": conf.root})
-                    console.print("[green]✅ New chat session started.[/]")
+                    console.print("[green]\u2705 New chat session started.[/]")
                 elif lowered_first == "help":
                     telemetry.record_command("help", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     print_help_message()
@@ -597,7 +505,6 @@ def chat_repl(conf: Any) -> None:
                             if "error" in shell_response:
                                 rprint(f"[red]Error:[/] {shell_response['error']}")
 
-                        # Capture failing command output for auto-attach to next LLM prompt
                         cmd_str = " ".join([original_first] + tokens[1:])
                         capture_shell_result(conf, cmd=cmd_str, shell_response=shell_response)
                     else:
@@ -607,36 +514,68 @@ def chat_repl(conf: Any) -> None:
                             "project_root": str(conf.root)
                         })
 
-                        explicit_files = None
+                        explicit_files: Optional[Dict[str, str]] = None
                         cleaned_prompt = prompt
                         used_at = False
+                        attachments: List[Dict[str, Any]] = []
 
                         if at_response and not at_response.get("error"):
-                            explicit_files = at_response.get("file_contents", {})
+                            file_contents = at_response.get("file_contents", {}) or {}
+                            attachments = at_response.get("attachments", []) or []
                             cleaned_prompt = at_response.get("cleaned_prompt", prompt)
-                            used_at = bool(explicit_files)
 
-                            if conf.verbose and explicit_files:
-                                rprint(f"[cyan]Including {len(explicit_files)} file(s) from @ references: {', '.join(explicit_files.keys())}[/cyan]")
+                            # Image-only @ refs must NOT suppress normal source
+                            # search; only source-file refs do (issue.md \u00a71.2).
+                            used_at = bool(file_contents)
+                            if used_at:
+                                explicit_files = file_contents
 
-                        # --- Step 2: resolve URLs ---
+                            if conf.verbose and file_contents:
+                                rprint(f"[cyan]Including {len(file_contents)} file(s) from @ references: {', '.join(file_contents.keys())}[/cyan]")
+
+                            # Print a one-line summary for each attached image.
+                            for att in attachments:
+                                try:
+                                    print_attachment_summary(
+                                        att.get("file_name", ""),
+                                        att.get("mime_type", "application/octet-stream"),
+                                        int(att.get("bytes_size", 0) or 0),
+                                    )
+                                except Exception:
+                                    pass
+
+                            # Surface any image-load errors clearly.
+                            for err in at_response.get("image_errors", []) or []:
+                                rprint(f"[yellow]Image attachment error:[/] {err}")
+
+                        # --- Step 2: capability gating for image prompts ---
+                        if attachments and not _model_supports_images(conf.selected_model):
+                            rprint(
+                                f"[red]Error:[/] The selected model '{conf.selected_model}' "
+                                "does not support image input. Choose a multimodal model "
+                                "or remove the image reference."
+                            )
+                            continue
+
+                        # --- Step 3: resolve URLs ---
                         if has_url(cleaned_prompt):
                             url_context = handle_url(cleaned_prompt, conf.plugin_manager, verbose=conf.verbose)
                             if url_context:
                                 cleaned_prompt = f"{cleaned_prompt}\n\n---\nAttached URL context:\n{url_context}\n---\n"
                                 telemetry.record_command("has_url", has_args=False, prefix=_AYE_PREFIX)
+
                         # This is the LLM path.
-                        if used_at:
+                        if attachments and used_at:
+                            telemetry.record_llm_prompt("LLM @")
+                        elif attachments:
+                            telemetry.record_llm_prompt("LLM @")
+                        elif used_at:
                             telemetry.record_llm_prompt("LLM @")
                         else:
                             telemetry.record_llm_prompt("LLM")
 
                         # Attach pending shell failure output (one-shot) before sending to LLM
                         cleaned_prompt = maybe_attach_shell_result(conf, cleaned_prompt)
-
-                        # DO NOT call prepare_sync() here - it blocks the main thread!
-                        # The index is already being maintained in the background.
-                        # RAG queries will use whatever index state is currently available.
 
                         llm_response = invoke_llm(
                             prompt=cleaned_prompt,
@@ -645,7 +584,8 @@ def chat_repl(conf: Any) -> None:
                             plugin_manager=conf.plugin_manager,
                             chat_id=chat_id,
                             verbose=conf.verbose,
-                            explicit_source_files=explicit_files
+                            explicit_source_files=explicit_files,
+                            attachments=attachments if attachments else None,
                         )
                         if llm_response:
                             new_chat_id = process_llm_response(response=llm_response, conf=conf, console=console, prompt=cleaned_prompt, chat_id_file=chat_id_file if llm_response.chat_id else None)
@@ -657,7 +597,6 @@ def chat_repl(conf: Any) -> None:
                 handle_llm_error(exc)
                 continue
     finally:
-        # Ensure clean shutdown of the index manager (if it exists)
         if index_manager:
             index_manager.shutdown()
 
