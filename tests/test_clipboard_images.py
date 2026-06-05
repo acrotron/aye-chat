@@ -451,20 +451,24 @@ class TestClipboardImageAvailable:
             assert clipboard_image_available() is True
 
     def test_true_on_linux_with_tools(self):
-        with patch("builtins.__import__", side_effect=ImportError), \
-             patch("aye.model.clipboard_images._is_linux", return_value=True), \
-             patch("aye.model.clipboard_images._any_linux_tool_available", return_value=True):
+        # patch(__import__) MUST be innermost so that the other patches
+        # can resolve their dotted target via the real __import__ first.
+        # Python 3.10's mock._importer calls __import__ to look up the
+        # target module; 3.11+ uses sys.modules directly.
+        with patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._any_linux_tool_available", return_value=True), \
+             patch("builtins.__import__", side_effect=ImportError):
             assert clipboard_image_available() is True
 
     def test_false_when_nothing_available(self):
-        with patch("builtins.__import__", side_effect=ImportError), \
-             patch("aye.model.clipboard_images._is_linux", return_value=False):
+        with patch("aye.model.clipboard_images._is_linux", return_value=False), \
+             patch("builtins.__import__", side_effect=ImportError):
             assert clipboard_image_available() is False
 
     def test_false_on_linux_without_tools(self):
-        with patch("builtins.__import__", side_effect=ImportError), \
-             patch("aye.model.clipboard_images._is_linux", return_value=True), \
-             patch("aye.model.clipboard_images._any_linux_tool_available", return_value=False):
+        with patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._any_linux_tool_available", return_value=False), \
+             patch("builtins.__import__", side_effect=ImportError):
             assert clipboard_image_available() is False
 
 
