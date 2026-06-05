@@ -92,7 +92,7 @@ def get_last_assistant_response() -> Optional[str]:
 
 def print_welcome_message():
     """Display the welcome message for the Aye Chat REPL."""
-    console.print("Aye Chat – type `help` for available commands, `exit` or Ctrl+D to quit", style="ui.welcome")
+    console.print("Aye Chat \u2013 type `help` for available commands, `exit` or Ctrl+D to quit", style="ui.welcome")
 
 
 def print_help_message():
@@ -120,6 +120,13 @@ def print_help_message():
         ("", "If you mention 'skill'/'skills' without `skill:`/`skills:`, Aye may fuzzy-match phrases like `using <X> skill`."),
         ("", "See https://github.com/acrotron/aye-chat/tree/main/skills for examples."),
         # end of skills
+        ("", ""),
+
+        ("Clipboard Images", ""),
+        ("  paste-image", "Attach image from clipboard to next AI prompt (accumulates; multiple calls stage multiple images)"),
+        ("  clear-attachments", "Clear all staged clipboard image attachments"),
+        ("  Ctrl+V", "Attach clipboard image inline when enabled (set `clipboard_image_paste=on` in config)."),
+        ("", "On macOS, Cmd+V is handled by the terminal; if image paste does not attach, use `paste-image`."),
         ("", ""),
 
         ("Session & Model", ""),
@@ -154,7 +161,7 @@ def print_help_message():
 
 def print_prompt():
     """Return the prompt symbol for user input."""
-    return "(ツ» "
+    return "(\u30c4\u00bb "
 
 
 def print_assistant_response(summary: str):
@@ -163,7 +170,7 @@ def print_assistant_response(summary: str):
 
     console.print()
 
-    pulse = "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]●[/] [ui.response_symbol.waves]))[/]"
+    pulse = "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]\u25cf[/] [ui.response_symbol.waves]))[/]"
 
     grid = Table.grid(padding=(0, 1))
     grid.add_column()
@@ -224,7 +231,7 @@ def print_attachment_summary(name: str, mime: str, size_bytes: int) -> None:
 
     Format (per ``issue.md`` Section 1.4)::
 
-        📎 attached: screenshot.png (image/png, 142 KB)
+        \U0001f4ce attached: screenshot.png (image/png, 142 KB)
     """
     try:
         size_str = _format_image_size(int(size_bytes))
@@ -235,5 +242,5 @@ def print_attachment_summary(name: str, mime: str, size_bytes: int) -> None:
     safe_mime = mime or "application/octet-stream"
 
     console.print(
-        f"[ui.attachment]📎 attached: {safe_name} ({safe_mime}, {size_str})[/]"
+        f"[ui.attachment]\U0001f4ce attached: {safe_name} ({safe_mime}, {size_str})[/]"
     )
