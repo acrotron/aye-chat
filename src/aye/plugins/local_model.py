@@ -24,6 +24,12 @@ LLM_TIMEOUT = 600.0
 # History file name for this plugin
 HISTORY_FILENAME = "chat_history.json"
 
+_UNSUPPORTED_IMAGE_MESSAGE = (
+    "The configured local LLM endpoint does not support image attachments "
+    "in this client. Switch to a multimodal cloud model or remove the "
+    "image reference and try again."
+)
+
 
 def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
     """Get configuration for a specific model."""
@@ -33,20 +39,25 @@ def _get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _is_local_model_configured() -> bool:
-    """Check if local model (OpenAI-compatible or Gemini) is configured."""
+def _is_local_model_configured(model_id: str = "") -> bool:
+    """Check if local model (OpenAI-compatible or Gemini) is configured.
+
+    Args:
+        model_id: Optional currently-selected model id. Used to decide whether
+            the Gemini path would apply.
+    """
     # OpenAI-compatible API
     if get_user_config("llm_api_url") and get_user_config("llm_api_key"):
         return True
-    # Gemini API
-    if os.environ.get("GEMINI_API_KEY"):
+    # Gemini API \u2014 only applies for the gemini-2.5-pro model id
+    if model_id == "google/gemini-2.5-pro" and os.environ.get("GEMINI_API_KEY"):
         return True
     return False
 
 
 class LocalModelPlugin(Plugin):
     name = "local_model"
-    version = "1.0.1"  # Version bump for new_chat fix
+    version = "1.0.2"  # Phase 6: image-attachment rejection
     premium = "free"
 
     def __init__(self):
@@ -182,6 +193,13 @@ class LocalModelPlugin(Plugin):
             root = params.get("root")
             system_prompt = params.get("system_prompt")
             max_output_tokens = params.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)
+            attachments = params.get("attachments") or []
+
+            # Phase 6: if this plugin would have handled the request and the
+            # user provided image attachments, return a clear error instead of
+            # silently dropping them or crashing the local endpoint.
+            if attachments and _is_local_model_configured(model_id):
+                return create_error_response(_UNSUPPORTED_IMAGE_MESSAGE, self.verbose)
 
             self.history_file = self._get_history_file_path(root)
             self._load_history()

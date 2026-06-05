@@ -938,7 +938,8 @@ class TestLlmInvoker(TestCase):
                 "chat_id": None,
                 "root": self.conf.root,
                 "system_prompt": SYSTEM_PROMPT,
-                "max_output_tokens": expected_max_output_tokens
+                "max_output_tokens": expected_max_output_tokens,
+                "attachments": [],
             }
         )
         self.assertEqual(response.source, LLMSource.LOCAL)
@@ -1006,6 +1007,7 @@ class TestLlmInvoker(TestCase):
             max_output_tokens=expected_max_output_tokens,
             telemetry=None,
             on_stream_update=ANY,
+            attachments=None,
         )
 
         # Spinner should be used for API path
@@ -1202,6 +1204,7 @@ class TestLlmInvoker(TestCase):
             max_output_tokens=expected_max_output_tokens,
             telemetry=None,
             on_stream_update=ANY,
+            attachments=None,
         )
 
         debug_prints = [call[0][0] for call in mock_print.call_args_list]

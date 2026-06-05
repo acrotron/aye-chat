@@ -2,8 +2,10 @@
 import os
 import tempfile
 from pathlib import Path
+import typer
 from unittest import TestCase
 from unittest.mock import patch, MagicMock
+import pytest
 
 import aye.model.auth as auth
 
@@ -56,6 +58,13 @@ key=value
         self.token_path.write_text("this is not a valid config file", encoding="utf-8")
         parsed = auth._parse_user_config()
         self.assertEqual(parsed, {})
+
+    def test_parse_user_config_with_read_error(self):
+        """Covers the broad except Exception in _parse_user_config."""
+        self.token_path.write_text("[default]\ntoken=abc123\n", encoding="utf-8")
+        with patch("pathlib.Path.read_text", side_effect=OSError("read failed")):
+            parsed = auth._parse_user_config()
+            self.assertEqual(parsed, {})
 
     # --------------------------- get/set user config ---------------------------
     def test_set_and_get_user_config_roundtrip(self):
@@ -192,13 +201,116 @@ token=only
 
     # -------------------------------- login_flow -------------------------------
     def test_login_flow_prompts_and_stores_token(self):
-        with patch("aye.model.auth.typer.prompt", return_value="MY_TOKEN\n") as mock_prompt, \
+        with patch("aye.model.auth.typer.prompt", return_value="MY_TOKEN") as mock_prompt, \
+             patch("aye.model.api.fetch_plugin_manifest") as mock_fetch, \
              patch.object(auth, "store_token") as mock_store, \
              patch("aye.model.auth.typer.secho") as mock_secho:
             auth.login_flow()
-            mock_prompt.assert_called_once()
+            mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
+            mock_fetch.assert_called_once()
             mock_store.assert_called_once_with("MY_TOKEN")
-            mock_secho.assert_called()
+            mock_secho.assert_called_once_with("\u2705 Token saved.", fg=typer.colors.GREEN)
+
+    def test_login_flow_with_aye_token_env_warning(self):
+        """Covers the env var warning rprint branch."""
+        os.environ["AYE_TOKEN"] = "env_token"
+        with patch("aye.model.auth.rprint") as mock_rprint, \
+             patch("aye.model.auth.typer.prompt", return_value="validtoken123") as mock_prompt, \
+             patch("aye.model.api.fetch_plugin_manifest") as mock_fetch, \
+             patch.object(auth, "store_token") as mock_store, \
+             patch("aye.model.auth.typer.secho") as mock_secho:
+            auth.login_flow()
+            mock_rprint.assert_any_call(
+                "[yellow]Note: AYE_TOKEN environment variable is set. "
+                "The saved token will not be used until that variable is removed.[/]"
+            )
+            mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
+            mock_store.assert_called_once_with("validtoken123")
+            mock_secho.assert_called_once_with("\u2705 Token saved.", fg=typer.colors.GREEN)
+        os.environ.pop("AYE_TOKEN", None)
+
+    def test_login_flow_invalid_token_format(self):
+        """Covers local validation failure path."""
+        with patch("aye.model.auth.typer.prompt", return_value="short") as mock_prompt, \
+             patch("aye.model.auth.typer.secho") as mock_secho:
+            with self.assertRaises(typer.Exit):
+                auth.login_flow()
+            mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
+            mock_secho.assert_called_once_with("Invalid token format.", fg=typer.colors.RED)
+
+    def test_login_flow_verification_failure(self):
+        """Covers the _verify_login_token_if_supported exception path."""
+        with patch("aye.model.auth.typer.prompt", return_value="validtoken123") as mock_prompt, \
+             patch("aye.model.api.fetch_plugin_manifest", side_effect=Exception("backend error")) as mock_fetch, \
+             patch("aye.model.auth.typer.secho") as mock_secho:
+            with self.assertRaises(typer.Exit):
+                auth.login_flow()
+            mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
+            mock_secho.assert_called_once_with(
+                "Login failed: could not verify token with the backend. "
+                "Existing token was not changed. (backend error)",
+                fg=typer.colors.RED
+            )
+
+    # ------------------------------- delete_user_config ------------------------
+    def test_delete_user_config_key_exists(self):
+        auth.set_user_config("token", "abc123")
+        auth.set_user_config("selected_model", "gpt-4")
+        with patch("pathlib.Path.chmod") as mock_chmod:
+            auth.delete_user_config("token")
+            mock_chmod.assert_called_once_with(0o600)
+        config = auth._parse_user_config()
+        self.assertNotIn("token", config)
+        self.assertEqual(config.get("selected_model"), "gpt-4")
+
+    def test_delete_user_config_nonexistent_key_is_noop(self):
+        auth.set_user_config("selected_model", "gpt-4")
+        auth.delete_user_config("nonexistent")
+        config = auth._parse_user_config()
+        self.assertEqual(config.get("selected_model"), "gpt-4")
+
+    def test_delete_user_config_last_key_removes_file(self):
+        auth.set_user_config("token", "abc123")
+        self.assertTrue(self.token_path.exists())
+        auth.delete_user_config("token")
+        self.assertFalse(self.token_path.exists())
+
+    # ------------------------------ helper functions ---------------------------
+    def test_supports_kwarg(self):
+        def func_with_varkw(a, **kwargs):
+            pass
+
+        def func_with_named(a, token_override=None):
+            pass
+
+        def func_without(a, b):
+            pass
+
+        self.assertTrue(auth._supports_kwarg(func_with_varkw, "token_override"))
+        self.assertTrue(auth._supports_kwarg(func_with_named, "token_override"))
+        self.assertFalse(auth._supports_kwarg(func_without, "token_override"))
+        # Non-callable case
+        self.assertFalse(auth._supports_kwarg(123, "foo"))
+
+    def test_verify_login_token_if_supported_skips_old_api(self):
+        with patch("aye.model.api.fetch_plugin_manifest") as mock_fetch, \
+             patch.object(auth, "_supports_kwarg", return_value=False) as mock_supports:
+            auth._verify_login_token_if_supported("new_token", "old_token")
+            mock_supports.assert_called()
+            mock_fetch.assert_not_called()
+
+    def test_verify_login_token_if_supported_calls_new_api(self):
+        def supports_side_effect(callable_obj, name):
+            return name in ("token_override", "previous_token", "dry_run")
+
+        with patch("aye.model.api.fetch_plugin_manifest") as mock_fetch, \
+             patch.object(auth, "_supports_kwarg", side_effect=supports_side_effect):
+            auth._verify_login_token_if_supported("new_token", "old_token")
+            mock_fetch.assert_called_once_with(
+                token_override="new_token",
+                previous_token="old_token",
+                dry_run=False
+            )
 
     # ------------------------- AYE_TOKEN_FILE env var --------------------------
     def test_aye_token_file_env_var_overrides_default_path(self):

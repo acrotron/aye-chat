@@ -2,7 +2,7 @@ import os
 import json
 import time
 import sys
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable
 from rich import print as rprint
 
 import httpx
@@ -18,7 +18,8 @@ class ApiError(Exception):
         self.status_code = status_code
 
 # -------------------------------------------------
-# 👉  EDIT THIS TO POINT TO YOUR SERVICE
+# 
+#  EDIT THIS TO POINT TO YOUR SERVICE
 # -------------------------------------------------
 api_url = os.environ.get("AYE_CHAT_API_URL")
 
@@ -59,17 +60,55 @@ def _ssl_verify() -> bool:
     return True
 
 
-def _auth_headers() -> Dict[str, str]:
-    token = get_token()
+def _auth_headers(token_override: Optional[str] = None) -> Dict[str, str]:
+    """Build authorization headers.
+
+    Args:
+        token_override: If provided, use this token instead of the stored one.
+            This is used during login before the new token is persisted.
+    """
+    token = token_override or get_token()
     if not token:
-        raise RuntimeError("No auth token – run `aye auth login` first.")
+        raise RuntimeError("No auth token \u2013 run `aye auth login` first.")
     return {"Authorization": f"Bearer {token}"}
+
+
+def _redact_payload_for_debug(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a shallow copy of ``payload`` safe for debug logging.
+
+    Image bytes (``data_b64``) must never be printed or logged
+    (see issue.md Section 8). This helper replaces ``data_b64`` in each
+    attachment with a short placeholder while preserving all other
+    metadata so the developer can still see attachment shape and counts.
+    """
+    if not isinstance(payload, dict):
+        return payload
+
+    attachments = payload.get("attachments")
+    if not isinstance(attachments, list) or not attachments:
+        return payload
+
+    redacted_attachments: List[Dict[str, Any]] = []
+    for att in attachments:
+        if isinstance(att, dict):
+            copy = dict(att)
+            if "data_b64" in copy:
+                original = copy["data_b64"]
+                length = len(original) if isinstance(original, str) else 0
+                copy["data_b64"] = f"<redacted: {length} chars>"
+            redacted_attachments.append(copy)
+        else:
+            redacted_attachments.append(att)
+
+    redacted = dict(payload)
+    redacted["attachments"] = redacted_attachments
+    return redacted
 
 
 def _check_response(resp: httpx.Response) -> Dict[str, Any]:
     """Validate an HTTP response.
 
-    * Raises for non‑2xx status codes.
+    * Raises for non\u20112xx status codes.
     * If the response body is JSON and contains an ``error`` key, prints
       the error message and raises ``ApiError`` with that message.
     * If parsing JSON fails, falls back to raw text for the error message.
@@ -87,11 +126,11 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
             err_msg = resp.text
         raise ApiError(err_msg, status_code=status) from exc
 
-    # Successful status – still check for an error field in the payload.
+    # Successful status \u2013 still check for an error field in the payload.
     try:
         payload = resp.json()
     except json.JSONDecodeError:
-        # Not JSON – return empty dict.
+        # Not JSON \u2013 return empty dict.
         return {}
 
     if isinstance(payload, dict) and "error" in payload:
@@ -164,6 +203,7 @@ def cli_invoke(
     poll_interval=2.0,
     poll_timeout=TIMEOUT,
     on_stream_update: Optional[Callable[..., None]] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ):
     """
     Invoke the CLI API endpoint.
@@ -183,6 +223,11 @@ def cli_invoke(
                           Called with the current partial content string.
                           If the callback supports it, it will additionally
                           receive `is_final=True` when the final response is ready.
+        attachments: Optional list of image attachment dicts. When non-empty,
+                     each dict must contain the keys ``file_name``,
+                     ``mime_type``, ``data_b64``, and ``bytes_size``
+                     (see issue.md Section 4). When None or empty, the
+                     request body is unchanged from the text-only case.
 
     Returns:
         The API response dictionary
@@ -206,11 +251,17 @@ def cli_invoke(
     if telemetry is not None:
         payload["telemetry"] = telemetry
 
+    # Image attachments: include only when non-empty so text-only requests
+    # produce the same body as before this change.
+    if attachments:
+        payload["attachments"] = attachments
+
     url = f"{BASE_URL}/invoke_cli"
 
     if _is_debug():
+        debug_payload = _redact_payload_for_debug(payload)
         print(f"[DEBUG] Sending request to {url}")
-        print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
+        print(f"[DEBUG] Full payload: {json.dumps(debug_payload, indent=2)}")
         print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
 
     verify = _ssl_verify()
@@ -316,20 +367,43 @@ def cli_invoke(
 
 
 
-def fetch_plugin_manifest(dry_run: bool = False):
-    """Fetch the plugin manifest from the server."""
+def fetch_plugin_manifest(
+    dry_run: bool = False,
+    *,
+    token_override: Optional[str] = None,
+    previous_token: Optional[str] = None,
+):
+    """Fetch the plugin manifest from the server.
+
+    Args:
+        dry_run: If True, request a dry-run manifest.
+        token_override: Optional token to use in the Authorization header.
+            This is used during login before the new token is stored locally.
+        previous_token: Optional previously configured token. Sent to the
+            backend so it can associate the replacement with the same user.
+    """
     url = f"{BASE_URL}/plugins"
-    payload = {"dry_run": dry_run}
+    payload: Dict[str, Any] = {"dry_run": dry_run}
+
+    # Include previous_token only when it is present and different from
+    # the token being used to authenticate.
+    if previous_token and previous_token != token_override:
+        payload["previous_token"] = previous_token
 
     if _is_debug():
         print(f"[DEBUG] Sending request to {url}")
         print(f"[DEBUG] Full payload: {json.dumps(payload, indent=2)}")
         print(f"[DEBUG] Headers: {{'Authorization': 'Bearer <token>'}}")
+        print(f"[DEBUG] previous_token included: {bool(payload.get('previous_token'))}")
 
     verify = _ssl_verify()
 
     with httpx.Client(timeout=TIMEOUT, verify=verify) as client:
-        resp = client.post(url, json=payload, headers=_auth_headers())
+        resp = client.post(
+            url,
+            json=payload,
+            headers=_auth_headers(token_override=token_override),
+        )
         if _is_debug():
             print(f"[DEBUG] Response status: {resp.status_code}")
         _check_response(resp)

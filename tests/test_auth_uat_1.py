@@ -6,7 +6,6 @@ import typer
 import os
 
 import aye.model.auth as auth
-import aye.controller.commands as commands
 import aye.__main__ as main_cli
 
 
@@ -25,11 +24,11 @@ def test_uat_1_1_successful_login_with_valid_token(temp_config_file):
     
     Given: No existing token.
     When: User runs `aye auth login` and enters a valid token.
-    Then: Stores token, shows success, attempts plugin download.
+    Then: Stores token, shows success, calls fetch_plugin_manifest for verification.
     """
     with patch('aye.model.auth.typer.prompt', return_value='valid_personal_access_token') as mock_prompt, \
          patch('aye.model.auth.typer.secho') as mock_secho, \
-         patch('aye.controller.commands.download_plugins.fetch_plugins') as mock_fetch_plugins:
+         patch('aye.model.api.fetch_plugin_manifest') as mock_fetch:
         
         assert not temp_config_file.exists()
         
@@ -42,42 +41,42 @@ def test_uat_1_1_successful_login_with_valid_token(temp_config_file):
         assert '[default]' in config_content
         assert 'token=valid_personal_access_token' in config_content
         
-        mock_fetch_plugins.assert_called_once()
+        mock_fetch.assert_called_once()
 
 
-def test_uat_1_2_login_with_invalid_token(temp_config_file):
-    """UAT-1.2: Login with Invalid Token
+def test_uat_1_2_login_with_verification_failure(temp_config_file):
+    """UAT-1.2: Login with Verification Failure
     
     Given: No existing token is stored.
-    When: User runs `aye auth login` and enters an invalid token.
-    Then: Stores the token anyway, displays success, but fails to download plugins.
+    When: User runs `aye auth login` and enters a token that causes backend verification to fail.
+    Then: Does NOT store the token, displays specific login failed message. Token file remains absent.
     """
     with patch('aye.model.auth.typer.prompt', return_value='invalid_token') as mock_prompt, \
          patch('aye.model.auth.typer.secho') as mock_secho, \
-         patch('aye.presenter.cli_ui.print_generic_message') as mock_print_error, \
-         patch('aye.controller.commands.download_plugins.fetch_plugins', side_effect=Exception('API error message')) as mock_fetch_plugins:
+         patch('aye.model.api.fetch_plugin_manifest', side_effect=Exception('API error message')) as mock_fetch:
         
         assert not temp_config_file.exists()
         
-        main_cli.login()
+        try:
+            main_cli.login()
+        except typer.Exit:
+            pass  # Expected due to verification failure
         
         mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
-        mock_secho.assert_called_once_with('✅ Token saved.', fg=typer.colors.GREEN)
+        mock_secho.assert_called_once_with(
+            'Login failed: could not verify token with the backend. Existing token was not changed. (API error message)', 
+            fg=typer.colors.RED
+        )
         
-        config_content = temp_config_file.read_text(encoding='utf-8')
-        assert '[default]' in config_content
-        assert 'token=invalid_token' in config_content
-        
-        mock_fetch_plugins.assert_called_once()
-        mock_print_error.assert_called_with('Login failed: API error message', is_error=True)
-
+        assert not temp_config_file.exists()
+        mock_fetch.assert_called_once()
 
 def test_uat_1_3_login_when_token_already_exists(temp_config_file):
     """UAT-1.3: Login When Token Already Exists
     
     Given: A valid token is already stored.
     When: User runs `aye auth login` and enters a new token.
-    Then: Overwrites the existing token, displays success, attempts plugin download.
+    Then: Overwrites the existing token (after successful verification), displays success.
     """
     auth.set_user_config('token', 'old_token')
     assert temp_config_file.exists()
@@ -86,7 +85,7 @@ def test_uat_1_3_login_when_token_already_exists(temp_config_file):
     
     with patch('aye.model.auth.typer.prompt', return_value='new_token') as mock_prompt, \
          patch('aye.model.auth.typer.secho') as mock_secho, \
-         patch('aye.controller.commands.download_plugins.fetch_plugins') as mock_fetch_plugins:
+         patch('aye.model.api.fetch_plugin_manifest') as mock_fetch:
         
         main_cli.login()
         
@@ -98,35 +97,34 @@ def test_uat_1_3_login_when_token_already_exists(temp_config_file):
         assert 'token=new_token' in updated_content
         assert 'token=old_token' not in updated_content
         
-        mock_fetch_plugins.assert_called_once()
+        mock_fetch.assert_called_once()
 
-
-def test_uat_1_4_login_with_network_failure_during_plugin_download(temp_config_file):
-    """UAT-1.4: Login with Network Failure During Plugin Download
+def test_uat_1_4_login_with_network_failure_during_verification(temp_config_file):
+    """UAT-1.4: Login with Network Failure During Verification
     
     Given: No existing token is stored.
-    When: User runs `aye auth login` and enters a valid token, but plugin download fails due to network issues.
-    Then: Stores the token, displays success for token saving, but shows an error for plugin download failure.
+    When: User runs `aye auth login` and enters a valid token, but verification fails due to network issues.
+    Then: Does NOT store the token, displays specific login failed message.
     """
     with patch('aye.model.auth.typer.prompt', return_value='valid_personal_access_token') as mock_prompt, \
          patch('aye.model.auth.typer.secho') as mock_secho, \
-         patch('aye.presenter.cli_ui.print_generic_message') as mock_print_error, \
-         patch('aye.controller.commands.download_plugins.fetch_plugins', side_effect=Exception('Network error')) as mock_fetch_plugins:
+         patch('aye.model.api.fetch_plugin_manifest', side_effect=Exception('Network error')) as mock_fetch:
         
         assert not temp_config_file.exists()
         
-        main_cli.login()
+        try:
+            main_cli.login()
+        except typer.Exit:
+            pass  # Expected due to verification failure
         
         mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
-        mock_secho.assert_called_once_with('✅ Token saved.', fg=typer.colors.GREEN)
+        mock_secho.assert_called_once_with(
+            'Login failed: could not verify token with the backend. Existing token was not changed. (Network error)', 
+            fg=typer.colors.RED
+        )
         
-        config_content = temp_config_file.read_text(encoding='utf-8')
-        assert '[default]' in config_content
-        assert 'token=valid_personal_access_token' in config_content
-        
-        mock_fetch_plugins.assert_called_once()
-        mock_print_error.assert_called_with('Login failed: Network error', is_error=True)
-
+        assert not temp_config_file.exists()
+        mock_fetch.assert_called_once()
 
 def test_uat_1_5_login_cancelled_by_user(temp_config_file):
     """UAT-1.5: Login Cancelled by User
@@ -137,7 +135,7 @@ def test_uat_1_5_login_cancelled_by_user(temp_config_file):
     """
     with patch('aye.model.auth.typer.prompt', side_effect=typer.Abort) as mock_prompt, \
          patch('aye.model.auth.typer.secho') as mock_secho, \
-         patch('aye.controller.commands.download_plugins.fetch_plugins') as mock_fetch_plugins:
+         patch('aye.model.api.fetch_plugin_manifest') as mock_fetch:
         
         assert not temp_config_file.exists()
         
@@ -153,21 +151,20 @@ def test_uat_1_5_login_cancelled_by_user(temp_config_file):
         mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
         mock_secho.assert_not_called()
         assert not temp_config_file.exists()
-        mock_fetch_plugins.assert_not_called()
-
+        mock_fetch.assert_not_called()
 
 def test_uat_1_6_login_with_environment_variable_override(temp_config_file):
     """UAT-1.6: Login with Environment Variable Override
     
     Given: AYE_TOKEN environment variable is set to a valid token.
     When: User runs `aye auth login` and enters a prompted token.
-    Then: The system prioritizes the env var token for operations (e.g., plugin download), stores the prompted token.
+    Then: The system prioritizes the env var token for verification, stores the prompted token.
     """
     os.environ['AYE_TOKEN'] = 'env_override_token'
     
     with patch('aye.model.auth.typer.prompt', return_value='prompted_token') as mock_prompt, \
          patch('aye.model.auth.typer.secho') as mock_secho, \
-         patch('aye.controller.commands.download_plugins.fetch_plugins') as mock_fetch_plugins:
+         patch('aye.model.api.fetch_plugin_manifest') as mock_fetch:
         
         assert not temp_config_file.exists()
         
@@ -183,10 +180,9 @@ def test_uat_1_6_login_with_environment_variable_override(temp_config_file):
         # get_token will prioritize the environment variable
         assert auth.get_token() == 'env_override_token'
         
-        mock_fetch_plugins.assert_called_once()
+        mock_fetch.assert_called_once()
     
     del os.environ['AYE_TOKEN']
-
 
 def test_uat_2_1_successful_logout_when_token_exists(temp_config_file):
     """UAT-2.1: Successful Logout When Token Exists
