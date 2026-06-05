@@ -92,12 +92,14 @@ def record_llm_prompt(kind: str = "LLM") -> None:
     - "LLM"
     - "LLM <with>"
     - "LLM @"
+    - "LLM @ attachment"
     - "LLM <blog>"
+    - "LLM clipboard"
     """
     if not _enabled:
         return
 
-    if kind not in {"LLM", "LLM <with>", "LLM @", "LLM <blog>"}:
+    if kind not in {"LLM", "LLM <with>", "LLM @", "LLM @ attachment", "LLM <blog>", "LLM clipboard"}:
         kind = "LLM"
 
     _counts[kind] = _counts.get(kind, 0) + 1
