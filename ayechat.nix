@@ -61,6 +61,7 @@ python3Packages.buildPythonApplication rec {
     tree-sitter
     chromadb
     rapidfuzz
+    pillow
   ];
 
   # Skip dependency version checks - nixpkgs versions may differ from PyPI requirements
