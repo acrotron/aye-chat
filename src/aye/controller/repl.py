@@ -148,7 +148,7 @@ def _prompt_for_telemetry_consent_if_needed() -> bool:
     rprint("  - LLM clipboard")
     rprint("")
     rprint("[bright_black]We never collect command arguments, prompt text, filenames, file contents,")
-    rprint("image contents, image names, MIME types, or image sizes in telemetry.[/bright_black]")
+    rprint("[bright_black]image contents, image names, MIME types, or image sizes in telemetry.[/bright_black]")
 
     try:
         allow = Confirm.ask("\nAllow anonymized telemetry?", default=True)
