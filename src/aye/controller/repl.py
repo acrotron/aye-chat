@@ -46,6 +46,16 @@ from aye.controller.command_handlers import (
     handle_autodiff_command,
     handle_shellcap_command,
     handle_printraw_command,
+    handle_paste_image_command,
+    handle_clear_attachments_command,
+)
+from aye.controller.clipboard_attachments import (
+    get_pending_clipboard_attachments,
+    clear_pending_clipboard_attachments,
+    add_pending_clipboard_attachment,
+    pending_clipboard_attachment_count,
+    make_clipboard_marker,
+    strip_clipboard_markers,
 )
 from aye.controller.shell_capture import capture_shell_result, maybe_attach_shell_result
 
@@ -62,6 +72,23 @@ _CMD_PREFIX = "cmd:"
 
 # Regex to detect URLs in a prompt
 _URL_RE = re.compile(r'https?://[^\s]+', re.IGNORECASE)
+
+
+# ---------------------------------------------------------------------------
+# Clipboard paste config helper
+# ---------------------------------------------------------------------------
+
+def _is_clipboard_paste_enabled(conf: Any = None) -> bool:
+    """Return True if the experimental Ctrl+V clipboard image paste is enabled.
+
+    Reads the ``clipboard_image_paste`` config key.  Also supports the
+    ``AYE_CLIPBOARD_IMAGE_PASTE`` environment variable via the standard
+    ``get_user_config`` override mechanism.
+
+    Default is ``off``.
+    """
+    val = get_user_config("clipboard_image_paste", "off")
+    return str(val).lower() in {"on", "true", "1", "yes"}
 
 
 # ---------------------------------------------------------------------------
@@ -117,8 +144,11 @@ def _prompt_for_telemetry_consent_if_needed() -> bool:
     rprint("  - LLM")
     rprint("  - LLM <with>")
     rprint("  - LLM @")
+    rprint("  - LLM @ attachment")
+    rprint("  - LLM clipboard")
     rprint("")
-    rprint("[bright_black]We never collect command arguments, prompt text, filenames, or file contents in telemetry.[/bright_black]")
+    rprint("[bright_black]We never collect command arguments, prompt text, filenames, file contents,")
+    rprint("[bright_black]image contents, image names, MIME types, or image sizes in telemetry.[/bright_black]")
 
     try:
         allow = Confirm.ask("\nAllow anonymized telemetry?", default=True)
@@ -206,8 +236,16 @@ def collect_and_send_feedback(chat_id: int):
 
 
 
-def create_key_bindings() -> KeyBindings:
-    """Create custom key bindings for the prompt session."""
+def create_key_bindings(conf: Any = None) -> KeyBindings:
+    """Create custom key bindings for the prompt session.
+
+    Args:
+        conf: Optional REPL config object.  When provided **and** the
+            ``clipboard_image_paste`` config flag is enabled, a ``Ctrl+V``
+            binding is registered that reads a clipboard image, stages it
+            as a pending attachment, and inserts a safe marker into the
+            prompt buffer.
+    """
     bindings = KeyBindings()
 
     @bindings.add(Keys.Enter, filter=completion_is_selected)
@@ -232,13 +270,60 @@ def create_key_bindings() -> KeyBindings:
 
         buffer.complete_state = None
 
+    # -----------------------------------------------------------------
+    # Optional Ctrl+V clipboard image paste (Phase 5)
+    # Disabled by default; enabled via clipboard_image_paste=on config.
+    # -----------------------------------------------------------------
+    if conf is not None and _is_clipboard_paste_enabled(conf):
+        @bindings.add('c-v')
+        def _handle_ctrl_v_clipboard_paste(event):
+            """Read a clipboard image, stage it, and insert a marker.
+
+            On any failure (no image, clipboard unavailable, oversized)
+            the keystroke is silently consumed.  Users who need
+            diagnostic feedback should use the ``paste-image`` command
+            instead.
+
+            No telemetry is recorded here; it is recorded when the
+            prompt is actually submitted (Phase 3 flow).
+            """
+            try:
+                from aye.model.clipboard_images import (
+                    ClipboardImageError,
+                    load_clipboard_image_attachment,
+                )
+
+                attachment = load_clipboard_image_attachment()
+            except Exception:
+                # Silent failure — use paste-image for diagnostics.
+                return
+
+            # Stage the attachment (accumulates).
+            add_pending_clipboard_attachment(conf, attachment)
+
+            # Build a visible marker and insert it at the cursor.
+            marker = make_clipboard_marker(conf)
+            buffer = event.app.current_buffer
+            buffer.insert_text(f" {marker} ")
+
     return bindings
 
 
 
-def create_prompt_session(completer: Any, completion_style: str = "readline") -> PromptSession:
-    """Create a PromptSession with multi-column completion display."""
-    key_bindings = create_key_bindings()
+def create_prompt_session(
+    completer: Any,
+    completion_style: str = "readline",
+    conf: Any = None,
+) -> PromptSession:
+    """Create a PromptSession with multi-column completion display.
+
+    Args:
+        completer: prompt_toolkit completer instance.
+        completion_style: ``"readline"`` or ``"multi"``.
+        conf: Optional REPL config object passed through to
+            ``create_key_bindings`` for Ctrl+V registration.
+    """
+    key_bindings = create_key_bindings(conf)
 
     return PromptSession(
         history=InMemoryHistory(),
@@ -276,7 +361,7 @@ def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> N
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "shellcap", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm", "printraw", "raw"]
+    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "shellcap", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm", "printraw", "raw", "paste-image", "clear-attachments"]
 
     completion_style = get_user_config("completion_style", "readline").lower()
 
@@ -287,7 +372,7 @@ def chat_repl(conf: Any) -> None:
     })
     completer = completer_response["completer"] if completer_response else None
 
-    session = create_prompt_session(completer, completion_style)
+    session = create_prompt_session(completer, completion_style, conf)
 
     print_startup_header(conf)
 
@@ -401,7 +486,7 @@ def chat_repl(conf: Any) -> None:
                             "completion_style": new_style
                         })
                         completer = completer_response["completer"] if completer_response else None
-                        session = create_prompt_session(completer, new_style)
+                        session = create_prompt_session(completer, new_style, conf)
                         rprint(f"[green]Completion style is now active.[/]")
                 elif lowered_first == "llm":
                     telemetry.record_command("llm", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
@@ -415,6 +500,12 @@ def chat_repl(conf: Any) -> None:
                 elif lowered_first in ("printraw", "raw"):
                     telemetry.record_command("printraw", has_args=False, prefix=_AYE_PREFIX)
                     handle_printraw_command()
+                elif lowered_first == "paste-image":
+                    telemetry.record_command("paste-image", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
+                    handle_paste_image_command(conf)
+                elif lowered_first == "clear-attachments":
+                    telemetry.record_command("clear-attachments", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
+                    handle_clear_attachments_command(conf)
                 elif lowered_first == "diff":
                     telemetry.record_command("diff", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     args = tokens[1:]
@@ -517,11 +608,11 @@ def chat_repl(conf: Any) -> None:
                         explicit_files: Optional[Dict[str, str]] = None
                         cleaned_prompt = prompt
                         used_at = False
-                        attachments: List[Dict[str, Any]] = []
+                        at_attachments: List[Dict[str, Any]] = []
 
                         if at_response and not at_response.get("error"):
                             file_contents = at_response.get("file_contents", {}) or {}
-                            attachments = at_response.get("attachments", []) or []
+                            at_attachments = at_response.get("attachments", []) or []
                             cleaned_prompt = at_response.get("cleaned_prompt", prompt)
 
                             # Image-only @ refs must NOT suppress normal source
@@ -534,7 +625,7 @@ def chat_repl(conf: Any) -> None:
                                 rprint(f"[cyan]Including {len(file_contents)} file(s) from @ references: {', '.join(file_contents.keys())}[/cyan]")
 
                             # Print a one-line summary for each attached image.
-                            for att in attachments:
+                            for att in at_attachments:
                                 try:
                                     print_attachment_summary(
                                         att.get("file_name", ""),
@@ -548,7 +639,13 @@ def chat_repl(conf: Any) -> None:
                             for err in at_response.get("image_errors", []) or []:
                                 rprint(f"[yellow]Image attachment error:[/] {err}")
 
-                        # --- Step 2: capability gating for image prompts ---
+                        # --- Step 2: merge pending clipboard attachments ---
+                        clipboard_attachments = get_pending_clipboard_attachments(conf)
+                        attachments: List[Dict[str, Any]] = clipboard_attachments + at_attachments
+
+                        # --- Step 3: capability gating for image prompts ---
+                        # Pending clipboard attachments are NOT cleared on
+                        # rejection so the user can switch models and retry.
                         if attachments and not _model_supports_images(conf.selected_model):
                             rprint(
                                 f"[red]Error:[/] The selected model '{conf.selected_model}' "
@@ -557,26 +654,31 @@ def chat_repl(conf: Any) -> None:
                             )
                             continue
 
-                        # --- Step 3: resolve URLs ---
+                        # --- Step 4: resolve URLs ---
                         if has_url(cleaned_prompt):
                             url_context = handle_url(cleaned_prompt, conf.plugin_manager, verbose=conf.verbose)
                             if url_context:
                                 cleaned_prompt = f"{cleaned_prompt}\n\n---\nAttached URL context:\n{url_context}\n---\n"
                                 telemetry.record_command("has_url", has_args=False, prefix=_AYE_PREFIX)
 
-                        # This is the LLM path.
-                        if attachments and used_at:
-                            telemetry.record_llm_prompt("LLM @")
-                        elif attachments:
-                            telemetry.record_llm_prompt("LLM @")
+                        # --- Step 5: four-way telemetry kind selection ---
+                        # Priority: clipboard > @ attachment > @ source > plain LLM
+                        if clipboard_attachments:
+                            telemetry.record_llm_prompt("LLM clipboard")
+                        elif at_attachments:
+                            telemetry.record_llm_prompt("LLM @ attachment")
                         elif used_at:
                             telemetry.record_llm_prompt("LLM @")
                         else:
                             telemetry.record_llm_prompt("LLM")
 
+                        # --- Step 6: strip clipboard markers and prepare prompt ---
+                        cleaned_prompt = strip_clipboard_markers(cleaned_prompt)
+
                         # Attach pending shell failure output (one-shot) before sending to LLM
                         cleaned_prompt = maybe_attach_shell_result(conf, cleaned_prompt)
 
+                        # --- Step 7: invoke LLM ---
                         llm_response = invoke_llm(
                             prompt=cleaned_prompt,
                             conf=conf,
@@ -587,6 +689,14 @@ def chat_repl(conf: Any) -> None:
                             explicit_source_files=explicit_files,
                             attachments=attachments if attachments else None,
                         )
+
+                        # --- Step 8: clear pending clipboard attachments on success ---
+                        # Only clear after invoke_llm returns successfully.
+                        # If invoke_llm raises, the outer except catches it
+                        # and pending clipboard attachments survive for retry.
+                        if clipboard_attachments:
+                            clear_pending_clipboard_attachments(conf)
+
                         if llm_response:
                             new_chat_id = process_llm_response(response=llm_response, conf=conf, console=console, prompt=cleaned_prompt, chat_id_file=chat_id_file if llm_response.chat_id else None)
                             if new_chat_id is not None:

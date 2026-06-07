@@ -10,7 +10,7 @@ from rich.console import Console
 from aye.model.auth import get_user_config, set_user_config, delete_user_config
 from aye.model.config import MODELS
 from aye.model.attachments import IMAGE_EXTENSIONS
-from aye.presenter.repl_ui import print_error
+from aye.presenter.repl_ui import print_error, print_attachment_summary
 from aye.controller.llm_invoker import invoke_llm
 from aye.controller.llm_handler import process_llm_response, handle_llm_error
 from aye.controller.shell_capture import maybe_attach_shell_result, SHELLCAP_KEY
@@ -335,6 +335,109 @@ def handle_printraw_command() -> None:
     from aye.presenter.repl_ui import get_last_assistant_response
     from aye.presenter.raw_output import print_assistant_response_raw
     print_assistant_response_raw(get_last_assistant_response())
+
+
+# ---------------------------------------------------------------------------
+# paste-image command
+# ---------------------------------------------------------------------------
+
+
+def handle_paste_image_command(conf: Any) -> None:
+    """Handle the ``paste-image`` command: read a clipboard image and stage it.
+
+    The clipboard image is read, validated, and stored as a pending
+    attachment on ``conf``.  It is **not** sent to the LLM until the
+    user submits a normal AI prompt.
+
+    Multiple calls accumulate images.  Each staged image is sent
+    together with the next normal prompt.
+
+    This handler must:
+    - **Not** invoke the LLM.
+    - **Not** record ``LLM clipboard`` telemetry (that belongs to
+      the actual LLM invocation event).
+    - **Not** clear pending clipboard attachments.
+    - **Not** mention file-based image fallback in error messages.
+
+    Args:
+        conf: The active REPL config object.
+    """
+    from aye.model.clipboard_images import (
+        ClipboardImageError,
+        ClipboardImageNotFoundError,
+        ClipboardImageTooLargeError,
+        ClipboardImageUnavailableError,
+        load_clipboard_image_attachment,
+    )
+    from aye.controller.clipboard_attachments import (
+        add_pending_clipboard_attachment,
+        pending_clipboard_attachment_count,
+    )
+
+    try:
+        attachment = load_clipboard_image_attachment()
+    except ClipboardImageUnavailableError as exc:
+        rprint(f"[red]{exc}[/]")
+        return
+    except ClipboardImageNotFoundError as exc:
+        rprint(f"[yellow]{exc}[/]")
+        return
+    except ClipboardImageTooLargeError as exc:
+        rprint(f"[red]{exc}[/]")
+        return
+    except ClipboardImageError as exc:
+        rprint(f"[red]Clipboard error: {exc}[/]")
+        return
+
+    # Stage the attachment (accumulates)
+    add_pending_clipboard_attachment(conf, attachment)
+    total = pending_clipboard_attachment_count(conf)
+
+    # Print safe metadata summary
+    print_attachment_summary(
+        attachment.get("file_name", ""),
+        attachment.get("mime_type", "image/png"),
+        int(attachment.get("bytes_size", 0) or 0),
+    )
+
+    if total > 1:
+        rprint(f"[green]Attached clipboard image to the next AI prompt ({total} total staged).[/]")
+    else:
+        rprint("[green]Attached clipboard image to the next AI prompt.[/]")
+
+
+# ---------------------------------------------------------------------------
+# clear-attachments command
+# ---------------------------------------------------------------------------
+
+
+def handle_clear_attachments_command(conf: Any) -> None:
+    """Handle the ``clear-attachments`` command: clear all staged clipboard images.
+
+    Removes all pending clipboard image attachments from the session
+    state.  Prints a confirmation with the number of cleared images,
+    or a note if nothing was staged.
+
+    Args:
+        conf: The active REPL config object.
+    """
+    from aye.controller.clipboard_attachments import (
+        clear_pending_clipboard_attachments,
+        pending_clipboard_attachment_count,
+    )
+
+    count = pending_clipboard_attachment_count(conf)
+    clear_pending_clipboard_attachments(conf)
+
+    if count > 0:
+        rprint(f"[green]Cleared {count} pending clipboard image attachment{'s' if count != 1 else ''}.[/]")
+    else:
+        rprint("[yellow]No pending clipboard image attachments to clear.[/]")
+
+
+# ---------------------------------------------------------------------------
+# File helpers
+# ---------------------------------------------------------------------------
 
 
 def _expand_file_patterns(patterns: list[str], conf: Any) -> list[str]:
