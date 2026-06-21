@@ -170,8 +170,10 @@ MODELS = [
     {"id": "openai/gpt-5.3-codex", "name": "OpenAI: GPT-5.3-Codex", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180, "supports_images": True},
     {"id": "openai/gpt-5.4", "name": "OpenAI: GPT-5.4", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180, "supports_images": True},
     {"id": "openai/gpt-5.5", "name": "OpenAI: GPT-5.5", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180, "supports_images": True},
-    {"id": "anthropic/claude-opus-4.6", "name": "Anthropic: Claude Opus 4.6", "max_prompt_kb": 130, "max_output_tokens": 16000, "context_target_kb": 130, "supports_images": True},
-    {"id": "anthropic/claude-opus-4.7", "name": "Anthropic: Claude Opus 4.7", "max_prompt_kb": 130, "max_output_tokens": 16000, "context_target_kb": 130, "supports_images": True},
+    {"id": "anthropic/claude-opus-4.5", "name": "Anthropic: Claude Opus 4.5", "max_prompt_kb": 130, "max_output_tokens": 16000, "context_target_kb": 100, "supports_images": True},
+    {"id": "anthropic/claude-opus-4.6", "name": "Anthropic: Claude Opus 4.6", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180, "supports_images": True},
+    {"id": "anthropic/claude-opus-4.7", "name": "Anthropic: Claude Opus 4.7", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180, "supports_images": True},
+    {"id": "anthropic/claude-opus-4.8", "name": "Anthropic: Claude Opus 4.8", "max_prompt_kb": 200, "max_output_tokens": 24000, "context_target_kb": 180, "supports_images": True},
 
     # Offline models
     {"id": "offline/qwen2.5-coder-7b", "name": "Qwen2.5 Coder 7B (Offline)", "type": "offline", "size_gb": 4.7, "max_prompt_kb": 60, "max_output_tokens": 8000, "context_target_kb": 40},
