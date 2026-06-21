@@ -6,16 +6,23 @@ from typing import Any, Dict, List, Optional, Callable
 from rich import print as rprint
 
 import httpx
-from aye.model.auth import get_token, get_user_config
+from aye.model.auth import get_token, get_user_config, refresh_demo_token, DemoTokenError
 from aye.model.config import DEFAULT_MAX_OUTPUT_TOKENS
 
 
 class ApiError(Exception):
     """API error with HTTP status code context for actionable error messages."""
 
-    def __init__(self, message: str, status_code: Optional[int] = None):
+    def __init__(self, message: str, status_code: Optional[int] = None, error_code: Optional[str] = None):
         super().__init__(message)
         self.status_code = status_code
+        self.error_code = error_code
+
+
+class InvalidDemoTokenError(ApiError):
+    """Raised when the server returns INVALID_DEMO_TOKEN error."""
+    pass
+
 
 # -------------------------------------------------
 # 
@@ -66,6 +73,9 @@ def _auth_headers(token_override: Optional[str] = None) -> Dict[str, str]:
     Args:
         token_override: If provided, use this token instead of the stored one.
             This is used during login before the new token is persisted.
+
+    Raises:
+        DemoTokenError: If no token is available and demo token acquisition fails.
     """
     token = token_override or get_token()
     if not token:
@@ -111,6 +121,7 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
     * Raises for non\u20112xx status codes.
     * If the response body is JSON and contains an ``error`` key, prints
       the error message and raises ``ApiError`` with that message.
+    * Detects INVALID_DEMO_TOKEN and raises InvalidDemoTokenError.
     * If parsing JSON fails, falls back to raw text for the error message.
     Returns the parsed JSON payload for successful calls.
     """
@@ -119,12 +130,19 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
     except httpx.HTTPStatusError as exc:
         status = resp.status_code
         # Try to extract a JSON error message, otherwise use text.
+        error_code = None
         try:
             err_json = resp.json()
             err_msg = err_json.get("error") or resp.text
+            error_code = err_json.get("error_code") or err_json.get("code")
         except Exception:
             err_msg = resp.text
-        raise ApiError(err_msg, status_code=status) from exc
+
+        # Check for INVALID_DEMO_TOKEN error
+        if error_code == "INVALID_DEMO_TOKEN" or "INVALID_DEMO_TOKEN" in err_msg:
+            raise InvalidDemoTokenError(err_msg, status_code=status, error_code="INVALID_DEMO_TOKEN") from exc
+
+        raise ApiError(err_msg, status_code=status, error_code=error_code) from exc
 
     # Successful status \u2013 still check for an error field in the payload.
     try:
@@ -135,7 +153,12 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
 
     if isinstance(payload, dict) and "error" in payload:
         err_msg = payload["error"]
-        raise ApiError(err_msg)
+        error_code = payload.get("error_code") or payload.get("code")
+
+        if error_code == "INVALID_DEMO_TOKEN" or "INVALID_DEMO_TOKEN" in err_msg:
+            raise InvalidDemoTokenError(err_msg, error_code="INVALID_DEMO_TOKEN")
+
+        raise ApiError(err_msg, error_code=error_code)
     return payload
 
 
@@ -204,6 +227,7 @@ def cli_invoke(
     poll_timeout=TIMEOUT,
     on_stream_update: Optional[Callable[..., None]] = None,
     attachments: Optional[List[Dict[str, Any]]] = None,
+    _retry_on_invalid_demo: bool = True,
 ):
     """
     Invoke the CLI API endpoint.
@@ -228,6 +252,7 @@ def cli_invoke(
                      ``mime_type``, ``data_b64``, and ``bytes_size``
                      (see issue.md Section 4). When None or empty, the
                      request body is unchanged from the text-only case.
+        _retry_on_invalid_demo: Internal flag to prevent infinite retry loops.
 
     Returns:
         The API response dictionary
@@ -266,13 +291,46 @@ def cli_invoke(
 
     verify = _ssl_verify()
 
-    with httpx.Client(timeout=TIMEOUT, verify=verify) as client:
-        resp = client.post(url, json=payload, headers=_auth_headers())
-        if _is_debug():
-            print(f"[DEBUG] Initial response status: {resp.status_code}")
-        data = _check_response(resp)
-        if _is_debug():
-            print(f"[DEBUG] Initial response data: {data}")
+    try:
+        with httpx.Client(timeout=TIMEOUT, verify=verify) as client:
+            resp = client.post(url, json=payload, headers=_auth_headers())
+            if _is_debug():
+                print(f"[DEBUG] Initial response status: {resp.status_code}")
+            data = _check_response(resp)
+            if _is_debug():
+                print(f"[DEBUG] Initial response data: {data}")
+
+    except InvalidDemoTokenError:
+        # Handle INVALID_DEMO_TOKEN: refresh token and retry once
+        if _retry_on_invalid_demo:
+            if _is_debug():
+                print("[DEBUG] Received INVALID_DEMO_TOKEN, attempting to refresh...")
+            new_token = refresh_demo_token()
+            if new_token:
+                if _is_debug():
+                    print("[DEBUG] Demo token refreshed, retrying request...")
+                # Retry the request with the new token (but don't retry again)
+                return cli_invoke(
+                    chat_id=chat_id,
+                    message=message,
+                    source_files=source_files,
+                    model=model,
+                    system_prompt=system_prompt,
+                    max_output_tokens=max_output_tokens,
+                    dry_run=dry_run,
+                    telemetry=telemetry,
+                    poll_interval=poll_interval,
+                    poll_timeout=poll_timeout,
+                    on_stream_update=on_stream_update,
+                    attachments=attachments,
+                    _retry_on_invalid_demo=False,
+                )
+        # If retry is disabled or refresh failed, re-raise
+        raise ApiError(
+            "Your demo session has expired. Please run 'aye auth login' to continue.",
+            status_code=401,
+            error_code="INVALID_DEMO_TOKEN"
+        )
 
     # Poll the presigned GET URL until the object exists
     response_url = data["response_url"]

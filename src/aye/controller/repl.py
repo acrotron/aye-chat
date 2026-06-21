@@ -21,6 +21,12 @@ from rich.prompt import Confirm
 from aye.model.api import send_feedback
 from aye.model.auth import get_token, get_user_config, set_user_config
 from aye.model.config import MODELS, DEFAULT_MODEL_ID
+from aye.model.repl_history import (
+    AyePersistentHistory,
+    get_history_max_entries,
+    get_repl_history_path,
+    is_history_enabled,
+)
 from aye.model import telemetry
 from aye.presenter.repl_ui import (
     print_welcome_message,
@@ -315,7 +321,7 @@ def create_prompt_session(
     completion_style: str = "readline",
     conf: Any = None,
 ) -> PromptSession:
-    """Create a PromptSession with multi-column completion display.
+    """Create a PromptSession with persistent history and completion display.
 
     Args:
         completer: prompt_toolkit completer instance.
@@ -325,8 +331,16 @@ def create_prompt_session(
     """
     key_bindings = create_key_bindings(conf)
 
+    if is_history_enabled():
+        history = AyePersistentHistory(
+            path=get_repl_history_path(),
+            max_entries=get_history_max_entries(),
+        )
+    else:
+        history = InMemoryHistory()
+
     return PromptSession(
-        history=InMemoryHistory(),
+        history=history,
         completer=completer,
         complete_style=CompleteStyle.MULTI_COLUMN,
         complete_while_typing=True,
@@ -616,7 +630,7 @@ def chat_repl(conf: Any) -> None:
                             cleaned_prompt = at_response.get("cleaned_prompt", prompt)
 
                             # Image-only @ refs must NOT suppress normal source
-                            # search; only source-file refs do (issue.md \u00a71.2).
+                            # search; only source-file refs do (issue.md §1.2).
                             used_at = bool(file_contents)
                             if used_at:
                                 explicit_files = file_contents

@@ -1,11 +1,15 @@
 # Test suite for aye.model.auth module
 import os
 import tempfile
+import types
+import uuid
 from pathlib import Path
-import typer
 from unittest import TestCase
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import httpx
 import pytest
+import typer
 
 import aye.model.auth as auth
 
@@ -21,11 +25,13 @@ class TestAuth(TestCase):
         # Ensure env overrides are clean unless explicitly set in a test
         os.environ.pop("AYE_TOKEN", None)
         os.environ.pop("AYE_SELECTED_MODEL", None)
+        os.environ.pop("AYE_SSLVERIFY", None)
 
     def tearDown(self):
         # Cleanup environment variables
         os.environ.pop("AYE_TOKEN", None)
         os.environ.pop("AYE_SELECTED_MODEL", None)
+        os.environ.pop("AYE_SSLVERIFY", None)
         os.environ.pop("AYE_TOKEN_FILE", None)
         # Stop patcher and cleanup temp dir
         self.token_patcher.stop()
@@ -87,12 +93,22 @@ key=value
         os.environ["AYE_SELECTED_MODEL"] = "env/value"
         self.assertEqual(auth.get_user_config("selected_model"), "env/value")
 
+    def test_get_user_config_returns_default_when_missing(self):
+        self.assertEqual(auth.get_user_config("missing", "fallback"), "fallback")
+
+    def test_set_user_config_preserves_existing_values(self):
+        with patch("pathlib.Path.chmod"):
+            auth.set_user_config("token", "abc12345")
+            auth.set_user_config("selected_model", "gpt-4")
+
+        parsed = auth._parse_user_config()
+        self.assertEqual(parsed["token"], "abc12345")
+        self.assertEqual(parsed["selected_model"], "gpt-4")
+
     # -------------------------------- token I/O --------------------------------
     def test_store_and_get_token_from_file(self):
         with patch("pathlib.Path.chmod"):
             auth.store_token("  secret-token\n")
-        # get_token will generate a demo token if file is empty before store_token is called
-        # so we need to re-read to get the stored one
         self.assertEqual(auth.get_user_config("token"), "secret-token")
         self.assertIn("token=secret-token", self.token_path.read_text(encoding="utf-8"))
 
@@ -103,61 +119,69 @@ key=value
         self.assertEqual(auth.get_token(), "ENV_TOKEN")
 
     def test_get_token_generates_demo_token_if_none(self):
-        """When no token exists in env or file, a demo token should be generated and stored."""
+        """When no token exists in env or file, a demo token should be requested and stored."""
         self.assertFalse(self.token_path.exists())
         os.environ.pop("AYE_TOKEN", None)
 
-        with patch("pathlib.Path.chmod"):
+        with patch("aye.model.auth._request_demo_token", return_value="aye_demo_generated123") as mock_req, \
+             patch("pathlib.Path.chmod"):
             token = auth.get_token()
-            self.assertIsNotNone(token)
-            self.assertTrue(token.startswith("aye_demo_"))
+            self.assertEqual(token, "aye_demo_generated123")
+            mock_req.assert_called_once_with()
 
-            # Verify it was also stored
             self.assertTrue(self.token_path.exists())
             text = self.token_path.read_text(encoding="utf-8")
-            self.assertIn(f"token={token}", text)
+            self.assertIn("token=aye_demo_generated123", text)
 
     def test_get_token_regenerates_demo_if_token_corrupted(self):
-        """When token exists but is corrupted/invalid, a demo token should be generated."""
-        # Write a corrupted token (contains invalid characters)
+        """When token exists but is corrupted/invalid, a demo token should be requested."""
         self.token_path.write_text("[default]\ntoken=valid_token!!!\n", encoding="utf-8")
         os.environ.pop("AYE_TOKEN", None)
 
-        with patch("pathlib.Path.chmod"):
+        with patch("aye.model.auth._request_demo_token", return_value="aye_demo_clean123") as mock_req, \
+             patch("pathlib.Path.chmod"):
             token = auth.get_token()
-            self.assertIsNotNone(token)
-            self.assertTrue(token.startswith("aye_demo_"))
+            self.assertEqual(token, "aye_demo_clean123")
+            mock_req.assert_called_once_with()
 
-            # Verify the corrupted token was replaced
             text = self.token_path.read_text(encoding="utf-8")
             self.assertNotIn("valid_token!!!", text)
-            self.assertIn(f"token={token}", text)
+            self.assertIn("token=aye_demo_clean123", text)
 
     def test_get_token_regenerates_demo_if_token_too_short(self):
-        """When token exists but is too short, a demo token should be generated."""
-        # Write a token that's too short (less than 8 characters)
+        """When token exists but is too short, a demo token should be requested."""
         self.token_path.write_text("[default]\ntoken=abc\n", encoding="utf-8")
         os.environ.pop("AYE_TOKEN", None)
 
-        with patch("pathlib.Path.chmod"):
+        with patch("aye.model.auth._request_demo_token", return_value="aye_demo_long123"), \
+             patch("pathlib.Path.chmod"):
             token = auth.get_token()
-            self.assertIsNotNone(token)
-            self.assertTrue(token.startswith("aye_demo_"))
+            self.assertEqual(token, "aye_demo_long123")
 
     def test_get_token_regenerates_demo_if_token_empty(self):
-        """When token exists but is empty, a demo token should be generated (TC-DEM-010)."""
-        # Write an empty token value
+        """When token exists but is empty, a demo token should be requested."""
         self.token_path.write_text("[default]\ntoken=\n", encoding="utf-8")
         os.environ.pop("AYE_TOKEN", None)
 
-        with patch("pathlib.Path.chmod"):
+        with patch("aye.model.auth._request_demo_token", return_value="aye_demo_empty123"), \
+             patch("pathlib.Path.chmod"):
             token = auth.get_token()
-            self.assertIsNotNone(token)
-            self.assertTrue(token.startswith("aye_demo_"))
+            self.assertEqual(token, "aye_demo_empty123")
 
-            # Verify the empty token was replaced
             text = self.token_path.read_text(encoding="utf-8")
-            self.assertIn(f"token={token}", text)
+            self.assertIn("token=aye_demo_empty123", text)
+
+    def test_get_token_raises_if_demo_request_returns_none(self):
+        with patch("aye.model.auth._request_demo_token", return_value=None):
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth.get_token()
+            self.assertIn("Failed to obtain demo token", str(cm.exception))
+
+    def test_get_token_propagates_demo_token_error(self):
+        with patch("aye.model.auth._request_demo_token", side_effect=auth.DemoTokenError("offline")):
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth.get_token()
+            self.assertIn("offline", str(cm.exception))
 
     def test_is_valid_token_accepts_valid_formats(self):
         """Valid tokens should pass validation."""
@@ -174,6 +198,247 @@ key=value
         self.assertFalse(auth._is_valid_token("has spaces"))
         self.assertFalse(auth._is_valid_token("has!special@chars"))
         self.assertFalse(auth._is_valid_token("token\nwith\nnewlines"))
+
+    # -------------------------------- _ssl_verify ------------------------------
+    def test_ssl_verify_false_values(self):
+        for value in ("0", "false", "off", "no", " OFF "):
+            with self.subTest(value=value), patch.object(auth, "get_user_config", return_value=value):
+                self.assertFalse(auth._ssl_verify())
+
+    def test_ssl_verify_true_values_and_unknown_values(self):
+        for value in ("1", "true", "on", "yes", "unexpected", ""):
+            with self.subTest(value=value), patch.object(auth, "get_user_config", return_value=value):
+                self.assertTrue(auth._ssl_verify())
+
+    # ------------------------------ client version -----------------------------
+    def test_get_client_version_success(self):
+        module = types.ModuleType("aye.model.version_checker")
+        module.get_current_version = lambda: "1.2.3"
+
+        with patch.dict("sys.modules", {"aye.model.version_checker": module}):
+            self.assertEqual(auth._get_client_version(), "1.2.3")
+
+    def test_get_client_version_returns_unknown_on_error(self):
+        real_import = __import__
+
+        def import_side_effect(name, *args, **kwargs):
+            if name == "aye.model.version_checker":
+                raise RuntimeError("version unavailable")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=import_side_effect):
+            self.assertEqual(auth._get_client_version(), "unknown")
+
+    # ----------------------------- install ID ----------------------------------
+    def test_get_or_create_install_id_returns_existing_valid_id(self):
+        existing = "12345678-1234-5678-1234-567812345678"
+        with patch.object(auth, "get_user_config", return_value=existing), \
+             patch.object(auth, "set_user_config") as mock_set:
+            self.assertEqual(auth._get_or_create_install_id(), existing)
+            mock_set.assert_not_called()
+
+    def test_get_or_create_install_id_creates_when_missing(self):
+        generated = uuid.UUID("12345678-1234-5678-1234-567812345678")
+        with patch.object(auth, "get_user_config", return_value=None), \
+             patch.object(auth, "set_user_config") as mock_set, \
+             patch("aye.model.auth.uuid.uuid4", return_value=generated):
+            result = auth._get_or_create_install_id()
+            self.assertEqual(result, str(generated))
+            mock_set.assert_called_once_with("install_id", str(generated))
+
+    def test_get_or_create_install_id_replaces_short_existing_id(self):
+        generated = uuid.UUID("87654321-4321-8765-4321-876543218765")
+        with patch.object(auth, "get_user_config", return_value="short"), \
+             patch.object(auth, "set_user_config") as mock_set, \
+             patch("aye.model.auth.uuid.uuid4", return_value=generated):
+            result = auth._get_or_create_install_id()
+            self.assertEqual(result, str(generated))
+            mock_set.assert_called_once_with("install_id", str(generated))
+
+    # ----------------------------- /demo/start ---------------------------------
+    def test_request_demo_token_success(self):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {"token": "aye_demo_valid123"}
+
+        with patch("aye.model.auth._get_or_create_install_id", return_value="install-1"), \
+             patch("aye.model.auth._get_client_version", return_value="9.9.9"), \
+             patch("aye.model.auth.platform.system", return_value="TestOS"), \
+             patch("aye.model.auth._ssl_verify", return_value=False), \
+             patch("aye.model.auth.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = resp
+
+            token = auth._request_demo_token()
+
+            self.assertEqual(token, "aye_demo_valid123")
+            mock_client.assert_called_once_with(timeout=auth._API_TIMEOUT, verify=False)
+            post_call = mock_client.return_value.__enter__.return_value.post.call_args
+            self.assertEqual(post_call.args[0], f"{auth._API_BASE_URL}/demo/start")
+            self.assertEqual(
+                post_call.kwargs["json"],
+                {
+                    "install_id": "install-1",
+                    "client": "cli",
+                    "version": "9.9.9",
+                    "platform": "TestOS",
+                },
+            )
+
+    def test_request_demo_token_raises_for_invalid_token_from_server(self):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {"token": "bad token!"}
+
+        with patch("aye.model.auth._get_or_create_install_id", return_value="install-1"), \
+             patch("aye.model.auth._get_client_version", return_value="9.9.9"), \
+             patch("aye.model.auth._ssl_verify", return_value=True), \
+             patch("aye.model.auth.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = resp
+
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth._request_demo_token()
+            self.assertIn("invalid token format", str(cm.exception))
+
+    def test_request_demo_token_raises_for_missing_token_from_server(self):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {}
+
+        with patch("aye.model.auth._get_or_create_install_id", return_value="install-1"), \
+             patch("aye.model.auth._get_client_version", return_value="9.9.9"), \
+             patch("aye.model.auth._ssl_verify", return_value=True), \
+             patch("aye.model.auth.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = resp
+
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth._request_demo_token()
+            self.assertIn("invalid token format", str(cm.exception))
+
+    def test_request_demo_token_raises_for_invalid_json_success_response(self):
+        resp = MagicMock(status_code=200)
+        resp.json.side_effect = ValueError("not json")
+
+        with patch("aye.model.auth._get_or_create_install_id", return_value="install-1"), \
+             patch("aye.model.auth._get_client_version", return_value="9.9.9"), \
+             patch("aye.model.auth._ssl_verify", return_value=True), \
+             patch("aye.model.auth.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = resp
+
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth._request_demo_token()
+            self.assertIn("Invalid response from server", str(cm.exception))
+
+    def test_request_demo_token_429(self):
+        resp = MagicMock(status_code=429)
+
+        with patch("aye.model.auth._get_or_create_install_id", return_value="install-1"), \
+             patch("aye.model.auth._get_client_version", return_value="9.9.9"), \
+             patch("aye.model.auth._ssl_verify", return_value=True), \
+             patch("aye.model.auth.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = resp
+
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth._request_demo_token()
+            self.assertIn("Too many demo requests", str(cm.exception))
+
+    def test_request_demo_token_503(self):
+        resp = MagicMock(status_code=503)
+
+        with patch("aye.model.auth._get_or_create_install_id", return_value="install-1"), \
+             patch("aye.model.auth._get_client_version", return_value="9.9.9"), \
+             patch("aye.model.auth._ssl_verify", return_value=True), \
+             patch("aye.model.auth.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = resp
+
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth._request_demo_token()
+            self.assertIn("Service temporarily unavailable", str(cm.exception))
+
+    def test_request_demo_token_other_error_with_json_error_message(self):
+        resp = MagicMock(status_code=400)
+        resp.json.return_value = {"error": "bad request"}
+        resp.text = "fallback text"
+
+        with patch("aye.model.auth._get_or_create_install_id", return_value="install-1"), \
+             patch("aye.model.auth._get_client_version", return_value="9.9.9"), \
+             patch("aye.model.auth._ssl_verify", return_value=True), \
+             patch("aye.model.auth.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = resp
+
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth._request_demo_token()
+            self.assertIn("HTTP 400", str(cm.exception))
+            self.assertIn("bad request", str(cm.exception))
+
+    def test_request_demo_token_other_error_with_non_json_body(self):
+        resp = MagicMock(status_code=500)
+        resp.json.side_effect = ValueError("not json")
+        resp.text = "plain failure"
+
+        with patch("aye.model.auth._get_or_create_install_id", return_value="install-1"), \
+             patch("aye.model.auth._get_client_version", return_value="9.9.9"), \
+             patch("aye.model.auth._ssl_verify", return_value=True), \
+             patch("aye.model.auth.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = resp
+
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth._request_demo_token()
+            self.assertIn("HTTP 500", str(cm.exception))
+            self.assertIn("plain failure", str(cm.exception))
+
+    def test_request_demo_token_connect_error(self):
+        with patch("aye.model.auth._get_or_create_install_id", return_value="install-1"), \
+             patch("aye.model.auth._get_client_version", return_value="9.9.9"), \
+             patch("aye.model.auth._ssl_verify", return_value=True), \
+             patch("aye.model.auth.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.side_effect = httpx.ConnectError(
+                "connect failed"
+            )
+
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth._request_demo_token()
+            self.assertIn("Could not connect", str(cm.exception))
+
+    def test_request_demo_token_timeout_error(self):
+        with patch("aye.model.auth._get_or_create_install_id", return_value="install-1"), \
+             patch("aye.model.auth._get_client_version", return_value="9.9.9"), \
+             patch("aye.model.auth._ssl_verify", return_value=True), \
+             patch("aye.model.auth.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.side_effect = httpx.TimeoutException(
+                "timeout"
+            )
+
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth._request_demo_token()
+            self.assertIn("Connection timed out", str(cm.exception))
+
+    def test_request_demo_token_unexpected_error(self):
+        with patch("aye.model.auth._get_or_create_install_id", return_value="install-1"), \
+             patch("aye.model.auth._get_client_version", return_value="9.9.9"), \
+             patch("aye.model.auth._ssl_verify", return_value=True), \
+             patch("aye.model.auth.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.side_effect = RuntimeError("boom")
+
+            with self.assertRaises(auth.DemoTokenError) as cm:
+                auth._request_demo_token()
+            self.assertIn("Unexpected error starting demo session", str(cm.exception))
+
+    # ---------------------------- refresh_demo_token ---------------------------
+    def test_refresh_demo_token_success(self):
+        with patch("aye.model.auth._request_demo_token", return_value="aye_demo_refresh123"), \
+             patch.object(auth, "set_user_config") as mock_set:
+            result = auth.refresh_demo_token()
+            self.assertEqual(result, "aye_demo_refresh123")
+            mock_set.assert_called_once_with("token", "aye_demo_refresh123")
+
+    def test_refresh_demo_token_returns_none_when_request_returns_none(self):
+        with patch("aye.model.auth._request_demo_token", return_value=None), \
+             patch.object(auth, "set_user_config") as mock_set:
+            self.assertIsNone(auth.refresh_demo_token())
+            mock_set.assert_not_called()
+
+    def test_refresh_demo_token_swallows_demo_token_error(self):
+        with patch("aye.model.auth._request_demo_token", side_effect=auth.DemoTokenError("nope")), \
+             patch.object(auth, "set_user_config") as mock_set:
+            self.assertIsNone(auth.refresh_demo_token())
+            mock_set.assert_not_called()
 
     # ------------------------------- delete_token ------------------------------
     def test_delete_token_preserves_other_settings(self):
@@ -199,6 +464,16 @@ token=only
         auth.delete_token()
         self.assertFalse(self.token_path.exists())
 
+    def test_delete_token_is_safe_when_token_missing(self):
+        self.token_path.write_text("""
+[default]
+selected_model=gpt-4
+""".strip(), encoding="utf-8")
+        with patch("pathlib.Path.chmod"):
+            auth.delete_token()
+        self.assertTrue(self.token_path.exists())
+        self.assertIn("selected_model=gpt-4", self.token_path.read_text(encoding="utf-8"))
+
     # -------------------------------- login_flow -------------------------------
     def test_login_flow_prompts_and_stores_token(self):
         with patch("aye.model.auth.typer.prompt", return_value="MY_TOKEN") as mock_prompt, \
@@ -206,10 +481,10 @@ token=only
              patch.object(auth, "store_token") as mock_store, \
              patch("aye.model.auth.typer.secho") as mock_secho:
             auth.login_flow()
-            mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
+            mock_prompt.assert_called_once_with("Paste your token", hide_input=True)
             mock_fetch.assert_called_once()
             mock_store.assert_called_once_with("MY_TOKEN")
-            mock_secho.assert_called_once_with("\u2705 Token saved.", fg=typer.colors.GREEN)
+            mock_secho.assert_called_once_with("✅ Token saved.", fg=typer.colors.GREEN)
 
     def test_login_flow_with_aye_token_env_warning(self):
         """Covers the env var warning rprint branch."""
@@ -224,9 +499,10 @@ token=only
                 "[yellow]Note: AYE_TOKEN environment variable is set. "
                 "The saved token will not be used until that variable is removed.[/]"
             )
-            mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
+            mock_prompt.assert_called_once_with("Paste your token", hide_input=True)
+            mock_fetch.assert_called_once()
             mock_store.assert_called_once_with("validtoken123")
-            mock_secho.assert_called_once_with("\u2705 Token saved.", fg=typer.colors.GREEN)
+            mock_secho.assert_called_once_with("✅ Token saved.", fg=typer.colors.GREEN)
         os.environ.pop("AYE_TOKEN", None)
 
     def test_login_flow_invalid_token_format(self):
@@ -235,22 +511,34 @@ token=only
              patch("aye.model.auth.typer.secho") as mock_secho:
             with self.assertRaises(typer.Exit):
                 auth.login_flow()
-            mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
+            mock_prompt.assert_called_once_with("Paste your token", hide_input=True)
             mock_secho.assert_called_once_with("Invalid token format.", fg=typer.colors.RED)
 
     def test_login_flow_verification_failure(self):
         """Covers the _verify_login_token_if_supported exception path."""
         with patch("aye.model.auth.typer.prompt", return_value="validtoken123") as mock_prompt, \
-             patch("aye.model.api.fetch_plugin_manifest", side_effect=Exception("backend error")) as mock_fetch, \
+             patch("aye.model.api.fetch_plugin_manifest", side_effect=Exception("backend error")), \
              patch("aye.model.auth.typer.secho") as mock_secho:
             with self.assertRaises(typer.Exit):
                 auth.login_flow()
-            mock_prompt.assert_called_once_with('Paste your token', hide_input=True)
+            mock_prompt.assert_called_once_with("Paste your token", hide_input=True)
             mock_secho.assert_called_once_with(
                 "Login failed: could not verify token with the backend. "
                 "Existing token was not changed. (backend error)",
-                fg=typer.colors.RED
+                fg=typer.colors.RED,
             )
+
+    def test_login_flow_passes_previous_token_to_verification(self):
+        self.token_path.write_text("[default]\ntoken=oldtoken123\n", encoding="utf-8")
+
+        with patch("aye.model.auth.typer.prompt", return_value="newtoken123"), \
+             patch.object(auth, "_verify_login_token_if_supported") as mock_verify, \
+             patch.object(auth, "store_token") as mock_store, \
+             patch("aye.model.auth.typer.secho"):
+            auth.login_flow()
+
+        mock_verify.assert_called_once_with("newtoken123", "oldtoken123")
+        mock_store.assert_called_once_with("newtoken123")
 
     # ------------------------------- delete_user_config ------------------------
     def test_delete_user_config_key_exists(self):
@@ -292,6 +580,10 @@ token=only
         # Non-callable case
         self.assertFalse(auth._supports_kwarg(123, "foo"))
 
+    def test_supports_kwarg_handles_value_error_from_signature(self):
+        with patch("aye.model.auth.inspect.signature", side_effect=ValueError("bad signature")):
+            self.assertFalse(auth._supports_kwarg(lambda: None, "token_override"))
+
     def test_verify_login_token_if_supported_skips_old_api(self):
         with patch("aye.model.api.fetch_plugin_manifest") as mock_fetch, \
              patch.object(auth, "_supports_kwarg", return_value=False) as mock_supports:
@@ -309,8 +601,17 @@ token=only
             mock_fetch.assert_called_once_with(
                 token_override="new_token",
                 previous_token="old_token",
-                dry_run=False
+                dry_run=False,
             )
+
+    def test_verify_login_token_if_supported_omits_optional_kwargs_when_unsupported(self):
+        def supports_side_effect(callable_obj, name):
+            return name == "token_override"
+
+        with patch("aye.model.api.fetch_plugin_manifest") as mock_fetch, \
+             patch.object(auth, "_supports_kwarg", side_effect=supports_side_effect):
+            auth._verify_login_token_if_supported("new_token", "old_token")
+            mock_fetch.assert_called_once_with(token_override="new_token")
 
     # ------------------------- AYE_TOKEN_FILE env var --------------------------
     def test_aye_token_file_env_var_overrides_default_path(self):
