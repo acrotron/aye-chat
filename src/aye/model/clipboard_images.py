@@ -8,8 +8,9 @@ compatible with the existing backend payload shape used by
 Clipboard access strategy:
 
 1. **macOS / Windows**: ``PIL.ImageGrab.grabclipboard()`` via Pillow.
-2. **Linux (Wayland)**: ``wl-paste --type image/png`` subprocess.
-3. **Linux (X11)**: ``xclip -selection clipboard -t image/png -o`` subprocess.
+2. **WSL**: ``powershell.exe`` to access Windows clipboard via PowerShell.
+3. **Linux (Wayland)**: ``wl-paste --type image/png`` subprocess.
+4. **Linux (X11)**: ``xclip -selection clipboard -t image/png -o`` subprocess.
 
 If none of the above succeed the module raises
 ``ClipboardImageUnavailableError`` with a platform-appropriate message.
@@ -204,7 +205,13 @@ def _read_clipboard_png_bytes() -> bytes:
     if png_bytes is not None:
         return png_bytes
 
-    # 2. Linux subprocess fallbacks
+    # 2. WSL: access Windows clipboard via PowerShell
+    if _is_linux() and _is_wsl():
+        png_bytes = _read_wsl()
+        if png_bytes is not None:
+            return png_bytes
+
+    # 3. Linux subprocess fallbacks
     if _is_linux():
         png_bytes = _read_wl_paste()
         if png_bytes is not None:
@@ -220,7 +227,8 @@ def _read_clipboard_png_bytes() -> bytes:
         if not _any_linux_tool_available():
             raise ClipboardImageUnavailableError(
                 "Clipboard image paste is not available. "
-                "On Linux, install wl-paste (Wayland) or xclip (X11)."
+                "On Linux, install wl-paste (Wayland) or xclip (X11). "
+                "On WSL, ensure powershell.exe is accessible."
             )
 
         raise ClipboardImageNotFoundError(
@@ -313,6 +321,17 @@ def clipboard_image_available() -> bool:
 
     # Check Linux tools
     if _is_linux():
+        if _is_wsl():
+            # WSL can use PowerShell to access Windows clipboard
+            try:
+                subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-Command", "echo ok"],
+                    capture_output=True,
+                    timeout=3,
+                )
+                return True
+            except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+                pass
         return _any_linux_tool_available()
 
     return False
@@ -386,3 +405,48 @@ __all__ = [
     "read_clipboard_image_bytes",
     "load_clipboard_image_attachment",
 ]
+
+def _is_wsl():
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except(FileNotFoundError, PermissionError):
+        return False
+
+def _read_wsl() -> Optional[bytes]:
+    """Try to read a clipboard image via WSL clipboard.
+
+    Returns:
+        PNG bytes if successful, ``None`` otherwise.
+    """
+    ps_script = """
+    Add-Type -AssemblyName System.Windows.Forms
+    $img = [System.Windows.Forms.Clipboard]::GetImage()
+    if ($img -eq $null) { exit 1 }
+    $ms = New-Object System.IO.MemoryStream
+    $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+    [Convert]::ToBase64String($ms.ToArray())
+    """
+
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile","-Command", ps_script],
+            capture_output=True,
+            timeout=_SUBPROCESS_TIMEOUT,
+        )
+    except FileNotFoundError:
+        return None
+    except subprocess.TimeoutExpired:
+        return None
+    except OSError:
+        return None
+
+    if result.returncode != 0 or not result.stdout:
+        return None
+
+    try:
+        decoded = base64.b64decode(result.stdout.decode().strip())
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not decoded.startswith(_PNG_SIGNATURE):
+        return None
+    return decoded
