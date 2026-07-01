@@ -28,8 +28,10 @@ from aye.model.clipboard_images import (
     _any_linux_tool_available,
     _generate_filename,
     _is_linux,
+    _is_wsl,
     _read_pillow,
     _read_wl_paste,
+    _read_wsl,
     _read_xclip,
     clipboard_image_available,
     load_clipboard_image_attachment,
@@ -261,6 +263,93 @@ class TestReadXclip:
 
 
 # ---------------------------------------------------------------------------
+# _is_wsl
+# ---------------------------------------------------------------------------
+
+class TestIsWsl:
+    def test_true_on_wsl(self):
+        mock_version = "Linux version 5.10.16.3-microsoft-standard-WSL2"
+        with patch("aye.model.clipboard_images.Path") as mock_path:
+            mock_path.return_value.read_text.return_value = mock_version
+            assert _is_wsl() is True
+
+    def test_true_on_wsl1(self):
+        mock_version = "Linux version 4.4.0-18362-Microsoft"
+        with patch("aye.model.clipboard_images.Path") as mock_path:
+            mock_path.return_value.read_text.return_value = mock_version
+            assert _is_wsl() is True
+
+    def test_false_on_regular_linux(self):
+        mock_version = "Linux version 5.15.0-76-generic"
+        with patch("aye.model.clipboard_images.Path") as mock_path:
+            mock_path.return_value.read_text.return_value = mock_version
+            assert _is_wsl() is False
+
+    def test_false_on_file_not_found(self):
+        with patch("aye.model.clipboard_images.Path") as mock_path:
+            mock_path.return_value.read_text.side_effect = FileNotFoundError
+            assert _is_wsl() is False
+
+    def test_false_on_permission_error(self):
+        with patch("aye.model.clipboard_images.Path") as mock_path:
+            mock_path.return_value.read_text.side_effect = PermissionError
+            assert _is_wsl() is False
+
+
+# ---------------------------------------------------------------------------
+# _read_wsl
+# ---------------------------------------------------------------------------
+
+class TestReadWsl:
+    def test_returns_png_on_success(self):
+        b64_png = base64.b64encode(_TINY_PNG).decode("ascii")
+        cp = _make_completed_process(returncode=0, stdout=b64_png.encode())
+        with patch("aye.model.clipboard_images.subprocess.run", return_value=cp):
+            result = _read_wsl()
+            assert result == _TINY_PNG
+
+    def test_returns_none_on_nonzero_returncode(self):
+        cp = _make_completed_process(returncode=1, stdout=b"")
+        with patch("aye.model.clipboard_images.subprocess.run", return_value=cp):
+            assert _read_wsl() is None
+
+    def test_returns_none_on_empty_stdout(self):
+        cp = _make_completed_process(returncode=0, stdout=b"")
+        with patch("aye.model.clipboard_images.subprocess.run", return_value=cp):
+            assert _read_wsl() is None
+
+    def test_returns_none_on_invalid_base64(self):
+        cp = _make_completed_process(returncode=0, stdout=b"not-valid-base64!!!")
+        with patch("aye.model.clipboard_images.subprocess.run", return_value=cp):
+            assert _read_wsl() is None
+
+    def test_returns_none_on_non_png_data(self):
+        # Valid base64 but decodes to non-PNG bytes
+        b64_data = base64.b64encode(b"GIF89a").decode("ascii")
+        cp = _make_completed_process(returncode=0, stdout=b64_data.encode())
+        with patch("aye.model.clipboard_images.subprocess.run", return_value=cp):
+            assert _read_wsl() is None
+
+    def test_returns_none_on_file_not_found(self):
+        with patch("aye.model.clipboard_images.subprocess.run", side_effect=FileNotFoundError):
+            assert _read_wsl() is None
+
+    def test_returns_none_on_timeout(self):
+        with patch(
+            "aye.model.clipboard_images.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="powershell.exe", timeout=5),
+        ):
+            assert _read_wsl() is None
+
+    def test_returns_none_on_oserror(self):
+        with patch(
+            "aye.model.clipboard_images.subprocess.run",
+            side_effect=OSError("broken"),
+        ):
+            assert _read_wsl() is None
+
+
+# ---------------------------------------------------------------------------
 # _is_linux
 # ---------------------------------------------------------------------------
 
@@ -386,6 +475,7 @@ class TestReadClipboardPngBytes:
     def test_falls_through_to_wl_paste_on_linux(self):
         with patch("aye.model.clipboard_images._read_pillow", return_value=None), \
              patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._is_wsl", return_value=False), \
              patch("aye.model.clipboard_images._read_wl_paste", return_value=_TINY_PNG):
             result = mod._read_clipboard_png_bytes()
             assert result == _TINY_PNG
@@ -393,14 +483,33 @@ class TestReadClipboardPngBytes:
     def test_falls_through_to_xclip_on_linux(self):
         with patch("aye.model.clipboard_images._read_pillow", return_value=None), \
              patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._is_wsl", return_value=False), \
              patch("aye.model.clipboard_images._read_wl_paste", return_value=None), \
              patch("aye.model.clipboard_images._read_xclip", return_value=_TINY_PNG):
+            result = mod._read_clipboard_png_bytes()
+            assert result == _TINY_PNG
+
+    def test_wsl_powershell_before_linux_fallbacks(self):
+        with patch("aye.model.clipboard_images._read_pillow", return_value=None), \
+             patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._is_wsl", return_value=True), \
+             patch("aye.model.clipboard_images._read_wsl", return_value=_TINY_PNG):
+            result = mod._read_clipboard_png_bytes()
+            assert result == _TINY_PNG
+
+    def test_wsl_falls_through_to_linux_on_powershell_failure(self):
+        with patch("aye.model.clipboard_images._read_pillow", return_value=None), \
+             patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._is_wsl", return_value=True), \
+             patch("aye.model.clipboard_images._read_wsl", return_value=None), \
+             patch("aye.model.clipboard_images._read_wl_paste", return_value=_TINY_PNG):
             result = mod._read_clipboard_png_bytes()
             assert result == _TINY_PNG
 
     def test_linux_no_tools_raises_unavailable(self):
         with patch("aye.model.clipboard_images._read_pillow", return_value=None), \
              patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._is_wsl", return_value=False), \
              patch("aye.model.clipboard_images._read_wl_paste", return_value=None), \
              patch("aye.model.clipboard_images._read_xclip", return_value=None), \
              patch("aye.model.clipboard_images._any_linux_tool_available", return_value=False):
@@ -411,6 +520,7 @@ class TestReadClipboardPngBytes:
     def test_linux_tools_available_but_no_image_raises_not_found(self):
         with patch("aye.model.clipboard_images._read_pillow", return_value=None), \
              patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._is_wsl", return_value=False), \
              patch("aye.model.clipboard_images._read_wl_paste", return_value=None), \
              patch("aye.model.clipboard_images._read_xclip", return_value=None), \
              patch("aye.model.clipboard_images._any_linux_tool_available", return_value=True):
@@ -451,13 +561,17 @@ class TestClipboardImageAvailable:
             assert clipboard_image_available() is True
 
     def test_true_on_linux_with_tools(self):
-        # patch(__import__) MUST be innermost so that the other patches
-        # can resolve their dotted target via the real __import__ first.
-        # Python 3.10's mock._importer calls __import__ to look up the
-        # target module; 3.11+ uses sys.modules directly.
         with patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._is_wsl", return_value=False), \
              patch("aye.model.clipboard_images._any_linux_tool_available", return_value=True), \
              patch("builtins.__import__", side_effect=ImportError):
+            assert clipboard_image_available() is True
+
+    def test_true_on_wsl_with_powershell(self):
+        with patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._is_wsl", return_value=True), \
+             patch("builtins.__import__", side_effect=ImportError), \
+             patch("aye.model.clipboard_images.subprocess.run", return_value=_make_completed_process(0)):
             assert clipboard_image_available() is True
 
     def test_false_when_nothing_available(self):
@@ -467,8 +581,17 @@ class TestClipboardImageAvailable:
 
     def test_false_on_linux_without_tools(self):
         with patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._is_wsl", return_value=False), \
              patch("aye.model.clipboard_images._any_linux_tool_available", return_value=False), \
              patch("builtins.__import__", side_effect=ImportError):
+            assert clipboard_image_available() is False
+
+    def test_false_on_wsl_without_powershell(self):
+        with patch("aye.model.clipboard_images._is_linux", return_value=True), \
+             patch("aye.model.clipboard_images._is_wsl", return_value=True), \
+             patch("builtins.__import__", side_effect=ImportError), \
+             patch("aye.model.clipboard_images.subprocess.run", side_effect=FileNotFoundError), \
+             patch("aye.model.clipboard_images._any_linux_tool_available", return_value=False):
             assert clipboard_image_available() is False
 
 
