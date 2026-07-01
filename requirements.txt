@@ -10,5 +10,5 @@ rapidfuzz
 
 # Development dependencies
 coverage==7.14.3
-pytest==9.1.0
+pytest==9.1.1
 pexpect==4.9.0
