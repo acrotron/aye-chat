@@ -568,10 +568,13 @@ class TestClipboardImageAvailable:
             assert clipboard_image_available() is True
 
     def test_true_on_wsl_with_powershell(self):
+        # In Python 3.10, unittest.mock.patch resolves dotted targets via
+        # __import__(). Keep the __import__ patch innermost/last so earlier
+        # dotted patches can resolve before imports are forced to fail.
         with patch("aye.model.clipboard_images._is_linux", return_value=True), \
              patch("aye.model.clipboard_images._is_wsl", return_value=True), \
-             patch("builtins.__import__", side_effect=ImportError), \
-             patch("aye.model.clipboard_images.subprocess.run", return_value=_make_completed_process(0)):
+             patch("aye.model.clipboard_images.subprocess.run", return_value=_make_completed_process(0)), \
+             patch("builtins.__import__", side_effect=ImportError):
             assert clipboard_image_available() is True
 
     def test_false_when_nothing_available(self):
@@ -587,11 +590,14 @@ class TestClipboardImageAvailable:
             assert clipboard_image_available() is False
 
     def test_false_on_wsl_without_powershell(self):
+        # In Python 3.10, unittest.mock.patch resolves dotted targets via
+        # __import__(). Keep the __import__ patch innermost/last so earlier
+        # dotted patches can resolve before imports are forced to fail.
         with patch("aye.model.clipboard_images._is_linux", return_value=True), \
              patch("aye.model.clipboard_images._is_wsl", return_value=True), \
-             patch("builtins.__import__", side_effect=ImportError), \
              patch("aye.model.clipboard_images.subprocess.run", side_effect=FileNotFoundError), \
-             patch("aye.model.clipboard_images._any_linux_tool_available", return_value=False):
+             patch("aye.model.clipboard_images._any_linux_tool_available", return_value=False), \
+             patch("builtins.__import__", side_effect=ImportError):
             assert clipboard_image_available() is False
 
 
