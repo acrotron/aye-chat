@@ -1,7 +1,7 @@
 # Runtime dependencies
 typer==0.26.8
 keyring==25.7.0
-prompt_toolkit==3.0.52
+prompt_toolkit==3.0.53
 httpx==0.28.1
 pathspec==1.1.1
 tree_sitter
