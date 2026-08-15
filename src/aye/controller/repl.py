@@ -13,6 +13,7 @@ from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.filters import completion_is_selected, has_completions
+from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
 
 from rich.console import Console
 from rich import print as rprint
@@ -242,6 +243,19 @@ def collect_and_send_feedback(chat_id: int):
 
 
 
+# ---------------------------------------------------------------------------
+# Register terminal-specific modified Enter sequences as ControlJ (newline).
+# Bare Enter keeps its default submit behavior; modified variants insert '\n'.
+# ---------------------------------------------------------------------------
+for _seq in ('\x1b[27;2;13~', '\x1b[13;2u'):  # Shift+Enter
+    ANSI_SEQUENCES[_seq] = (Keys.ControlJ,)
+for _seq in ('\x1b[27;5;13~', '\x1b[13;5u'):  # Ctrl+Enter
+    ANSI_SEQUENCES[_seq] = (Keys.ControlJ,)
+for _seq in ('\x1b[27;3;13~', '\x1b[13;3u'):  # Alt+Enter
+    ANSI_SEQUENCES[_seq] = (Keys.ControlJ,)
+
+
+
 def create_key_bindings(conf: Any = None) -> KeyBindings:
     """Create custom key bindings for the prompt session.
 
@@ -312,6 +326,13 @@ def create_key_bindings(conf: Any = None) -> KeyBindings:
             buffer = event.app.current_buffer
             buffer.insert_text(f" {marker} ")
 
+    # -----------------------------------------------------------------
+    # Newline insertion via Ctrl+J (works reliably across terminals).
+    # -----------------------------------------------------------------
+    @bindings.add('c-j')
+    def _newline_insert_ctrl_j(event):
+        event.app.current_buffer.insert_text('\n')
+
     return bindings
 
 
@@ -344,7 +365,7 @@ def create_prompt_session(
         completer=completer,
         complete_style=CompleteStyle.MULTI_COLUMN,
         complete_while_typing=True,
-        key_bindings=key_bindings
+        key_bindings=key_bindings,
     )
 
 
@@ -422,12 +443,29 @@ def chat_repl(conf: Any) -> None:
     try:
         while True:
             try:
+                # Enable xterm modifyOtherKeys mode so the terminal sends
+                # distinct escape sequences for Shift+Enter, Ctrl+Enter, etc.
+                # Mode 1 = modifier keys only (safe, won't break existing keys).
+                output = session.app.output
+                try:
+                    output.write_raw("\x1b[>4;1m")
+                    output.flush()
+                except Exception:
+                    pass  # Terminal may not support this
+
                 prompt_str = print_prompt()
                 if index_manager and index_manager.is_indexing() and conf.verbose:
                     progress = index_manager.get_progress_display()
                     prompt_str = f"(\u30c4 ({progress}) \u00bb "
 
                 prompt = session.prompt(prompt_str, reserve_space_for_menu=6)
+
+                # Disable modifyOtherKeys after prompt returns
+                try:
+                    output.write_raw("\x1b[>4;0m")
+                    output.flush()
+                except Exception:
+                    pass
 
                 force_shell = False
                 if prompt.strip().startswith('!'):
