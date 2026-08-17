@@ -599,6 +599,23 @@ def test_create_key_bindings_registers_two_enter_bindings_and_handlers_work():
     assert buffer2.complete_state is None
 
 
+def test_modified_enter_sequences_insert_newline():
+    bindings = repl.create_key_bindings()
+    ctrl_j_binding = bindings.get_bindings_for_keys((Keys.ControlJ,))[0]
+    buffer = MagicMock()
+    event = SimpleNamespace(app=SimpleNamespace(current_buffer=buffer))
+
+    ctrl_j_binding.handler(event)
+
+    buffer.insert_text.assert_called_once_with("\n")
+
+
+def test_modified_enter_sequences_resolve_to_control_j():
+    assert repl.ANSI_SEQUENCES["\x1b[27;2;13~"] == (Keys.ControlJ,)
+    assert repl.ANSI_SEQUENCES["\x1b[13;3u"] == (Keys.ControlJ,)
+    assert repl.ANSI_SEQUENCES["\x1b[27;5;13~"] == (Keys.ControlJ,)
+
+
 def test_create_prompt_session_uses_multicolumn_and_key_bindings():
     completer = MagicMock()
 

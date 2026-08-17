@@ -141,6 +141,12 @@ def print_help_message():
         (r"  completion \[readline|multi]", "Switch auto-completion style (readline or multi, persists between sessions)"),
         ("", ""),
 
+        ("Prompt Editing", ""),
+        ("  Enter", "Send your prompt"),
+        ("  Shift+Enter / Ctrl+Enter / Alt+Enter", "Insert a new line"),
+        ("  Ctrl+J", "Insert a new line (fallback for terminals)"),
+        ("", ""),
+
         ("Utilities", ""),
         ("  raw / printraw", "Reprint last assistant response as plain text (copy-friendly)"),
         ("  !command", "Force shell execution (e.g., \"!echo hello\")."),
