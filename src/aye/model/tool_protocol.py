@@ -109,6 +109,10 @@ def build_tools_prompt(specs: List[ToolSpec], is_final_round: bool = False) -> s
         "the complete new file, never a diff.",
         "",
         "When you have what you need, answer normally in prose.",
+        "Answer directly and concisely: give what the user asked for and stop. "
+        "Do not repeat the tool results back, do not summarize or analyze the "
+        "project unless the user asked for it, and do not pad the answer with "
+        "checklists, tutorials, or setup instructions.",
         "--- END TOOLS",
     ]
 

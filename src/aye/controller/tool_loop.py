@@ -108,7 +108,7 @@ def run_tool_loop(
             break
 
         for call in calls:
-            if call.name in SHELL_TOOL_NAMES or call.name == "web_search":
+            if call.name in SHELL_TOOL_NAMES:
                 present_tool_call(call, console)
             output = _execute(call, root, console=console)
             results.append((call, output))

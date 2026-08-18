@@ -24,7 +24,7 @@ from aye.model.tool_protocol import ToolCall
 
 SHELL_TOOL_NAMES = frozenset({"bash", "cmd"})
 _GLOB_TOOLS = frozenset({"glob", "grep", "web_search"})
-_RESULT_PANEL_TOOLS = frozenset({"bash", "cmd", "web_search"})
+_RESULT_PANEL_TOOLS = frozenset({"bash", "cmd"})
 
 _GREP_COUNT_RE = re.compile(r"^\s*(\d+)\s+matches?\b", re.IGNORECASE)
 
