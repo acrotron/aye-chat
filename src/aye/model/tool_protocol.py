@@ -94,6 +94,20 @@ def build_tools_prompt(specs: List[ToolSpec], is_final_round: bool = False) -> s
         "general knowledge you have.",
         "- When in doubt, use a tool. Reading is cheap; guessing is not.",
         "",
+        "Notes:",
+        "- You have NO web search or internet tool. Never claim to search the "
+        "web, never invent URLs or citations, and say so clearly when an "
+        "answer would need live or online information you cannot verify.",
+        "- The project is your only source of truth; ground every answer in "
+        "what the tools actually returned, not in memory.",
+        "- Shell output is truncated for display, so prefer commands with "
+        "focused output (e.g. `pytest tests/test_x.py -q`) over dumping a "
+        "whole suite or log.",
+        "- Shell commands run from the project root; paths are relative to it.",
+        "- Writes snapshot the previous file state automatically and you can "
+        "edit freely, but read a file before rewriting it and always write "
+        "the complete new file, never a diff.",
+        "",
         "When you have what you need, answer normally in prose.",
         "--- END TOOLS",
     ]
