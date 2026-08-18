@@ -580,10 +580,11 @@ class TestBuildToolsPrompt:
     def test_documents_the_request_shape(self):
         assert '"tool_calls"' in build_tools_prompt(FILE_TOOLS)
 
-    def test_warns_there_is_no_web_search(self):
+    def test_warns_there_is_no_direct_web_search_tool(self):
         block = build_tools_prompt(FILE_TOOLS)
-        assert "NO web search" in block
-        assert "never invent URLs" in block
+        assert "`/search`" in block
+        assert "DuckDuckGo" in block
+        assert "never invent URLs" not in block
 
     def test_final_round_forbids_more_calls(self):
         block = build_tools_prompt(FILE_TOOLS, is_final_round=True)
