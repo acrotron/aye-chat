@@ -21,7 +21,11 @@ from aye.model.tool_protocol import (
     parse_tool_calls,
 )
 from aye.model.tools import build_registry, execute_tool, needs_confirmation
-from aye.presenter.tool_presenter import present_tool_result
+from aye.presenter.tool_presenter import (
+    SHELL_TOOL_NAMES,
+    present_tool_call,
+    present_tool_result,
+)
 
 # Upper bound on tool rounds per user request, so a stubborn model cannot spin
 # forever. The last round's system prompt forbids further calls explicitly.
@@ -104,6 +108,8 @@ def run_tool_loop(
             break
 
         for call in calls:
+            if call.name in SHELL_TOOL_NAMES:
+                present_tool_call(call, console)
             output = _execute(call, root, console=console)
             results.append((call, output))
             present_tool_result(call, output, console)

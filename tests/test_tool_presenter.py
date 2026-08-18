@@ -1,46 +1,82 @@
-"""Tests for the tool-call result presenter."""
+"""Tests for the tool-call presenter (opencode-style one-liners + shell panel)."""
 
 from rich.console import Console
 
 from aye.model.tool_protocol import ToolCall
 from aye.presenter.tool_presenter import (
-    _DISPLAY_MAX_LINES,
+    SHELL_TOOL_NAMES,
+    _describe_call,
     present_tool_result,
-    _truncate_output,
 )
 
 
-class TestTruncateOutput:
-    def test_preserves_short_output(self):
-        assert _truncate_output("hello\nworld") == "hello\nworld"
+class TestDescribeCall:
+    def test_glob_line(self):
+        call = ToolCall(name="glob", arguments={"pattern": "src/**/*.py"})
+        assert _describe_call(call, "") == 'Glob "src/**/*.py"'
 
-    def test_caps_line_count(self):
-        out = "\n".join(f"line {i}" for i in range(_DISPLAY_MAX_LINES + 20))
-        result = _truncate_output(out)
-        assert "(output truncated)" in result
-        assert "line 0" in result
-        assert f"line {_DISPLAY_MAX_LINES + 19}" not in result
+    def test_grep_line_with_count(self):
+        call = ToolCall(name="grep", arguments={"pattern": "def foo"})
+        out = "7 matches for 'def foo'\na.py:3: def foo"
+        assert _describe_call(call, out) == 'Grep "def foo" (7 matches)'
 
-    def test_escapes_rich_markup(self):
-        result = _truncate_output("danger [red]boom[/red]")
-        assert r"\[red]" in result
+    def test_grep_line_with_include_and_no_matches(self):
+        call = ToolCall(
+            name="grep",
+            arguments={"pattern": "zzz", "include": "src/aye/model/tools.py"},
+        )
+        out = "No matches for 'zzz' (1 file searched)"
+        assert _describe_call(call, out) == (
+            'Grep "zzz" in src/aye/model/tools.py (no matches)'
+        )
 
-    def test_empty_output(self):
-        assert _truncate_output("") == ""
+    def test_read_line_with_options(self):
+        call = ToolCall(
+            name="read",
+            arguments={"path": "src/aye/model/tools.py", "start": 45, "limit": 761},
+        )
+        assert _describe_call(call, "") == (
+            "Read src/aye/model/tools.py [start=45, limit=761]"
+        )
+
+    def test_read_line_without_options(self):
+        call = ToolCall(name="read", arguments={"path": "main.py"})
+        assert _describe_call(call, "") == "Read main.py"
+
+    def test_write_line(self):
+        call = ToolCall(name="write", arguments={"path": "src/foo.py"})
+        assert _describe_call(call, "") == "Write src/foo.py"
+
+    def test_shell_line(self):
+        call = ToolCall(name="cmd", arguments={"command": "pytest -q"})
+        assert _describe_call(call, "") == "cmd pytest -q"
 
 
 class TestPresentToolResult:
-    def test_prints_panel_with_call_and_output(self, capsys):
+    def test_file_tool_prints_compact_line_only(self, capsys):
         console = Console(force_terminal=False)
-        call = ToolCall(name="grep", arguments={"pattern": "def foo"})
-        present_tool_result(call, "a.py:3: def foo", console)
+        call = ToolCall(name="glob", arguments={"pattern": "tests/*.py"})
+        present_tool_result(call, "a.py\nb.py", console)
         out = capsys.readouterr().out
-        assert "grep" in out
-        assert "def foo" in out
+        assert '✱Glob "tests/*.py"' in out
+        assert "a.py" not in out
 
-    def test_handles_no_output(self, capsys):
+    def test_shell_tool_prints_output_panel(self, capsys):
         console = Console(force_terminal=False)
-        call = ToolCall(name="write", arguments={"file_name": "x.py"})
-        present_tool_result(call, "", console)
+        call = ToolCall(name="cmd", arguments={"command": "pytest -q"})
+        present_tool_result(call, "2134 passed", console)
         out = capsys.readouterr().out
-        assert "(no output)" in out
+        assert "2134 passed" in out
+
+    def test_shell_panel_escapes_markup(self, capsys):
+        console = Console(force_terminal=False)
+        call = ToolCall(name="cmd", arguments={"command": "echo"})
+        present_tool_result(call, "danger [red]boom[/red]", console)
+        out = capsys.readouterr().out
+        # Escaped markup renders back as literal text; unescaped it would be
+        # swallowed by the style parser and vanish from the output.
+        assert "[red]boom" in out
+
+    def test_shell_tool_names(self):
+        assert "bash" in SHELL_TOOL_NAMES
+        assert "cmd" in SHELL_TOOL_NAMES
