@@ -10,7 +10,6 @@ until the model answers in prose or the round budget is exhausted.
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from rich import print as rprint
 from rich.console import Console
 
 from aye.controller.approval import confirm_command
@@ -18,11 +17,11 @@ from aye.model.api import cli_invoke
 from aye.model.tool_protocol import (
     ToolCall,
     build_tools_prompt,
-    describe_call,
     format_tool_results,
     parse_tool_calls,
 )
 from aye.model.tools import build_registry, execute_tool, needs_confirmation
+from aye.presenter.tool_presenter import present_tool_result
 
 # Upper bound on tool rounds per user request, so a stubborn model cannot spin
 # forever. The last round's system prompt forbids further calls explicitly.
@@ -97,6 +96,7 @@ def run_tool_loop(
     files = list(updated_files)
     results: List[tuple] = []
     root = Path(getattr(conf, "root", None) or Path.cwd())
+    console = console if console is not None else Console()
 
     for round_index in range(MAX_TOOL_ROUNDS):
         calls = parse_tool_calls(summary)
@@ -104,14 +104,9 @@ def run_tool_loop(
             break
 
         for call in calls:
-            rprint(f"[dim]\u2192 tool:[/] [cyan]{describe_call(call)}[/]")
             output = _execute(call, root, console=console)
             results.append((call, output))
-
-            if call.name == "write":
-                first_line = str(output).splitlines()[0] if output else ""
-                if first_line:
-                    rprint(f"[dim]   {first_line}[/]")
+            present_tool_result(call, output, console)
 
         is_final_round = round_index + 1 == MAX_TOOL_ROUNDS
         followup = format_tool_results(prompt, results)
