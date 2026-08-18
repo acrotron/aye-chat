@@ -4,6 +4,7 @@ import json
 import platform
 from pathlib import Path
 
+import httpx
 import pytest
 
 from aye.model.tool_protocol import (
@@ -35,6 +36,7 @@ from aye.model.tools import (
     run_glob,
     run_grep,
     run_read,
+    run_web_search,
     _format_shell_result,
     _matches_include,
     _resolve_in_root,
@@ -497,13 +499,13 @@ class TestFormatShellResult:
 class TestRegistry:
     def test_default_registry_offers_every_tool(self, monkeypatch):
         monkeypatch.delenv("AYE_TOOL_PERMISSION", raising=False)
-        expected = {"read", "glob", "grep", "write", "cmd"}
+        expected = {"read", "glob", "grep", "write", "cmd", "web_search"}
         if platform.system() != "Windows":
-            expected = {"read", "glob", "grep", "write", "bash"}
+            expected = {"read", "glob", "grep", "write", "bash", "web_search"}
         assert set(build_registry()) == expected
 
     def test_read_only_registry_drops_mutating_tools(self):
-        assert set(read_only_registry()) == {"read", "glob", "grep"}
+        assert set(read_only_registry()) == {"read", "glob", "grep", "web_search"}
 
     def test_write_and_shell_are_the_mutating_tools(self):
         mutating = {s.name for s in FILE_TOOLS + SHELL_TOOLS if s.mutating}
@@ -580,11 +582,11 @@ class TestBuildToolsPrompt:
     def test_documents_the_request_shape(self):
         assert '"tool_calls"' in build_tools_prompt(FILE_TOOLS)
 
-    def test_warns_there_is_no_direct_web_search_tool(self):
-        block = build_tools_prompt(FILE_TOOLS)
-        assert "`/search`" in block
+    def test_warns_web_search_defaults_to_duckduckgo_and_can_fail(self):
+        block = build_tools_prompt(FILE_TOOLS + [spec for spec in ALL_TOOLS if spec.name == "web_search"])
+        assert "`web_search`" in block
         assert "DuckDuckGo" in block
-        assert "never invent URLs" not in block
+        assert "Never invent results or URLs" in block
 
     def test_final_round_forbids_more_calls(self):
         block = build_tools_prompt(FILE_TOOLS, is_final_round=True)
@@ -715,3 +717,78 @@ class TestFormatToolResults:
     def test_empty_output_is_labelled(self):
         out = format_tool_results("q", [(ToolCall("glob", {}), "")])
         assert "(no output)" in out
+
+
+# ---------------------------------------------------------------------------
+# web_search
+# ---------------------------------------------------------------------------
+
+class TestRunWebSearch:
+    def test_requires_query(self, tmp_path):
+        with pytest.raises(ToolError, match="query is required"):
+            run_web_search({}, tmp_path)
+
+    def test_unknown_provider(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "aye.model.tools.get_user_config",
+            lambda key, default=None: "shodan" if key == "search_provider" else default,
+        )
+        with pytest.raises(ToolError, match="unknown search_provider"):
+            run_web_search({"query": "hello"}, tmp_path)
+
+    def test_duckduckgo_parses_html_results(self, tmp_path, monkeypatch):
+        html = (
+            '<div class="result"><a rel="nofollow" class="result__a" '
+            'href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F&rut=1">'
+            "Example <b>Site</b></a>"
+            '<a class="result__snippet" href="x">A useful <b>blurb</b>.</a></div>'
+        )
+
+        class FakeResponse:
+            status_code = 200
+            text = html
+            content = html.encode("utf-8")
+
+        monkeypatch.setattr(
+            "aye.model.tools.httpx.get",
+            lambda *a, **k: FakeResponse(),
+        )
+        out = run_web_search({"query": "example", "max_results": 1}, tmp_path)
+        assert "DuckDuckGo results for 'example'" in out
+        assert "Example Site" in out
+        assert "https://example.com/" in out
+        assert "A useful blurb." in out
+
+    def test_duckduckgo_error_is_reported(self, tmp_path, monkeypatch):
+        def fail(*args, **kwargs):
+            raise httpx.ConnectError("no network")
+
+        monkeypatch.setattr("aye.model.tools.httpx.get", fail)
+        with pytest.raises(ToolError, match="DuckDuckGo request failed"):
+            run_web_search({"query": "example"}, tmp_path)
+
+    def test_tavily_requires_key(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "aye.model.tools.get_user_config",
+            lambda key, default=None: (
+                "tavily" if key == "search_provider" else default
+            ),
+        )
+        with pytest.raises(ToolError, match="tavily_api_key is not set"):
+            run_web_search({"query": "example"}, tmp_path)
+
+    def test_brave_requires_key(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "aye.model.tools.get_user_config",
+            lambda key, default=None: (
+                "brave" if key == "search_provider" else default
+            ),
+        )
+        with pytest.raises(ToolError, match="brave_api_key is not set"):
+            run_web_search({"query": "example"}, tmp_path)
+
+    def test_registry_includes_web_search(self):
+        registry = build_registry()
+        assert "web_search" in registry
+        assert registry["web_search"].mutating is False
+        assert registry["web_search"].prompts_by_default is False

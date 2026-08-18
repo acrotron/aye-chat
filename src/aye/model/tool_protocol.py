@@ -95,11 +95,9 @@ def build_tools_prompt(specs: List[ToolSpec], is_final_round: bool = False) -> s
         "- When in doubt, use a tool. Reading is cheap; guessing is not.",
         "",
         "Notes:",
-        "- Web search exists as a user command (`/search`), not as a tool you "
-        "can call. It defaults to DuckDuckGo (no API key) and can fail or "
-        "return nothing. Never claim you searched the web or invent URLs; if "
-        "an answer needs live or online data, say the user should run "
-        "`/search <query>` and share the results.",
+        "- `web_search` is available, but it defaults to DuckDuckGo (no API "
+        "key) and can fail or return nothing. Never invent results or URLs; "
+        "if the search errors or comes back empty, say so plainly.",
         "- The project is your only source of truth; ground every answer in "
         "what the tools actually returned, not in memory.",
         "- Shell output is truncated for display, so prefer commands with "

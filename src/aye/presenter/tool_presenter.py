@@ -23,7 +23,8 @@ from rich.text import Text
 from aye.model.tool_protocol import ToolCall
 
 SHELL_TOOL_NAMES = frozenset({"bash", "cmd"})
-_GLOB_TOOLS = frozenset({"glob", "grep"})
+_GLOB_TOOLS = frozenset({"glob", "grep", "web_search"})
+_RESULT_PANEL_TOOLS = frozenset({"bash", "cmd", "web_search"})
 
 _GREP_COUNT_RE = re.compile(r"^\s*(\d+)\s+matches?\b", re.IGNORECASE)
 
@@ -54,6 +55,13 @@ def _describe_call(call: ToolCall, output: str) -> str:
 
     if name == "glob":
         return f'Glob "{args.get("pattern", "")}"'
+
+    if name == "web_search":
+        parts = [f'Web_search "{args.get("query", "")}"']
+        max_results = args.get("max_results")
+        if max_results not in (None, ""):
+            parts.append(f"({max_results})")
+        return " ".join(parts)
 
     if name == "grep":
         parts = [f'Grep "{args.get("pattern", "")}"']
@@ -130,7 +138,7 @@ def present_tool_result(call: ToolCall, output: str, console: Console) -> None:
         output: The tool's textual result.
         console: Rich console to print through.
     """
-    if call.name not in SHELL_TOOL_NAMES:
+    if call.name not in _RESULT_PANEL_TOOLS:
         _print_call_line(call, output, console)
         return
 

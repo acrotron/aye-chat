@@ -6,6 +6,7 @@ from aye.model.tool_protocol import ToolCall
 from aye.presenter.tool_presenter import (
     SHELL_TOOL_NAMES,
     _describe_call,
+    present_tool_call,
     present_tool_result,
 )
 
@@ -67,6 +68,17 @@ class TestPresentToolResult:
         present_tool_result(call, "2134 passed", console)
         out = capsys.readouterr().out
         assert "2134 passed" in out
+
+    def test_web_search_prints_line_and_result_panel(self, capsys):
+        console = Console(force_terminal=False)
+        call = ToolCall(name="web_search", arguments={"query": "httpx timeout"})
+        present_tool_call(call, console)
+        present_tool_result(
+            call, "1. HTTPX\n   https://python-httpx.org/", console
+        )
+        out = capsys.readouterr().out
+        assert '✱Web_search "httpx timeout"' in out
+        assert "https://python-httpx.org/" in out
 
     def test_shell_panel_escapes_markup(self, capsys):
         console = Console(force_terminal=False)

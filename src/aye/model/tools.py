@@ -32,8 +32,12 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+from html import unescape
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+from urllib import parse
+
+import httpx
 
 from aye.model.auth import get_user_config
 from aye.model.ignore_patterns import load_ignore_patterns
@@ -588,7 +592,215 @@ def run_cmd(arguments: Dict[str, Any], root: Path) -> str:
     return _run_shell(arguments.get("command", ""), root, None)
 
 
+# ---------------------------------------------------------------------------
+# web_search
+# ---------------------------------------------------------------------------
 
+_DDG_SEARCH_URL = "https://html.duckduckgo.com/html/"
+_DDG_TITLE_RE = re.compile(
+    r'<a[^>]+class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.DOTALL
+)
+_DDG_SNIPPET_RE = re.compile(
+    r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>', re.DOTALL
+)
+_WEB_TIMEOUT = 20.0
+
+
+def _strip_html(text: str) -> str:
+    """Remove tags and unescape entities from a scraped fragment."""
+    return unescape(" ".join(re.sub(r"<[^>]+>", "", text).split()))
+
+
+def _ddg_redirect_url(href: str) -> str:
+    """Resolve DuckDuckGo's ``/l/?uddg=...`` redirect link to the real URL."""
+    match = re.search(r"[?&]uddg=([^&]+)", href)
+    if match:
+        try:
+            return parse.unquote(match.group(1))
+        except ValueError:
+            pass
+    return href
+
+
+def _format_search_results(
+    provider: str,
+    query: str,
+    results: List[Dict[str, str]],
+) -> str:
+    """Render search results as a numbered block for the next prompt."""
+    lines = [f"{provider} results for {query!r}:", ""]
+    for index, result in enumerate(results, start=1):
+        lines.append(f"{index}. {result.get('title') or '(no title)'}")
+        url = result.get("url", "")
+        if url:
+            lines.append(f"   {url}")
+        snippet = result.get("snippet", "")
+        if snippet:
+            lines.append(f"   {snippet}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _search_duckduckgo(query: str, max_results: int) -> str:
+    """Search through DuckDuckGo's HTML endpoint; no API key required.
+
+    DuckDuckGo occasionally blocks scripted requests or returns nothing, so
+    callers treat an error here as a normal outcome and tell the model plainly.
+
+    Raises:
+        ToolError: If the request fails, is blocked, or has no results.
+    """
+    try:
+        response = httpx.get(
+            _DDG_SEARCH_URL,
+            params={"q": query},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=_WEB_TIMEOUT,
+            follow_redirects=True,
+        )
+    except httpx.HTTPError as exc:
+        raise ToolError(f"DuckDuckGo request failed: {exc}") from exc
+
+    if response.status_code != 200:
+        raise ToolError(f"DuckDuckGo returned HTTP {response.status_code}")
+
+    page = response.content.decode("utf-8", errors="replace")
+    titles = _DDG_TITLE_RE.findall(page)
+    snippets = _DDG_SNIPPET_RE.findall(page)
+
+    results: List[Dict[str, str]] = []
+    for index, (href, raw_title) in enumerate(titles):
+        if index >= max_results:
+            break
+        snippet = _strip_html(snippets[index]) if index < len(snippets) else ""
+        results.append(
+            {
+                "title": _strip_html(raw_title) or "(no title)",
+                "url": _ddg_redirect_url(href),
+                "snippet": snippet,
+            }
+        )
+
+    if not results:
+        raise ToolError(
+            "DuckDuckGo returned no results (blocked or nothing found)"
+        )
+    return _format_search_results("DuckDuckGo", query, results)
+
+
+def _search_tavily(query: str, max_results: int) -> str:
+    """Search through the Tavily API, which needs ``tavily_api_key``."""
+    api_key = get_user_config("tavily_api_key")
+    if not api_key:
+        raise ToolError("tavily selected but tavily_api_key is not set in ~/.ayecfg")
+
+    try:
+        response = httpx.post(
+            "https://api.tavily.com/search",
+            json={
+                "api_key": api_key,
+                "query": query,
+                "max_results": max_results,
+                "search_depth": "basic",
+            },
+            timeout=_WEB_TIMEOUT,
+        )
+    except httpx.HTTPError as exc:
+        raise ToolError(f"Tavily request failed: {exc}") from exc
+
+    if response.status_code != 200:
+        raise ToolError(f"Tavily returned HTTP {response.status_code}")
+
+    results: List[Dict[str, str]] = []
+    for item in response.json().get("results", [])[:max_results]:
+        results.append(
+            {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("content", ""),
+            }
+        )
+
+    if not results:
+        raise ToolError("Tavily returned no results")
+    return _format_search_results("Tavily", query, results)
+
+
+def _search_brave(query: str, max_results: int) -> str:
+    """Search through the Brave API, which needs ``brave_api_key``."""
+    api_key = get_user_config("brave_api_key")
+    if not api_key:
+        raise ToolError("brave selected but brave_api_key is not set in ~/.ayecfg")
+
+    try:
+        response = httpx.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": query, "count": max_results},
+            headers={
+                "X-Subscription-Token": api_key,
+                "Accept": "application/json",
+            },
+            timeout=_WEB_TIMEOUT,
+        )
+    except httpx.HTTPError as exc:
+        raise ToolError(f"Brave request failed: {exc}") from exc
+
+    if response.status_code != 200:
+        raise ToolError(f"Brave returned HTTP {response.status_code}")
+
+    results: List[Dict[str, str]] = []
+    for item in response.json().get("web", {}).get("results", [])[:max_results]:
+        results.append(
+            {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("description", ""),
+            }
+        )
+
+    if not results:
+        raise ToolError("Brave returned no results")
+    return _format_search_results("Brave", query, results)
+
+
+def run_web_search(arguments: Dict[str, Any], root: Path) -> str:
+    """Search the web for live information outside the project tree.
+
+    The provider is pinned with ``search_provider`` in ``~/.ayecfg``
+    (or ``AYE_SEARCH_PROVIDER``): ``duckduckgo`` (default, no key),
+    ``tavily``, or ``brave``.
+
+    Args:
+        arguments: ``query`` (required), optional ``max_results``.
+        root: Unused; kept for the common runner signature.
+
+    Returns:
+        A numbered list of titles, URLs, and snippets.
+
+    Raises:
+        ToolError: On missing query, unknown provider, or a failed search.
+    """
+    query = str(arguments.get("query", "")).strip()
+    if not query:
+        raise ToolError("query is required")
+
+    max_results = _coerce_int(arguments.get("max_results"), default=5, minimum=1)
+    provider = str(get_user_config("search_provider", "duckduckgo")).strip().lower()
+
+    if provider in {"", "duckduckgo", "ddg"}:
+        return _search_duckduckgo(query, max_results)
+    if provider == "tavily":
+        return _search_tavily(query, max_results)
+    if provider == "brave":
+        return _search_brave(query, max_results)
+    raise ToolError(
+        f"unknown search_provider {provider!r} "
+        "(use duckduckgo, tavily, or brave)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Coercion helpers
 # ---------------------------------------------------------------------------
 # Coercion helpers
 # ---------------------------------------------------------------------------
@@ -660,6 +872,28 @@ FILE_TOOLS: List[ToolSpec] = [
     ),
 ]
 
+# Web search is read-only and never prompts, but it is network-bound and can
+# legitimately fail (DuckDuckGo blocks scripts from time to time), so the model
+# is told to report failures plainly instead of guessing.
+WEB_TOOLS: List[ToolSpec] = [
+    ToolSpec(
+        name="web_search",
+        description=(
+            "Search the web for current information. Use when an answer "
+            "depends on live or external data not present in the project. "
+            "Default provider is DuckDuckGo (no API key) and can fail or "
+            "return no results; Tavily and Brave need keys configured by the "
+            "user."
+        ),
+        parameters={
+            "query": "string - the search query",
+            "max_results": "integer, optional - how many results to return",
+        },
+        required=("query",),
+        runner=run_web_search,
+    ),
+]
+
 # Shell tools are separate only so read-only callers can exclude them by
 # category. They are part of the offered tool set in both permission modes.
 SHELL_TOOLS: List[ToolSpec] = [
@@ -689,7 +923,7 @@ SHELL_TOOLS: List[ToolSpec] = [
     ),
 ]
 
-ALL_TOOLS: List[ToolSpec] = FILE_TOOLS + SHELL_TOOLS
+ALL_TOOLS: List[ToolSpec] = FILE_TOOLS + WEB_TOOLS + SHELL_TOOLS
 
 
 def _platform_shell_tools() -> List[ToolSpec]:
@@ -711,7 +945,7 @@ def default_specs() -> List[ToolSpec]:
     Both permission modes offer the same set; they differ only in whether shell
     calls are confirmed with the user.
     """
-    return FILE_TOOLS + _platform_shell_tools()
+    return FILE_TOOLS + WEB_TOOLS + _platform_shell_tools()
 
 
 def build_registry(specs: Optional[List[ToolSpec]] = None) -> Dict[str, ToolSpec]:
