@@ -139,6 +139,7 @@ def print_help_message():
         (r"  verbose \[on|off]", "Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)"),
         (r"  autodiff \[on|off]", "Toggle automatic diff display after LLM file updates (off by default, persists between sessions)"),
         (r"  completion \[readline|multi]", "Switch auto-completion style (readline or multi, persists between sessions)"),
+        ("  Shift+Tab", "Toggle permission mode: default (shell commands ask first) <-> full (run without asking)"),
         ("", ""),
 
         ("Prompt Editing", ""),

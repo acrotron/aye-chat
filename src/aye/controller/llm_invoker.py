@@ -16,6 +16,8 @@ from aye.controller.util import is_truncated_json, discover_agents_file
 from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB, CONTEXT_HARD_LIMIT_KB
 from aye.model import telemetry
 from aye.model.skills_system import SkillsResolver
+from aye.model.tool_protocol import build_tools_prompt, is_tool_request
+from aye.model.tools import build_registry
 
 import os
 
@@ -437,6 +439,11 @@ def invoke_llm(
 
     system_prompt = _build_system_prompt_with_skills(prompt, conf, verbose)
 
+    # Offer the model its tool set. The base prompt is kept without the tools
+    # block so the loop can append per-round (final-round) variants.
+    base_system_prompt = system_prompt
+    system_prompt = system_prompt + build_tools_prompt(list(build_registry().values()))
+
     model_config = _get_model_config(conf.selected_model)
     max_output_tokens = model_config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS) if model_config else DEFAULT_MAX_OUTPUT_TOKENS
 
@@ -513,6 +520,39 @@ def invoke_llm(
         # 3) Parse API response
         assistant_resp, new_chat_id = _parse_api_response(api_resp)
         parsed_summary = assistant_resp.get("answer_summary", "")
+        updated_files = assistant_resp.get("source_files", [])
+
+        # 3b) Agentic tool loop: if the model answered with a tool-call JSON,
+        # run the tools and continue the conversation until it answers in
+        # prose. The final prose was never shown by the streaming UI (round 1
+        # streamed the tool-call JSON), so summary_already_printed is False.
+        if is_tool_request(parsed_summary):
+            from aye.controller.tool_loop import run_tool_loop
+
+            # On the non-streaming path the spinner is never stopped by first
+            # content; stop it before the loop so tool lines print cleanly.
+            spinner.stop()
+
+            parsed_summary, updated_files, new_chat_id = run_tool_loop(
+                initial_summary=parsed_summary,
+                updated_files=updated_files,
+                chat_id=new_chat_id,
+                prompt=prompt,
+                conf=conf,
+                base_system_prompt=base_system_prompt,
+                source_files=source_files,
+                max_output_tokens=max_output_tokens,
+                verbose=verbose or _is_verbose(),
+                attachments=attachments,
+                console=console,
+            )
+            return LLMResponse(
+                summary=parsed_summary,
+                updated_files=updated_files,
+                chat_id=new_chat_id,
+                source=LLMSource.API,
+                summary_already_printed=False,
+            )
 
         # IMPORTANT:
         # - Always return the parsed summary so other features (e.g. `raw`) can use it.

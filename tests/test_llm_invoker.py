@@ -937,7 +937,8 @@ class TestLlmInvoker(TestCase):
                 "source_files": self.source_files,
                 "chat_id": None,
                 "root": self.conf.root,
-                "system_prompt": SYSTEM_PROMPT,
+                "system_prompt": SYSTEM_PROMPT
+                + llm_invoker.build_tools_prompt(list(llm_invoker.build_registry().values())),
                 "max_output_tokens": expected_max_output_tokens,
                 "attachments": [],
             }
@@ -1003,7 +1004,8 @@ class TestLlmInvoker(TestCase):
             chat_id=123,
             source_files=self.source_files,
             model=self.conf.selected_model,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SYSTEM_PROMPT
+            + llm_invoker.build_tools_prompt(list(llm_invoker.build_registry().values())),
             max_output_tokens=expected_max_output_tokens,
             telemetry=None,
             on_stream_update=ANY,
@@ -1200,7 +1202,8 @@ class TestLlmInvoker(TestCase):
             chat_id=-1,
             source_files=self.source_files,
             model=self.conf.selected_model,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SYSTEM_PROMPT
+            + llm_invoker.build_tools_prompt(list(llm_invoker.build_registry().values())),
             max_output_tokens=expected_max_output_tokens,
             telemetry=None,
             on_stream_update=ANY,
@@ -1510,7 +1513,11 @@ class TestLlmInvoker(TestCase):
         llm_invoker.invoke_llm("prompt", self.conf, self.console, self.plugin_manager)
 
         mock_cli.assert_called_once()
-        self.assertEqual(mock_cli.call_args[1]['system_prompt'], "base + skills prompt")
+        expected_prompt = (
+            "base + skills prompt"
+            + llm_invoker.build_tools_prompt(list(llm_invoker.build_registry().values()))
+        )
+        self.assertEqual(mock_cli.call_args[1]['system_prompt'], expected_prompt)
 
     @patch('aye.controller.llm_invoker._build_system_prompt_with_skills')
     @patch('aye.controller.llm_invoker.collect_sources')
