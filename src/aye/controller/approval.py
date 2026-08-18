@@ -12,6 +12,9 @@ from typing import Callable, Optional
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import Layout
+from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.controls import FormattedTextControl
 from rich import box, print as rprint
 from rich.console import Console
 from rich.panel import Panel
@@ -59,10 +62,19 @@ def _build_confirm_bindings() -> KeyBindings:
     return kb
 
 
+def _build_key_application() -> Application:
+    """Invisible-keypress application: renders nothing, exits on a bound key."""
+    layout = Layout(container=Window(FormattedTextControl(""), height=1))
+    return Application(
+        full_screen=False,
+        layout=layout,
+        key_bindings=_build_confirm_bindings(),
+    )
+
+
 def _default_read_key() -> bool:
     """Read a single key without rendering an input line."""
-    app = Application(full_screen=False, key_bindings=_build_confirm_bindings())
-    return app.run() is True
+    return _build_key_application().run() is True
 
 
 def confirm_command(
