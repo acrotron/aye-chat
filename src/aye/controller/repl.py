@@ -333,6 +333,15 @@ def create_key_bindings(conf: Any = None) -> KeyBindings:
     def _newline_insert_ctrl_j(event):
         event.app.current_buffer.insert_text('\n')
 
+    # -----------------------------------------------------------------
+    # Shift+Tab toggles the tool permission mode (default <-> full).
+    # -----------------------------------------------------------------
+    @bindings.add('s-tab')
+    def _toggle_permission_mode(event):
+        from aye.controller.approval import toggle_permission_mode
+
+        toggle_permission_mode()
+
     return bindings
 
 
