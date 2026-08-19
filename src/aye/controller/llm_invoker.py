@@ -16,7 +16,12 @@ from aye.controller.util import is_truncated_json, discover_agents_file
 from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB, CONTEXT_HARD_LIMIT_KB
 from aye.model import telemetry
 from aye.model.skills_system import SkillsResolver
-from aye.model.tool_protocol import build_tools_prompt, is_tool_request
+from aye.model.tool_protocol import (
+    build_tools_prompt,
+    is_tool_request,
+    looks_like_stub,
+    summary_with_tool_calls,
+)
 from aye.model.tools import build_registry
 
 import os
@@ -28,6 +33,25 @@ def _is_verbose():
 
 def _is_debug():
     return get_user_config("debug", "off").lower() == "on"
+
+
+def _tool_round_budget() -> int:
+    """Return the tool round budget from config/env, with a sane floor.
+
+    Reads ``max_tool_rounds`` from user config; ``AYE_MAX_TOOL_ROUNDS``
+    overrides it. Values below the module floor are clamped so a typo cannot
+    leave the model without any budget.
+    """
+    from aye.controller.tool_loop import MAX_TOOL_ROUNDS
+
+    raw = os.environ.get("AYE_MAX_TOOL_ROUNDS") or get_user_config(
+        "max_tool_rounds", str(MAX_TOOL_ROUNDS)
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return MAX_TOOL_ROUNDS
+    return max(2, min(value, 50))
 
 
 def _get_int_env(name: str, default: int) -> int:
@@ -519,19 +543,31 @@ def invoke_llm(
 
         # 3) Parse API response
         assistant_resp, new_chat_id = _parse_api_response(api_resp)
-        parsed_summary = assistant_resp.get("answer_summary", "")
+        parsed_summary = summary_with_tool_calls(
+            assistant_resp.get("answer_summary", ""),
+            assistant_resp.get("tool_call") or assistant_resp.get("tool_calls"),
+        )
         updated_files = assistant_resp.get("source_files", [])
 
-        # 3b) Agentic tool loop: if the model answered with a tool-call JSON,
-        # run the tools and continue the conversation until it answers in
-        # prose. The final prose was never shown by the streaming UI (round 1
-        # streamed the tool-call JSON), so summary_already_printed is False.
-        if is_tool_request(parsed_summary):
+        # 3b) Agentic tool loop: when the model answers with a tool-call JSON
+        # (or a structured tool_call field), run the tools and continue the
+        # conversation until it answers in prose. A placeholder reply such as
+        # "Let me investigate..." also enters the loop so the model is nudged
+        # to actually use its tools. The final prose was never shown by the
+        # streaming UI (round 1 streamed the tool-call JSON), so
+        # summary_already_printed is False.
+        tool_requested = is_tool_request(parsed_summary)
+        if tool_requested or looks_like_stub(parsed_summary):
             from aye.controller.tool_loop import run_tool_loop
 
             # On the non-streaming path the spinner is never stopped by first
             # content; stop it before the loop so tool lines print cleanly.
             spinner.stop()
+
+            # The streamed bubble already showed the raw tool-call JSON; clear
+            # it so the tool activity (rendered by the loop) is the only frame.
+            if streaming_display is not None and streaming_display.is_active():
+                streaming_display.discard()
 
             parsed_summary, updated_files, new_chat_id = run_tool_loop(
                 initial_summary=parsed_summary,
@@ -545,6 +581,8 @@ def invoke_llm(
                 verbose=verbose or _is_verbose(),
                 attachments=attachments,
                 console=console,
+                stub_retry=not tool_requested,
+                max_rounds=_tool_round_budget(),
             )
             return LLMResponse(
                 summary=parsed_summary,

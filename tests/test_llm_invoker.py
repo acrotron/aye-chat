@@ -67,6 +67,36 @@ class TestGetIntEnv(TestCase):
             self.assertEqual(result, -100)
 
 
+class TestToolRoundBudget(TestCase):
+    """Tests for the tool round budget helper."""
+
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='10')
+    def test_reads_config(self, mock_get_cfg):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AYE_MAX_TOOL_ROUNDS", None)
+            self.assertEqual(llm_invoker._tool_round_budget(), 10)
+
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='5')
+    def test_env_overrides_config(self, mock_get_cfg):
+        with patch.dict(os.environ, {"AYE_MAX_TOOL_ROUNDS": "20"}, clear=False):
+            self.assertEqual(llm_invoker._tool_round_budget(), 20)
+
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='5')
+    def test_clamps_to_floor(self, mock_get_cfg):
+        with patch.dict(os.environ, {"AYE_MAX_TOOL_ROUNDS": "1"}, clear=False):
+            self.assertEqual(llm_invoker._tool_round_budget(), 2)
+
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='5')
+    def test_clamps_to_ceiling(self, mock_get_cfg):
+        with patch.dict(os.environ, {"AYE_MAX_TOOL_ROUNDS": "999"}, clear=False):
+            self.assertEqual(llm_invoker._tool_round_budget(), 50)
+
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='not_a_number')
+    def test_bad_config_falls_back(self, mock_get_cfg):
+        with patch.dict(os.environ, {"AYE_MAX_TOOL_ROUNDS": "bad"}, clear=False):
+            self.assertEqual(llm_invoker._tool_round_budget(), 15)
+
+
 class TestGetModelConfig(TestCase):
     """Tests for _get_model_config function."""
 

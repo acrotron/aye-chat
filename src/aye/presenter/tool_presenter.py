@@ -9,13 +9,17 @@ opencode does in the terminal:
 
 Shell commands (bash, cmd) get the same one-liner, then their captured output
 below it in a bordered panel (the output is shown in full, markup-escaped).
+
+Instead of printing these lines loose under the prompt, the tool loop collects
+them into a :class:`ToolSession` and renders the whole request's activity in a
+single rounded panel so it reads as one chat bubble.
 """
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from rich import box
-from rich.console import Console
+from rich.console import Console, Group, RenderableType
 from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
@@ -25,6 +29,10 @@ from aye.model.tool_protocol import ToolCall
 SHELL_TOOL_NAMES = frozenset({"bash", "cmd"})
 _GLOB_TOOLS = frozenset({"glob", "grep", "web_search"})
 _RESULT_PANEL_TOOLS = frozenset({"bash", "cmd"})
+
+# Border colour for the chat-style tool bubble; matches the `ui.border` value
+# used by the chat panels so it blends in without needing a themed console.
+_CHAT_BORDER = "slate_blue3"
 
 _GREP_COUNT_RE = re.compile(r"^\s*(\d+)\s+matches?\b", re.IGNORECASE)
 
@@ -105,15 +113,81 @@ def _line_style(name: str) -> str:
     return "bold cyan"
 
 
-def _print_call_line(call: ToolCall, output: str, console: Console) -> None:
-    """Print the compact opencode-style line for *call*."""
+def _line_renderable(call: ToolCall, output: str) -> Text:
+    """Build the compact opencode-style line for *call* without printing."""
     icon = _icon_for(call.name)
     description = _describe_call(call, output)
 
     line = Text()
     line.append(icon, style=_line_style(call.name))
     line.append(description, style=_line_style(call.name))
-    console.print(line)
+    return line
+
+
+def _print_call_line(call: ToolCall, output: str, console: Console) -> None:
+    """Print the compact opencode-style line for *call*."""
+    console.print(_line_renderable(call, output))
+
+
+def _shell_panel(call: ToolCall, output: str) -> Panel:
+    """Render a shell command's full output in a bordered panel."""
+    return Panel(
+        escape(output) or "[dim](no output)[/]",
+        title=f" {escape(call.name)} ",
+        border_style="cyan",
+        box=box.ROUNDED,
+        padding=(0, 1),
+    )
+
+
+class ToolSession:
+    """Accumulate a request's tool activity and render it as one chat bubble.
+
+    Each executed tool adds a compact one-liner; shell commands also add their
+    output panel. Calling :meth:`render` prints everything inside a single
+    rounded panel matching the chat message style, so the tool activity reads
+    as part of the conversation instead of loose lines under the prompt.
+
+    Args:
+        title: Panel title shown above the collected activity.
+    """
+
+    def __init__(self, title: str = " tools "):
+        self._title = title
+        self._items: List[RenderableType] = []
+
+    def add_call_line(self, call: ToolCall, output: str) -> None:
+        """Queue the compact one-liner for *call* (non-shell tools)."""
+        self._items.append(_line_renderable(call, output))
+
+    def add_shell_result(self, call: ToolCall, output: str) -> None:
+        """Queue a shell one-liner plus its full output panel."""
+        self._items.append(_line_renderable(call, output))
+        self._items.append(_shell_panel(call, output))
+
+    def is_empty(self) -> bool:
+        """True when no tool activity has been queued."""
+        return not self._items
+
+    def render(self, console: Console) -> None:
+        """Print all queued activity inside one rounded chat-style panel."""
+        if not self._items:
+            return
+        body: RenderableType
+        if len(self._items) == 1:
+            body = self._items[0]
+        else:
+            body = Group(*self._items)
+        console.print(
+            Panel(
+                body,
+                title=self._title,
+                border_style=_CHAT_BORDER,
+                box=box.ROUNDED,
+                padding=(0, 1),
+                expand=True,
+            )
+        )
 
 
 def present_tool_call(call: ToolCall, console: Console) -> None:
@@ -142,11 +216,4 @@ def present_tool_result(call: ToolCall, output: str, console: Console) -> None:
         _print_call_line(call, output, console)
         return
 
-    panel = Panel(
-        escape(output) or "[dim](no output)[/]",
-        title=f" {escape(call.name)} ",
-        border_style="cyan",
-        box=box.ROUNDED,
-        padding=(0, 1),
-    )
-    console.print(panel)
+    console.print(_shell_panel(call, output))
