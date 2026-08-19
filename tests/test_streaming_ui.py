@@ -509,6 +509,33 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         cb("final text", is_final=True)
         display.update.assert_called_once_with("final text", is_final=True)
 
+    def test_create_streaming_callback_discards_tool_json(self):
+        display = MagicMock()
+        cb = streaming_ui.create_streaming_callback(display)
+        cb(
+            '{"tool_calls":[{"name":"glob","arguments":{"pattern":"*.py"}}]}',
+            is_final=True,
+        )
+        display.discard.assert_called_once_with()
+        display.update.assert_not_called()
+
+    def test_create_streaming_callback_discards_stub(self):
+        display = MagicMock()
+        cb = streaming_ui.create_streaming_callback(display)
+        cb("Let me investigate the texture issue", is_final=True)
+        display.discard.assert_called_once_with()
+        display.update.assert_not_called()
+
+    def test_create_streaming_callback_keeps_tool_json_during_stream(self):
+        display = MagicMock()
+        cb = streaming_ui.create_streaming_callback(display)
+        cb('{"tool_calls":[{"name":"glob","arguments":{"pattern":"*.py"}}]}')
+        display.update.assert_called_once_with(
+            '{"tool_calls":[{"name":"glob","arguments":{"pattern":"*.py"}}]}',
+            is_final=False,
+        )
+        display.discard.assert_not_called()
+
     def test_has_received_content_false_initially(self):
         d = streaming_ui.StreamingResponseDisplay(console=self.console)
         self.assertFalse(d.has_received_content())

@@ -19,6 +19,7 @@ Tailing (viewport follow):
   so the user can scroll back through the entire answer.
 - Controlled via the AYE_STREAM_TAIL env var (default: on).
 """
+from aye.model.tool_protocol import looks_like_stub, parse_tool_calls
 from aye.presenter.repl_ui import deep_ocean_theme
 
 import os
@@ -457,6 +458,29 @@ class StreamingResponseDisplay:
 
         self._console.print()  # spacing after panel
 
+    def discard(self) -> None:
+        """Stop the live display without printing the accumulated content.
+
+        Used when the streamed content turns out to be a tool request (or a
+        placeholder reply): showing the raw ``{"tool_calls": ...}`` JSON as a
+        chat bubble is noise, and the tool loop renders its own chat-style
+        panel instead. Safe to call when the display is already stopped.
+        """
+        self._stop_monitoring.set()
+        if self._stall_monitor_thread and self._stall_monitor_thread.is_alive():
+            self._stall_monitor_thread.join(timeout=1.0)
+        self._stall_monitor_thread = None
+
+        with self._lock:
+            live = self._live
+            if live is None:
+                return
+            # Clear the Live region so stop() leaves no stale frame behind.
+            live.update(Text(""))
+            live.stop()
+            self._live = None
+            self._started = False
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -684,10 +708,25 @@ class StreamingResponseDisplay:
         self.stop()
 
 
+def _should_discard(content: str) -> bool:
+    """True when the streamed reply is a tool request or placeholder.
+
+    Such content is not an answer; it is handled by the tool loop which
+    renders its own chat-style panel. An empty reply is kept (it may be a
+    structured tool_call round where the JSON comes back as a real field).
+    """
+    if not content or not content.strip():
+        return False
+    return bool(parse_tool_calls(content)) or looks_like_stub(content)
+
+
 def create_streaming_callback(display: StreamingResponseDisplay):
     """Create a callback function for use with cli_invoke."""
 
     def callback(content: str, is_final: bool = False) -> None:
+        if is_final and _should_discard(content):
+            display.discard()
+            return
         display.update(content, is_final=is_final)
 
     return callback

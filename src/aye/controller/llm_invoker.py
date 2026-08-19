@@ -564,6 +564,11 @@ def invoke_llm(
             # content; stop it before the loop so tool lines print cleanly.
             spinner.stop()
 
+            # The streamed bubble already showed the raw tool-call JSON; clear
+            # it so the tool activity (rendered by the loop) is the only frame.
+            if streaming_display is not None and streaming_display.is_active():
+                streaming_display.discard()
+
             parsed_summary, updated_files, new_chat_id = run_tool_loop(
                 initial_summary=parsed_summary,
                 updated_files=updated_files,
