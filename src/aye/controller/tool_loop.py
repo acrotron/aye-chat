@@ -7,6 +7,7 @@ confirmed with the user first (Enter to run, Esc to skip). The loop repeats
 until the model answers in prose or the round budget is exhausted.
 """
 
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,6 +20,7 @@ from aye.model.tool_protocol import (
     build_tools_prompt,
     format_tool_results,
     parse_tool_calls,
+    summary_with_tool_calls,
 )
 from aye.model.tools import build_registry, execute_tool, needs_confirmation
 from aye.presenter.tool_presenter import (
@@ -32,6 +34,17 @@ from aye.presenter.tool_presenter import (
 MAX_TOOL_ROUNDS = 5
 
 _DECLINED_SHELL_OUTPUT = "Error: the user declined to run this command."
+
+# Sent when the model replied with a placeholder ("Let me investigate...")
+# instead of invoking a tool. One nudged round; if the model still refuses to
+# call tools, the loop breaks and its next reply is shown as the answer.
+_STUB_NUDGE = (
+    "You replied with a placeholder instead of doing the work. The user asked "
+    "you to investigate and fix a problem in this project. Use the available "
+    "tools now (read, grep, glob, web_search, bash/cmd) to complete the task, "
+    "then answer directly.\n\n"
+    "Original request: {prompt}"
+)
 
 
 def _round_system_prompt(base_system_prompt: str, is_final_round: bool) -> str:
@@ -75,6 +88,7 @@ def run_tool_loop(
     verbose: bool = False,
     attachments: Optional[List[Dict[str, Any]]] = None,
     console: Optional[Console] = None,
+    stub_retry: bool = False,
 ) -> Tuple[str, List[Dict[str, Any]], Optional[int]]:
     """Run tool rounds until the model answers in prose or the budget runs out.
 
@@ -90,6 +104,8 @@ def run_tool_loop(
         verbose: Print extra activity detail (currently unused; kept for parity).
         attachments: Image attachments to forward each round.
         console: Rich console used for the shell confirmation panel.
+        stub_retry: When True, the initial reply was a placeholder promising
+            investigation; send one nudge to force real tool usage first.
 
     Returns:
         ``(final_summary, merged_updated_files, chat_id)``.
@@ -103,19 +119,22 @@ def run_tool_loop(
     console = console if console is not None else Console()
 
     for round_index in range(MAX_TOOL_ROUNDS):
-        calls = parse_tool_calls(summary)
-        if not calls:
-            break
-
-        for call in calls:
-            if call.name in SHELL_TOOL_NAMES:
-                present_tool_call(call, console)
-            output = _execute(call, root, console=console)
-            results.append((call, output))
-            present_tool_result(call, output, console)
+        # Round 0 with stub_retry: no tool calls to run yet, just nudge.
+        if round_index == 0 and stub_retry:
+            followup = _STUB_NUDGE.format(prompt=prompt)
+        else:
+            calls = parse_tool_calls(summary)
+            if not calls:
+                break
+            for call in calls:
+                if call.name in SHELL_TOOL_NAMES:
+                    present_tool_call(call, console)
+                output = _execute(call, root, console=console)
+                results.append((call, output))
+                present_tool_result(call, output, console)
+            followup = format_tool_results(prompt, results)
 
         is_final_round = round_index + 1 == MAX_TOOL_ROUNDS
-        followup = format_tool_results(prompt, results)
         system = _round_system_prompt(base_system_prompt, is_final_round)
 
         api_resp = cli_invoke(
@@ -130,7 +149,10 @@ def run_tool_loop(
             attachments=attachments,
         )
         assistant_resp, chat_id = _parse_api_response(api_resp)
-        summary = assistant_resp.get("answer_summary", "")
+        summary = summary_with_tool_calls(
+            assistant_resp.get("answer_summary", ""),
+            assistant_resp.get("tool_call") or assistant_resp.get("tool_calls"),
+        )
         files.extend(assistant_resp.get("source_files", []))
 
     # Deduplicate files by name, keeping the last occurrence.

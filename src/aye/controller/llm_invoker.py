@@ -16,7 +16,12 @@ from aye.controller.util import is_truncated_json, discover_agents_file
 from aye.model.config import SYSTEM_PROMPT, MODELS, DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_CONTEXT_TARGET_KB, CONTEXT_HARD_LIMIT_KB
 from aye.model import telemetry
 from aye.model.skills_system import SkillsResolver
-from aye.model.tool_protocol import build_tools_prompt, is_tool_request
+from aye.model.tool_protocol import (
+    build_tools_prompt,
+    is_tool_request,
+    looks_like_stub,
+    summary_with_tool_calls,
+)
 from aye.model.tools import build_registry
 
 import os
@@ -519,14 +524,21 @@ def invoke_llm(
 
         # 3) Parse API response
         assistant_resp, new_chat_id = _parse_api_response(api_resp)
-        parsed_summary = assistant_resp.get("answer_summary", "")
+        parsed_summary = summary_with_tool_calls(
+            assistant_resp.get("answer_summary", ""),
+            assistant_resp.get("tool_call") or assistant_resp.get("tool_calls"),
+        )
         updated_files = assistant_resp.get("source_files", [])
 
-        # 3b) Agentic tool loop: if the model answered with a tool-call JSON,
-        # run the tools and continue the conversation until it answers in
-        # prose. The final prose was never shown by the streaming UI (round 1
-        # streamed the tool-call JSON), so summary_already_printed is False.
-        if is_tool_request(parsed_summary):
+        # 3b) Agentic tool loop: when the model answers with a tool-call JSON
+        # (or a structured tool_call field), run the tools and continue the
+        # conversation until it answers in prose. A placeholder reply such as
+        # "Let me investigate..." also enters the loop so the model is nudged
+        # to actually use its tools. The final prose was never shown by the
+        # streaming UI (round 1 streamed the tool-call JSON), so
+        # summary_already_printed is False.
+        tool_requested = is_tool_request(parsed_summary)
+        if tool_requested or looks_like_stub(parsed_summary):
             from aye.controller.tool_loop import run_tool_loop
 
             # On the non-streaming path the spinner is never stopped by first
@@ -545,6 +557,7 @@ def invoke_llm(
                 verbose=verbose or _is_verbose(),
                 attachments=attachments,
                 console=console,
+                stub_retry=not tool_requested,
             )
             return LLMResponse(
                 summary=parsed_summary,

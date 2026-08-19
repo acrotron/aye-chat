@@ -14,6 +14,7 @@ from aye.model.tool_protocol import (
     describe_call,
     format_tool_results,
     is_tool_request,
+    looks_like_stub,
     parse_tool_calls,
 )
 from aye.model.tools import (
@@ -675,6 +676,37 @@ class TestParseToolCalls:
         assert is_tool_request('{"tool_calls":[{"name":"glob"}]}') is True
         assert is_tool_request("just prose") is False
 
+    def test_json_embedded_in_prose_is_extracted(self):
+        calls = parse_tool_calls(
+            'I will use the tools now. {"tool_calls":[{"name":"grep",'
+            '"arguments":{"pattern":"def foo"}}]} That is all.'
+        )
+        assert calls == [ToolCall("grep", {"pattern": "def foo"})]
+
+
+class TestLooksLikeStub:
+    def test_short_investigate_placeholder_is_a_stub(self):
+        assert looks_like_stub("Let me investigate the texture issue") is True
+        assert looks_like_stub("I'll look into this and get back to you.") is True
+
+    def test_plain_answers_are_not_stubs(self):
+        assert looks_like_stub("The texture issue is caused by a missing layer.") is False
+        assert looks_like_stub("") is False
+        assert looks_like_stub(None) is False
+
+    def test_long_explanations_are_not_stubs(self):
+        long = "Let me investigate " + "details " * 60
+        assert looks_like_stub(long) is False
+
+    def test_stub_with_tool_calls_is_not_a_stub(self):
+        assert (
+            looks_like_stub(
+                'Let me investigate. {"tool_calls":[{"name":"grep",'
+                '"arguments":{"pattern":"def"}}]}'
+            )
+            is False
+        )
+
 
 # ---------------------------------------------------------------------------
 # Protocol: result formatting
@@ -737,6 +769,12 @@ class TestRunWebSearch:
             run_web_search({"query": "hello"}, tmp_path)
 
     def test_duckduckgo_parses_html_results(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "aye.model.tools.get_user_config",
+            lambda key, default=None: (
+                "duckduckgo" if key == "search_provider" else default
+            ),
+        )
         html = (
             '<div class="result"><a rel="nofollow" class="result__a" '
             'href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F&rut=1">'
@@ -760,6 +798,13 @@ class TestRunWebSearch:
         assert "A useful blurb." in out
 
     def test_duckduckgo_error_is_reported(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "aye.model.tools.get_user_config",
+            lambda key, default=None: (
+                "duckduckgo" if key == "search_provider" else default
+            ),
+        )
+
         def fail(*args, **kwargs):
             raise httpx.ConnectError("no network")
 

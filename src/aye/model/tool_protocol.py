@@ -151,7 +151,14 @@ def parse_tool_calls(summary: Optional[str]) -> List[ToolCall]:
     if fence:
         text = fence.group("body").strip()
     if not text.startswith("{"):
-        return []
+        # Last resort: models sometimes wrap the JSON in a sentence or two.
+        # Extraction can only succeed when the object carries tool_calls,
+        # so a code snippet containing braces cannot be misread as a call.
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end <= start:
+            return []
+        text = text[start : end + 1]
 
     try:
         payload = json.loads(text)
@@ -209,6 +216,55 @@ def parse_tool_calls(summary: Optional[str]) -> List[ToolCall]:
 def is_tool_request(summary: Optional[str]) -> bool:
     """Return True if *summary* is a tool request rather than a prose answer."""
     return bool(parse_tool_calls(summary))
+
+
+# Matches placeholder replies that promise work ("Let me investigate...")
+# without doing any: a short first-person intent phrase plus a work verb.
+_STUB_RE = re.compile(
+    r"\b(?:let(?:'s| me| us)|\bi'?ll\b|\bi will\b|\bi am going to)\b"
+    r".{0,80}?\b(?:investigat\w*|look|check|start|begin|search|examine|explore|dive)\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_stub(summary: Optional[str]) -> bool:
+    """Return True if *summary* is a short 'I will investigate...' placeholder.
+
+    Such replies promise tool work but never invoke a tool, so the caller can
+    nudge the model to actually use the available tools.
+
+    Args:
+        summary: The model's ``answer_summary``.
+
+    Returns:
+        True for short first-person intent replies that mention investigating.
+    """
+    if not summary or not summary.strip():
+        return False
+    text = " ".join(summary.strip().split())
+    if len(text) > 200 or not _STUB_RE.search(text):
+        return False
+    return not parse_tool_calls(summary)
+
+
+def summary_with_tool_calls(summary: str, tool_calls: Any) -> str:
+    """Prefer a structured ``tool_call`` field over a JSON-in-summary request.
+
+    Newer backends expose tool requests as a real response field instead of
+    requiring the model to stuff JSON into ``answer_summary``. Normalize both
+    shapes to the internal ``{"tool_calls": [...]}`` form so the rest of the
+    pipeline is agnostic.
+
+    Args:
+        summary: The model's ``answer_summary``.
+        tool_calls: The structured ``tool_call`` / ``tool_calls`` field, if any.
+
+    Returns:
+        The summary, or the tool-call JSON when the structured field is set.
+    """
+    if tool_calls:
+        return json.dumps({"tool_calls": tool_calls})
+    return summary
 
 
 # ---------------------------------------------------------------------------
