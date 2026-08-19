@@ -23,11 +23,7 @@ from aye.model.tool_protocol import (
     summary_with_tool_calls,
 )
 from aye.model.tools import build_registry, execute_tool, needs_confirmation
-from aye.presenter.tool_presenter import (
-    SHELL_TOOL_NAMES,
-    present_tool_call,
-    present_tool_result,
-)
+from aye.presenter.tool_presenter import SHELL_TOOL_NAMES, ToolSession
 
 # Upper bound on tool rounds per user request, so a stubborn model cannot spin
 # forever. Generous enough for multi-file creation (glob/read probes plus a
@@ -122,6 +118,7 @@ def run_tool_loop(
     results: List[tuple] = []
     root = Path(getattr(conf, "root", None) or Path.cwd())
     console = console if console is not None else Console()
+    session = ToolSession()
 
     for round_index in range(max_rounds):
         # Round 0 with stub_retry: no tool calls to run yet, just nudge.
@@ -132,11 +129,12 @@ def run_tool_loop(
             if not calls:
                 break
             for call in calls:
-                if call.name in SHELL_TOOL_NAMES:
-                    present_tool_call(call, console)
                 output = _execute(call, root, console=console)
                 results.append((call, output))
-                present_tool_result(call, output, console)
+                if call.name in SHELL_TOOL_NAMES:
+                    session.add_shell_result(call, output)
+                else:
+                    session.add_call_line(call, output)
             followup = format_tool_results(prompt, results)
 
         is_final_round = round_index + 1 == max_rounds
@@ -159,6 +157,11 @@ def run_tool_loop(
             assistant_resp.get("tool_call") or assistant_resp.get("tool_calls"),
         )
         files.extend(assistant_resp.get("source_files", []))
+
+    # Present the whole request's tool activity as one chat-style panel, so
+    # the user sees the calls framed like a normal assistant message instead
+    # of loose lines under the prompt.
+    session.render(console)
 
     # Deduplicate files by name, keeping the last occurrence.
     merged: List[Dict[str, Any]] = []
