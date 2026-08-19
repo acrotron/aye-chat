@@ -231,10 +231,34 @@ class TestRoundBudget:
             base_system_prompt="sys",
             source_files={},
             max_output_tokens=1000,
+            max_rounds=4,
         )
-        assert len(calls) == MAX_TOOL_ROUNDS
+        assert len(calls) == 4
         assert "reached the tool call limit" in calls[-1]["system_prompt"]
         assert "reached the tool call limit" not in calls[0]["system_prompt"]
+
+    def test_default_budget_allows_multi_file_creation(self, tmp_path, monkeypatch):
+        calls = []
+
+        def fake_cli_invoke(**kwargs):
+            calls.append(kwargs)
+            if len(calls) < MAX_TOOL_ROUNDS:
+                return _resp(_tool_request("write", {"path": "f.tsx", "content": "x"}), chat_id=1)
+            return _resp("created the files", chat_id=1)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        summary, _, _ = run_tool_loop(
+            initial_summary=_tool_request("write", {"path": "a.tsx", "content": "x"}),
+            updated_files=[],
+            chat_id=1,
+            prompt="create 6 tsx files",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        assert summary == "created the files"
+        assert len(calls) > 5
 
 
 class TestUpdatedFiles:

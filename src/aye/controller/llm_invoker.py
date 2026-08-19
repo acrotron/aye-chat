@@ -35,6 +35,25 @@ def _is_debug():
     return get_user_config("debug", "off").lower() == "on"
 
 
+def _tool_round_budget() -> int:
+    """Return the tool round budget from config/env, with a sane floor.
+
+    Reads ``max_tool_rounds`` from user config; ``AYE_MAX_TOOL_ROUNDS``
+    overrides it. Values below the module floor are clamped so a typo cannot
+    leave the model without any budget.
+    """
+    from aye.controller.tool_loop import MAX_TOOL_ROUNDS
+
+    raw = os.environ.get("AYE_MAX_TOOL_ROUNDS") or get_user_config(
+        "max_tool_rounds", str(MAX_TOOL_ROUNDS)
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return MAX_TOOL_ROUNDS
+    return max(2, min(value, 50))
+
+
 def _get_int_env(name: str, default: int) -> int:
     """Read an environment variable as int, with a safe default."""
     value = os.environ.get(name)
@@ -558,6 +577,7 @@ def invoke_llm(
                 attachments=attachments,
                 console=console,
                 stub_retry=not tool_requested,
+                max_rounds=_tool_round_budget(),
             )
             return LLMResponse(
                 summary=parsed_summary,
