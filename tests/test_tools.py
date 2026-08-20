@@ -14,8 +14,10 @@ from aye.model.tool_protocol import (
     describe_call,
     format_tool_results,
     is_tool_request,
+    looks_like_protocol_json,
     looks_like_stub,
     parse_tool_calls,
+    summary_with_tool_calls,
 )
 from aye.model.tools import (
     ALL_TOOLS,
@@ -706,6 +708,46 @@ class TestLooksLikeStub:
             )
             is False
         )
+
+
+class TestLooksLikeProtocolJson:
+    def test_valid_protocol_object_is_detected(self):
+        assert looks_like_protocol_json('{"tool_calls":[{"name":"grep"}]}') is True
+
+    def test_malformed_protocol_object_is_still_detected(self):
+        assert looks_like_protocol_json('{"tool_calls": "oops"}') is True
+
+    def test_plain_prose_is_not_protocol(self):
+        assert looks_like_protocol_json("Everything works now.") is False
+        assert looks_like_protocol_json("") is False
+        assert looks_like_protocol_json(None) is False
+
+    def test_non_brace_text_mentioning_tool_calls_is_not_protocol(self):
+        assert looks_like_protocol_json("I saw tool_calls in the output.") is False
+
+
+class TestSummaryWithToolCalls:
+    def test_structured_field_wins_when_valid(self):
+        calls = [{"name": "grep", "arguments": {"pattern": "x"}}]
+        out = summary_with_tool_calls("checking now", calls)
+        assert json.loads(out)["tool_calls"] == calls
+
+    def test_malformed_field_falls_back_to_summary(self):
+        assert summary_with_tool_calls("done", "oops") == "done"
+
+    def test_singular_dict_field_is_wrapped(self):
+        out = summary_with_tool_calls(
+            "checking", {"name": "grep", "arguments": {"pattern": "x"}}
+        )
+        assert json.loads(out)["tool_calls"] == {
+            "name": "grep",
+            "arguments": {"pattern": "x"},
+        }
+        assert parse_tool_calls(out) == [ToolCall("grep", {"pattern": "x"})]
+
+    def test_empty_field_keeps_summary(self):
+        assert summary_with_tool_calls("hello world", None) == "hello world"
+        assert summary_with_tool_calls("hello world", []) == "hello world"
 
 
 # ---------------------------------------------------------------------------
