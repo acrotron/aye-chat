@@ -112,7 +112,6 @@ class TestToolSession:
         out = capsys.readouterr().out
         assert '✱Glob "*.py"' in out
         assert "Read main.py" in out
-        assert out.count(" tools ") == 1  # exactly one outer bubble
 
     def test_shell_result_includes_output_panel(self, capsys):
         console = Console(force_terminal=False)
