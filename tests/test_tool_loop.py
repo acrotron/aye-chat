@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 from aye.controller.tool_loop import MAX_TOOL_ROUNDS, run_tool_loop
+from aye.model.tool_protocol import looks_like_protocol_json
 
 
 def _resp(answer_summary, source_files=None, chat_id=7):
@@ -219,7 +220,9 @@ class TestRoundBudget:
 
         def fake_cli_invoke(**kwargs):
             calls.append(kwargs)
-            return _resp(_tool_request("glob", {"pattern": "*.py"}), chat_id=1)
+            if len(calls) < 5:
+                return _resp(_tool_request("glob", {"pattern": "*.py"}), chat_id=1)
+            return _resp("done with the task", chat_id=1)
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
         summary, _, _ = run_tool_loop(
@@ -233,9 +236,14 @@ class TestRoundBudget:
             max_output_tokens=1000,
             max_rounds=4,
         )
-        assert len(calls) == 4
-        assert "reached the tool call limit" in calls[-1]["system_prompt"]
-        assert "reached the tool call limit" not in calls[0]["system_prompt"]
+        # 4 budget rounds plus one forced prose round: the raw tool-call JSON
+        # must never be returned as the final answer.
+        assert len(calls) == 5
+        forced = calls[-1]
+        assert "tool call limit" in forced["message"].lower()
+        assert forced["system_prompt"] == "sys"
+        assert summary == "done with the task"
+        assert looks_like_protocol_json(summary) is False
 
     def test_default_budget_allows_multi_file_creation(self, tmp_path, monkeypatch):
         calls = []
