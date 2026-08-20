@@ -177,8 +177,8 @@ class TestAgentBubble:
         bubble.add_tool_call(ToolCall(name="glob", arguments={"pattern": "*.py"}), "a.py\nb.py")
         bubble.print_new_blocks(console)
         out = capsys.readouterr().out
-        assert "┌" in out  # bordered Claude Code-style box
-        assert "└" in out
+        assert "╭" in out  # bordered Claude Code-style box
+        assert "╰" in out
         assert "a.py" in out
         assert '✱ Glob "*.py"' in out
 
