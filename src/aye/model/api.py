@@ -79,7 +79,7 @@ def _auth_headers(token_override: Optional[str] = None) -> Dict[str, str]:
     """
     token = token_override or get_token()
     if not token:
-        raise RuntimeError("No auth token \u2013 run `aye auth login` first.")
+        raise RuntimeError("No auth token – run `aye auth login` first.")
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -118,7 +118,7 @@ def _redact_payload_for_debug(payload: Dict[str, Any]) -> Dict[str, Any]:
 def _check_response(resp: httpx.Response) -> Dict[str, Any]:
     """Validate an HTTP response.
 
-    * Raises for non\u20112xx status codes.
+    * Raises for non‑2xx status codes.
     * If the response body is JSON and contains an ``error`` key, prints
       the error message and raises ``ApiError`` with that message.
     * Detects INVALID_DEMO_TOKEN and raises InvalidDemoTokenError.
@@ -144,11 +144,11 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
 
         raise ApiError(err_msg, status_code=status, error_code=error_code) from exc
 
-    # Successful status \u2013 still check for an error field in the payload.
+    # Successful status – still check for an error field in the payload.
     try:
         payload = resp.json()
     except json.JSONDecodeError:
-        # Not JSON \u2013 return empty dict.
+        # Not JSON – return empty dict.
         return {}
 
     if isinstance(payload, dict) and "error" in payload:
@@ -186,6 +186,103 @@ def _extract_answer_summary_from_assistant_response(resp: Dict[str, Any]) -> str
         return ""
 
     return ""
+
+
+def _strip_streaming_json_fence(content: str) -> str:
+    """Remove a leading Markdown JSON fence from streamed content if present."""
+    text = (content or "").lstrip()
+    if not text.startswith("```"):
+        return text
+
+    first_newline = text.find("\n")
+    if first_newline == -1:
+        return text
+
+    fence_header = text[:first_newline].strip().lower()
+    if fence_header not in {"```", "```json"}:
+        return text
+
+    body = text[first_newline + 1:]
+    closing = body.rfind("```")
+    if closing != -1:
+        body = body[:closing]
+    return body.lstrip()
+
+
+def _loads_json_object(value: Any) -> Optional[Dict[str, Any]]:
+    """Return a dict parsed from *value* when possible, otherwise None."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    try:
+        parsed = json.loads(_strip_streaming_json_fence(value))
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return None
+
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _extract_tool_calls_from_payload(payload: Any) -> Any:
+    """Return tool_calls/tool_call from a parsed assistant payload, if present."""
+    parsed = _loads_json_object(payload)
+    if not parsed:
+        return None
+    return parsed.get("tool_calls") or parsed.get("tool_call")
+
+
+def _extract_tool_calls_from_response(resp: Dict[str, Any]) -> Any:
+    """Best-effort extraction of tool calls from the final response payload."""
+    if not isinstance(resp, dict):
+        return None
+
+    direct = resp.get("tool_calls") or resp.get("tool_call")
+    if direct:
+        return direct
+
+    return _extract_tool_calls_from_payload(resp.get("assistant_response"))
+
+
+def _normalize_tool_calls_into_assistant_response(resp: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize top-level tool calls into assistant_response for downstream parsing.
+
+    Some backend/model paths can return ``tool_calls`` beside
+    ``assistant_response`` instead of inside it. The controller parses tool
+    calls from ``assistant_response``, so preserve the final result shape it
+    expects before returning from the API layer.
+    """
+    if not isinstance(resp, dict):
+        return resp
+
+    tool_calls = resp.get("tool_calls") or resp.get("tool_call")
+    if not tool_calls:
+        return resp
+
+    assistant_payload = _loads_json_object(resp.get("assistant_response")) or {}
+    assistant_payload.setdefault("answer_summary", "")
+    assistant_payload.setdefault("source_files", [])
+    assistant_payload["tool_calls"] = tool_calls
+
+    normalized = dict(resp)
+    normalized["assistant_response"] = json.dumps(assistant_payload)
+    return normalized
+
+
+def _stream_content_looks_like_protocol_json(content: str) -> bool:
+    """True for streamed protocol JSON that should not be rendered live.
+
+    The backend can stream the assistant protocol object itself while the final
+    tool-call round is still being produced. Rendering those partial chunks is
+    what causes raw ``{"tool_calls": ...}`` JSON to flash in the terminal.
+
+    We suppress JSON-shaped partial streams here, then either render the final
+    answer summary or skip rendering entirely when the final payload is a tool
+    call. This may disable live streaming for answers that intentionally begin
+    with a raw JSON object, but it avoids exposing protocol/tool JSON to users.
+    """
+    text = _strip_streaming_json_fence(content).lstrip()
+    return text.startswith("{")
 
 
 def _call_stream_update(on_stream_update: Optional[Callable[..., None]], content: str, *, is_final: bool) -> None:
@@ -344,6 +441,7 @@ def cli_invoke(
     # Streaming state
     streamed_content = ""
     has_streamed = False
+    has_rendered_stream = False
 
     # Faster polling while streaming is active
     streaming_poll_interval = min(poll_interval, 0.25)
@@ -388,24 +486,41 @@ def cli_invoke(
                             streamed_content = partial
                             has_streamed = True
 
-                            # Call the streaming callback if provided
-                            _call_stream_update(on_stream_update, streamed_content, is_final=False)
+                            # Do not render streamed protocol JSON. Tool-call rounds
+                            # arrive this way, and rendering partial JSON is what
+                            # causes the raw tool_calls object to flash in the UI.
+                            if not _stream_content_looks_like_protocol_json(streamed_content):
+                                _call_stream_update(on_stream_update, streamed_content, is_final=False)
+                                has_rendered_stream = True
 
                     # Keep polling for updates until streaming becomes false
                     time.sleep(streaming_poll_interval)
                     continue
 
                 # Final response reached
+                if isinstance(result, dict):
+                    result = _normalize_tool_calls_into_assistant_response(result)
+
+                final_tool_calls = _extract_tool_calls_from_response(result) if isinstance(result, dict) else None
+
                 if has_streamed:
-                    # IMPORTANT: as soon as final response is ready, force a final render.
-                    # This allows the UI layer to stop any per-word animation immediately.
-                    final_summary = _extract_answer_summary_from_assistant_response(result)
-                    final_to_render = final_summary or streamed_content
+                    if final_tool_calls:
+                        # This streamed round was a tool request, not user-facing
+                        # assistant prose. Do not send a final render to the
+                        # streaming UI, otherwise raw tool JSON may be printed.
+                        result["_streamed_summary"] = False
+                    else:
+                        # IMPORTANT: as soon as final response is ready, force a final render.
+                        # This allows the UI layer to stop any per-word animation immediately.
+                        final_summary = _extract_answer_summary_from_assistant_response(result)
+                        final_to_render = final_summary or streamed_content
 
-                    _call_stream_update(on_stream_update, final_to_render, is_final=True)
-
-                    # Mark so upstream can avoid printing the summary twice
-                    result["_streamed_summary"] = True
+                        if final_to_render:
+                            _call_stream_update(on_stream_update, final_to_render, is_final=True)
+                            # Mark so upstream can avoid printing the summary twice
+                            result["_streamed_summary"] = True
+                        else:
+                            result["_streamed_summary"] = has_rendered_stream
 
                 return result
 

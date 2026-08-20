@@ -24,6 +24,8 @@ from aye.model.tool_protocol import (
 )
 from aye.model.tools import build_registry, execute_tool, needs_confirmation
 from aye.presenter.tool_presenter import SHELL_TOOL_NAMES, ToolSession
+from aye.presenter.ui_utils import StoppableSpinner, DEFAULT_THINKING_MESSAGES
+from aye.model.auth import get_user_config
 
 # Upper bound on tool rounds per user request, so a stubborn model cannot spin
 # forever. Generous enough for multi-file creation (glob/read probes plus a
@@ -43,6 +45,14 @@ _STUB_NUDGE = (
     "then answer directly.\n\n"
     "Original request: {prompt}"
 )
+
+
+def _is_verbose():
+    return get_user_config("verbose", "off").lower() == "on"
+
+
+def _is_debug():
+    return get_user_config("debug", "off").lower() == "on"
 
 
 def _round_system_prompt(base_system_prompt: str, is_final_round: bool) -> str:
@@ -118,9 +128,11 @@ def run_tool_loop(
     results: List[tuple] = []
     root = Path(getattr(conf, "root", None) or Path.cwd())
     console = console if console is not None else Console()
-    session = ToolSession()
 
     for round_index in range(max_rounds):
+        # Create a new session for this round to print immediately
+        session = ToolSession()
+        
         # Round 0 with stub_retry: no tool calls to run yet, just nudge.
         if round_index == 0 and stub_retry:
             followup = _STUB_NUDGE.format(prompt=prompt)
@@ -137,31 +149,44 @@ def run_tool_loop(
                     session.add_call_line(call, output)
             followup = format_tool_results(prompt, results)
 
+        # Render tool activity for this round immediately, before the spinner
+        # Only print if verbose or debug is enabled
+        if not session.is_empty() and (_is_verbose() or _is_debug()):
+            session.render(console)
+
         is_final_round = round_index + 1 == max_rounds
         system = _round_system_prompt(base_system_prompt, is_final_round)
 
-        api_resp = cli_invoke(
-            chat_id=chat_id,
-            message=followup,
-            source_files=source_files,
-            model=conf.selected_model,
-            system_prompt=system,
-            max_output_tokens=max_output_tokens,
-            telemetry=None,
-            on_stream_update=None,
-            attachments=attachments,
+        # Create and start spinner before the API call
+        spinner = StoppableSpinner(
+            console,
+            messages=DEFAULT_THINKING_MESSAGES,
+            interval=15.0
         )
+        spinner.start()
+
+        try:
+            api_resp = cli_invoke(
+                chat_id=chat_id,
+                message=followup,
+                source_files=source_files,
+                model=conf.selected_model,
+                system_prompt=system,
+                max_output_tokens=max_output_tokens,
+                telemetry=None,
+                on_stream_update=None,
+                attachments=attachments,
+            )
+        finally:
+            # Always stop the spinner after the API call completes
+            spinner.stop()
+
         assistant_resp, chat_id = _parse_api_response(api_resp)
         summary = summary_with_tool_calls(
             assistant_resp.get("answer_summary", ""),
             assistant_resp.get("tool_call") or assistant_resp.get("tool_calls"),
         )
         files.extend(assistant_resp.get("source_files", []))
-
-    # Present the whole request's tool activity as one chat-style panel, so
-    # the user sees the calls framed like a normal assistant message instead
-    # of loose lines under the prompt.
-    session.render(console)
 
     # Deduplicate files by name, keeping the last occurrence.
     merged: List[Dict[str, Any]] = []
