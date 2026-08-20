@@ -3,25 +3,28 @@
 File tools (read, glob, grep, write) are shown as one compact line, the way
 opencode does in the terminal:
 
-    ✱Glob "tests/test_*protocol*.py"
-    →Read src/aye/controller/tool_loop.py
-    ✱Grep "def foo" in src/aye/model/tools.py (7 matches)
+    ✱ Glob "tests/test_*protocol*.py"
+    → Read src/aye/controller/tool_loop.py
+    ✱ Grep "def foo" in src/aye/model/tools.py (7 matches)
 
 Shell commands (bash, cmd) get the same one-liner, then their captured output
 below it (truncated).
 
-The tool loop does not print separate bubbles: every narration line and tool
-entry is accumulated into an :class:`AgentBubble`, and the whole request's
-activity is merged into the single assistant chat bubble together with the
-final answer, the way opencode renders one agent message with tool calls
-inline.
+Inside the agent bubble each finished call is rendered as a Claude Code-style
+tool usage block: a bordered box whose title is the coloured tool line and
+whose body is the captured output. The tool loop prints those blocks one at a
+time as the agent works, so the whole request's activity is merged into the
+single assistant chat bubble together with the final answer, the way Claude
+Code and opencode render one agent message with tool calls inline.
 """
 
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from rich import box
 from rich.console import Console, Group
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
@@ -33,6 +36,7 @@ _RESULT_PANEL_TOOLS = frozenset({"bash", "cmd"})
 
 _GREP_COUNT_RE = re.compile(r"^\s*(\d+)\s+matches?\b", re.IGNORECASE)
 _SHELL_EXCERPT_MAX = 800
+_TOOL_BLOCK_MAX = 800
 
 
 def _supports_unicode(console: Optional[Console]) -> bool:
@@ -145,11 +149,98 @@ def _print_call_line(call: ToolCall, output: str, console: Console) -> None:
     console.print(_line_renderable(call, output, console))
 
 
+def _tool_border_style(name: str) -> str:
+    """Border colour for a tool usage block, matching the line colour family."""
+    if name in _GLOB_TOOLS:
+        return "yellow"
+    if name == "read":
+        return "green"
+    if name == "write":
+        return "magenta"
+    return "cyan"
+
+
+def _truncate_output(output: str, limit: int = _TOOL_BLOCK_MAX) -> str:
+    """Cap tool output for display, appending a truncation marker."""
+    text = (output or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "\n... (truncated)"
+
+
+def _shell_display(output: str) -> Tuple[Optional[int], List[str]]:
+    """Split a shell report into ``(exit_code, visible_lines)``.
+
+    The model-facing report produced by ``_format_shell_result`` carries the
+    command echo line, an ``exit code: N`` line, and ``--- stdout/stderr ---``
+    section markers. Those are machine-oriented; the human UI wants the command
+    echo plus the captured output, and the exit code only when it is non-zero.
+
+    Args:
+        output: The raw shell result text.
+
+    Returns:
+        ``(exit_code, lines)`` where *exit_code* is None when the report had
+        none (e.g. a declined command) and *lines* are the display lines.
+    """
+    exit_code: Optional[int] = None
+    body: List[str] = []
+    for line in (output or "").splitlines():
+        match = re.match(r"^exit code:\s*(\d+)$", line.strip())
+        if match:
+            exit_code = int(match.group(1))
+            continue
+        if line.startswith("--- stdout ---") or line.startswith("--- stderr ---"):
+            continue
+        body.append(line)
+    return exit_code, body
+
+
+def _tool_block(call: ToolCall, output: str, console: Optional[Console] = None) -> Panel:
+    """Render a Claude Code-style tool usage block.
+
+    A rounded bordered box whose title is the coloured tool line (icon +
+    description) and whose body is the captured output. Shell calls keep their
+    ``$ <command>`` echo line and append a red ``exit code: N`` line on failure;
+    everything else shows the dimmed, truncated result.
+
+    Args:
+        call: The executed tool call.
+        output: The tool's textual result.
+        console: Console the content will be shown through (glyph selection).
+
+    Returns:
+        The bordered Panel to print or embed in the chat bubble.
+    """
+    border = _tool_border_style(call.name)
+
+    if call.name in SHELL_TOOL_NAMES:
+        exit_code, lines = _shell_display(output)
+        body: List[Text] = []
+        for line in lines:
+            if line.startswith("$ "):
+                body.append(Text(line, style=f"bold {border}"))
+            else:
+                body.append(Text(line, style="dim"))
+        if exit_code is not None and exit_code != 0:
+            body.append(Text(f"exit code: {exit_code}", style="bold red"))
+        if not body:
+            body.append(Text("(no output)", style="dim"))
+        content: Any = Group(*body)
+    else:
+        content = Text(_truncate_output(output) or "(no output)", style="dim")
+
+    return Panel(
+        content,
+        title=_line_renderable(call, output, console),
+        border_style=border,
+        box=box.ROUNDED,
+        padding=(0, 1),
+    )
+
+
 def _shell_panel(call: ToolCall, output: str) -> Panel:
     """Render a shell command's full output in a bordered panel."""
-    from rich import box
-    from rich.markup import escape
-
     return Panel(
         escape(output) or "[dim](no output)[/]",
         title=f" {escape(call.name)} ",
@@ -246,26 +337,19 @@ class AgentBubble:
         return "\n\n".join(b for b in blocks if b)
 
     def to_renderable(self) -> Group:
-        """Build a styled Rich renderable with coloured tool lines.
+        """Build a styled Rich renderable with coloured tool blocks.
 
         Returns:
-            A Rich ``Group``: narration as plain text, tool lines in their
-            per-family colours, shell output as a dimmed code block, and the
-            final answer rendered as markdown.
+            A Rich ``Group``: narration as plain text, each tool call as a
+            bordered Claude Code-style block with its output, and the final
+            answer rendered as markdown.
         """
         items = []
         for kind, call, output in self._blocks:
             if kind == "text":
                 items.append(Text(str(call)))
-            elif kind == "tool":
-                items.append(_line_renderable(call, output, self._console))
-            elif kind == "shell":
-                line = _line_renderable(call, output, self._console)
-                excerpt = _shell_excerpt(output)
-                if excerpt:
-                    items.append(Group(line, Markdown(excerpt)))
-                else:
-                    items.append(line)
+            else:
+                items.append(_tool_block(call, output, self._console))
             items.append(Text(""))
         if self._answer:
             items.append(Markdown(self._answer))
@@ -284,26 +368,21 @@ class AgentBubble:
                 f"{dot}[/] [ui.response_symbol.waves]))[/]"
             )
         except Exception:
-            console.print(f"[yellow](( {dot} ))[/]")
+            console.print("[yellow](( o ))[/]")
 
     def print_new_blocks(self, console: Console) -> None:
         """Print the blocks queued since the last call, in order.
 
-        Rendering the bubble incrementally (opencode-style) instead of once at
-        the end lets the user watch the agent narrate, run tools, and stream
-        output as it happens — all in the same growing chat message.
+        Rendering the bubble incrementally (Claude Code/opencode-style) instead
+        of once at the end lets the user watch the agent narrate, run tools,
+        and stream output as it happens — all in the same growing chat message.
         """
         for i in range(self._printed, len(self._blocks)):
             kind, call, output = self._blocks[i]
             if kind == "text":
                 console.print(Markdown(str(call)))
-            elif kind == "tool":
-                console.print(_line_renderable(call, output, self._console))
-            elif kind == "shell":
-                console.print(_line_renderable(call, output, self._console))
-                excerpt = _shell_excerpt(output)
-                if excerpt:
-                    console.print(Markdown(excerpt))
+            else:
+                console.print(_tool_block(call, output, self._console))
         self._printed = len(self._blocks)
 
     def print_answer(self, console: Console) -> None:

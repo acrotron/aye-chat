@@ -171,6 +171,31 @@ class TestAgentBubble:
         bubble.print_answer(console)
         assert "Done." in capsys.readouterr().out
 
+    def test_tool_block_renders_bordered_box(self, capsys):
+        console = Console(force_terminal=False)
+        bubble = AgentBubble()
+        bubble.add_tool_call(ToolCall(name="glob", arguments={"pattern": "*.py"}), "a.py\nb.py")
+        bubble.print_new_blocks(console)
+        out = capsys.readouterr().out
+        assert "┌" in out  # bordered Claude Code-style box
+        assert "└" in out
+        assert "a.py" in out
+        assert '✱ Glob "*.py"' in out
+
+    def test_shell_failure_shows_exit_code_in_block(self, capsys):
+        console = Console(force_terminal=False)
+        bubble = AgentBubble()
+        bubble.add_shell_result(
+            ToolCall(name="cmd", arguments={"command": "ls -la"}),
+            "$ ls -la\nexit code: 1\n--- stderr ---\n'ls' is not recognized",
+        )
+        bubble.print_new_blocks(console)
+        out = capsys.readouterr().out
+        assert "$ ls -la" in out
+        assert "'ls' is not recognized" in out
+        assert "exit code: 1" in out
+        assert "--- stderr ---" not in out  # model-facing marker is hidden
+
     def test_print_pulse_uses_ascii_dot_on_legacy_console(self, capsys):
         from types import SimpleNamespace
 
