@@ -178,16 +178,11 @@ class ToolSession:
             body = self._items[0]
         else:
             body = Group(*self._items)
-        console.print(
-            Panel(
-                body,
-                title=self._title,
-                border_style=_CHAT_BORDER,
-                box=box.ROUNDED,
-                padding=(0, 1),
-                expand=True,
-            )
-        )
+
+        # Just plain printout: no need for a panel:
+        # tool invocation is nice concept for development
+        # but no need to tell users about it: it's just a utility to achieve results
+        console.print(body)
 
 
 def present_tool_call(call: ToolCall, console: Console) -> None:
