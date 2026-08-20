@@ -613,7 +613,7 @@ def invoke_llm(
                 updated_files=loop_result.updated_files,
                 chat_id=loop_result.chat_id,
                 source=LLMSource.API,
-                summary_already_printed=False,
+                summary_already_printed=loop_result.progressive,
                 renderable=loop_result.renderable,
             )
 

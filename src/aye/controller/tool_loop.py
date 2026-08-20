@@ -37,12 +37,15 @@ class ToolLoopResult(NamedTuple):
         updated_files: Files the model wants written (deduplicated).
         chat_id: Chat id the conversation continues in.
         renderable: Styled Rich renderable of the bubble (coloured tool lines).
+        progressive: True when the bubble was rendered incrementally to the
+            terminal as the agent worked (so the caller must not print it again).
     """
 
     summary: str
     updated_files: List[Dict[str, Any]]
     chat_id: Optional[int]
     renderable: Any = None
+    progressive: bool = False
 
 # Upper bound on tool rounds per user request, so a stubborn model cannot spin
 # forever. Generous enough for long autonomous agent work (probe/read/edit/
@@ -154,9 +157,15 @@ def run_tool_loop(
     console = console if console is not None else Console()
 
     bubble = AgentBubble(console=console)
+    progressive = bool(getattr(console, "is_terminal", False))
+
+    if progressive:
+        bubble.print_pulse(console)
     first_narration = split_narration(initial_raw_summary or initial_summary)
     if first_narration:
         bubble.add_narration(first_narration)
+    if progressive:
+        bubble.print_new_blocks(console)
 
     for round_index in range(max_rounds):
         # Round 0 with stub_retry: no tool calls to run yet, just nudge.
@@ -169,6 +178,8 @@ def run_tool_loop(
             narration = split_narration(raw_summary)
             if narration:
                 bubble.add_narration(narration)
+                if progressive:
+                    bubble.print_new_blocks(console)
             for call in calls:
                 output = _execute(call, root, console=console)
                 results.append((call, output))
@@ -176,6 +187,8 @@ def run_tool_loop(
                     bubble.add_shell_result(call, output)
                 else:
                     bubble.add_tool_call(call, output)
+                if progressive:
+                    bubble.print_new_blocks(console)
             followup = format_tool_results(prompt, results)
 
         is_final_round = round_index + 1 == max_rounds
@@ -257,9 +270,13 @@ def run_tool_loop(
     else:
         bubble.set_answer(summary)
 
+    if progressive:
+        bubble.print_answer(console)
+
     return ToolLoopResult(
         summary=bubble.render(),
         updated_files=merged,
         chat_id=chat_id,
         renderable=bubble.to_renderable(),
+        progressive=progressive,
     )

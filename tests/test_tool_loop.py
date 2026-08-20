@@ -3,6 +3,8 @@
 import json
 from types import SimpleNamespace
 
+from rich.console import Console
+
 from aye.controller.tool_loop import MAX_TOOL_ROUNDS, run_tool_loop
 from aye.model.tool_protocol import looks_like_protocol_json
 
@@ -38,7 +40,7 @@ class TestReadRound:
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
 
-        summary, files, chat_id, _ = run_tool_loop(
+        summary, files, chat_id, _, _ = run_tool_loop(
             initial_summary=_tool_request("read", {"path": "notes.txt"}),
             updated_files=[],
             chat_id=1,
@@ -202,7 +204,7 @@ class TestRoundBudget:
             return _resp("final answer", chat_id=1)
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
-        summary, _, _, _ = run_tool_loop(
+        summary, _, _, _, _ = run_tool_loop(
             initial_summary=_tool_request("glob", {"pattern": "*.py"}),
             updated_files=[],
             chat_id=1,
@@ -225,7 +227,7 @@ class TestRoundBudget:
             return _resp("done with the task", chat_id=1)
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
-        summary, _, _, _ = run_tool_loop(
+        summary, _, _, _, _ = run_tool_loop(
             initial_summary=_tool_request("glob", {"pattern": "*.py"}),
             updated_files=[],
             chat_id=1,
@@ -255,7 +257,7 @@ class TestRoundBudget:
             return _resp("created the files", chat_id=1)
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
-        summary, _, _, _ = run_tool_loop(
+        summary, _, _, _, _ = run_tool_loop(
             initial_summary=_tool_request("write", {"path": "a.tsx", "content": "x"}),
             updated_files=[],
             chat_id=1,
@@ -279,7 +281,7 @@ class TestUpdatedFiles:
             )
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
-        summary, files, _, _ = run_tool_loop(
+        summary, files, _, _, _ = run_tool_loop(
             initial_summary=_tool_request("glob", {"pattern": "*.py"}),
             updated_files=[
                 {"file_name": "a.py", "file_content": "x"},
@@ -306,7 +308,7 @@ class TestStubRetry:
             return _resp("all clear", chat_id=3)
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
-        summary, _, chat_id, _ = run_tool_loop(
+        summary, _, chat_id, _, _ = run_tool_loop(
             initial_summary="Let me investigate the texture issue",
             updated_files=[],
             chat_id=1,
@@ -331,7 +333,7 @@ class TestStubRetry:
             return _resp("I cannot help with that.", chat_id=2)
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
-        summary, _, _, _ = run_tool_loop(
+        summary, _, _, _, _ = run_tool_loop(
             initial_summary="Let me investigate",
             updated_files=[],
             chat_id=1,
@@ -365,7 +367,7 @@ class TestStubRetry:
             return _resp("done", chat_id=6)
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
-        summary, _, chat_id, _ = run_tool_loop(
+        summary, _, chat_id, _, _ = run_tool_loop(
             initial_summary=_tool_request("glob", {"pattern": "*.txt"}),
             updated_files=[],
             chat_id=1,
@@ -397,7 +399,7 @@ class TestNarrationRendering:
             return _resp("Found 1 TODO, done.", chat_id=1)
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
-        summary, _, _, _ = run_tool_loop(
+        summary, _, _, _, _ = run_tool_loop(
             initial_summary=_tool_request("glob", {"pattern": "*.txt"}),
             updated_files=[],
             chat_id=1,
@@ -418,3 +420,47 @@ class TestNarrationRendering:
         assert "Found 1 TODO, done." in summary
         assert looks_like_protocol_json(summary) is False
         assert summary.count("```") == 0
+
+    def test_progressive_rendering_on_interactive_console(self, tmp_path, monkeypatch):
+        from io import StringIO
+
+        calls = []
+
+        def fake_cli_invoke(**kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return _resp(
+                    "Ok, let me check the layout. "
+                    + _tool_request("glob", {"pattern": "*.py"}),
+                    chat_id=1,
+                )
+            return _resp("Found 1 TODO, done.", chat_id=1)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        console = Console(force_terminal=True, file=StringIO())
+        result = run_tool_loop(
+            initial_summary=_tool_request("glob", {"pattern": "*.txt"}),
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+            initial_raw_summary="Let me search for TODOs. "
+            + _tool_request("glob", {"pattern": "*.txt"}),
+            console=console,
+        )
+        out = console.file.getvalue()
+        # Strip ANSI styling so substring assertions see plain text.
+        clean = __import__("re").sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", out)
+        # Progressive flag means the caller must NOT print the bubble again.
+        assert result.progressive is True
+        assert "(( ● ))" in clean
+        assert clean.index("(( ● ))") < clean.index("Let me search for TODOs.")
+        assert clean.index("Let me search for TODOs.") < clean.index('✱ Glob "*.txt"')
+        assert clean.index('✱ Glob "*.txt"') < clean.index("Ok, let me check the layout.")
+        assert clean.index("Ok, let me check the layout.") < clean.index('✱ Glob "*.py"')
+        assert "Found 1 TODO, done." in clean
+        # Answer is appended last, inside the same flowing message.
+        assert clean.index('✱ Glob "*.py"') < clean.index("Found 1 TODO, done.")

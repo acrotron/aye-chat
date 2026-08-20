@@ -60,7 +60,7 @@ class TestPresentToolResult:
         call = ToolCall(name="glob", arguments={"pattern": "tests/*.py"})
         present_tool_result(call, "a.py\nb.py", console)
         out = capsys.readouterr().out
-        assert '✱Glob "tests/*.py"' in out
+        assert '✱ Glob "tests/*.py"' in out
         assert "a.py" not in out
 
     def test_shell_tool_prints_output_panel(self, capsys):
@@ -77,7 +77,7 @@ class TestPresentToolResult:
             call, "1. HTTPX\n   https://python-httpx.org/", console
         )
         out = capsys.readouterr().out
-        assert '✱Web_search "httpx timeout"' in out
+        assert '✱ Web_search "httpx timeout"' in out
         assert "python-httpx.org" not in out
 
     def test_shell_panel_escapes_markup(self, capsys):
@@ -153,3 +153,29 @@ class TestAgentBubble:
         assert "Ok, checking." in rendered
         assert "Done." in rendered
         assert "\x1b[" in rendered  # ANSI colours survived into the bubble
+
+    def test_print_new_blocks_renders_incrementally(self, capsys):
+        console = Console(force_terminal=False)
+        bubble = AgentBubble()
+        bubble.add_narration("Ok, checking.")
+        bubble.print_new_blocks(console)
+        assert "Ok, checking." in capsys.readouterr().out
+
+        bubble.add_tool_call(ToolCall(name="glob", arguments={"pattern": "*.py"}), "")
+        bubble.print_new_blocks(console)
+        out = capsys.readouterr().out
+        assert '✱ Glob "*.py"' in out
+        assert "Ok, checking." not in out  # only NEW blocks are printed
+
+        bubble.set_answer("Done.")
+        bubble.print_answer(console)
+        assert "Done." in capsys.readouterr().out
+
+    def test_print_pulse_uses_ascii_dot_on_legacy_console(self, capsys):
+        from types import SimpleNamespace
+
+        bubble = AgentBubble(console=SimpleNamespace(encoding="cp1252"))
+        bubble.print_pulse(Console(force_terminal=False))
+        out = capsys.readouterr().out
+        assert "(( o ))" in out
+        assert "\u25cf" not in out

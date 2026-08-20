@@ -136,7 +136,7 @@ def _line_renderable(call: ToolCall, output: str, console: Optional[Console] = N
 
     line = Text()
     line.append(icon, style=_line_style(call.name))
-    line.append(description, style=_line_style(call.name))
+    line.append(" " + description, style=_line_style(call.name))
     return line
 
 
@@ -203,6 +203,7 @@ class AgentBubble:
         self._console = console
         self._blocks: List[Tuple[str, Any, Any]] = []
         self._answer = ""
+        self._printed = 0
 
     def add_narration(self, text: str) -> None:
         """Queue the agent's prose narration line before a tool round."""
@@ -269,6 +270,48 @@ class AgentBubble:
         if self._answer:
             items.append(Markdown(self._answer))
         return Group(*items)
+
+    def print_pulse(self, console: Console) -> None:
+        """Print the assistant-message marker that opens the bubble.
+
+        Uses the same ``(( ● ))`` pulse as the regular response bubble, falling
+        back to an ASCII dot on consoles that cannot encode the glyph.
+        """
+        dot = "\u25cf" if _supports_unicode(self._console) else "o"
+        try:
+            console.print(
+                "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]"
+                f"{dot}[/] [ui.response_symbol.waves]))[/]"
+            )
+        except Exception:
+            console.print(f"[yellow](( {dot} ))[/]")
+
+    def print_new_blocks(self, console: Console) -> None:
+        """Print the blocks queued since the last call, in order.
+
+        Rendering the bubble incrementally (opencode-style) instead of once at
+        the end lets the user watch the agent narrate, run tools, and stream
+        output as it happens — all in the same growing chat message.
+        """
+        for i in range(self._printed, len(self._blocks)):
+            kind, call, output = self._blocks[i]
+            if kind == "text":
+                console.print(Markdown(str(call)))
+            elif kind == "tool":
+                console.print(_line_renderable(call, output, self._console))
+            elif kind == "shell":
+                console.print(_line_renderable(call, output, self._console))
+                excerpt = _shell_excerpt(output)
+                if excerpt:
+                    console.print(Markdown(excerpt))
+        self._printed = len(self._blocks)
+
+    def print_answer(self, console: Console) -> None:
+        """Print the final answer, closing the bubble."""
+        if not self._answer:
+            return
+        console.print()
+        console.print(Markdown(self._answer))
 
 
 def present_tool_call(call: ToolCall, console: Console) -> None:
