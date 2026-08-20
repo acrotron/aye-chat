@@ -19,13 +19,14 @@ from aye.model.tool_protocol import (
     ToolCall,
     build_tools_prompt,
     format_tool_results,
+    looks_like_protocol_json,
     parse_tool_calls,
+    split_narration,
     summary_with_tool_calls,
 )
 from aye.model.tools import build_registry, execute_tool, needs_confirmation
-from aye.presenter.tool_presenter import SHELL_TOOL_NAMES, ToolSession
+from aye.presenter.tool_presenter import SHELL_TOOL_NAMES, AgentBubble
 from aye.presenter.ui_utils import StoppableSpinner, DEFAULT_THINKING_MESSAGES
-from aye.model.auth import get_user_config
 
 # Upper bound on tool rounds per user request, so a stubborn model cannot spin
 # forever. Generous enough for long autonomous agent work (probe/read/edit/
@@ -34,6 +35,11 @@ from aye.model.auth import get_user_config
 MAX_TOOL_ROUNDS = 40
 
 _DECLINED_SHELL_OUTPUT = "Error: the user declined to run this command."
+
+_BUDGET_ANSWER_FALLBACK = (
+    "The model kept requesting tools without producing a final answer. "
+    "Review the tool activity above or re-run the request."
+)
 
 # Sent when the model replied with a placeholder ("Let me investigate...")
 # instead of invoking a tool. One nudged round; if the model still refuses to
@@ -45,14 +51,6 @@ _STUB_NUDGE = (
     "then answer directly.\n\n"
     "Original request: {prompt}"
 )
-
-
-def _is_verbose():
-    return get_user_config("verbose", "off").lower() == "on"
-
-
-def _is_debug():
-    return get_user_config("debug", "off").lower() == "on"
 
 
 def _round_system_prompt(base_system_prompt: str, is_final_round: bool) -> str:
@@ -98,8 +96,15 @@ def run_tool_loop(
     console: Optional[Console] = None,
     stub_retry: bool = False,
     max_rounds: int = MAX_TOOL_ROUNDS,
+    initial_raw_summary: str = "",
 ) -> Tuple[str, List[Dict[str, Any]], Optional[int]]:
     """Run tool rounds until the model answers in prose or the budget runs out.
+
+    Everything the agent does is merged into one chat bubble: the round-1
+    narration, each follow-up round's narration, the tool call lines, shell
+    outputs, and the final prose answer. The returned summary *is* that merged
+    bubble, so the caller renders a single assistant message (opencode-style)
+    instead of separate tool panels.
 
     Args:
         initial_summary: The model's first ``answer_summary`` (a tool-call JSON).
@@ -117,22 +122,27 @@ def run_tool_loop(
             investigation; send one nudge to force real tool usage first.
         max_rounds: Tool round budget; allows the caller to tune it (e.g. from
             user config) without touching the module constant.
+        initial_raw_summary: The round-1 raw ``answer_summary`` before the tool
+            JSON was extracted, so the first narration line can be kept.
 
     Returns:
-        ``(final_summary, merged_updated_files, chat_id)``.
+        ``(merged_bubble_summary, merged_updated_files, chat_id)``.
     """
     from aye.controller.llm_invoker import _parse_api_response
 
     summary = initial_summary
+    raw_summary = initial_summary
     files = list(updated_files)
     results: List[tuple] = []
     root = Path(getattr(conf, "root", None) or Path.cwd())
     console = console if console is not None else Console()
 
+    bubble = AgentBubble(console=console)
+    first_narration = split_narration(initial_raw_summary or initial_summary)
+    if first_narration:
+        bubble.add_narration(first_narration)
+
     for round_index in range(max_rounds):
-        # Create a new session for this round to print immediately
-        session = ToolSession()
-        
         # Round 0 with stub_retry: no tool calls to run yet, just nudge.
         if round_index == 0 and stub_retry:
             followup = _STUB_NUDGE.format(prompt=prompt)
@@ -140,19 +150,17 @@ def run_tool_loop(
             calls = parse_tool_calls(summary)
             if not calls:
                 break
+            narration = split_narration(raw_summary)
+            if narration:
+                bubble.add_narration(narration)
             for call in calls:
                 output = _execute(call, root, console=console)
                 results.append((call, output))
                 if call.name in SHELL_TOOL_NAMES:
-                    session.add_shell_result(call, output)
+                    bubble.add_shell_result(call, output)
                 else:
-                    session.add_call_line(call, output)
+                    bubble.add_tool_call(call, output)
             followup = format_tool_results(prompt, results)
-
-        # Render tool activity for this round immediately, before the spinner
-        # Only print if verbose or debug is enabled
-        if not session.is_empty() and (_is_verbose() or _is_debug()):
-            session.render(console)
 
         is_final_round = round_index + 1 == max_rounds
         system = _round_system_prompt(base_system_prompt, is_final_round)
@@ -182,8 +190,9 @@ def run_tool_loop(
             spinner.stop()
 
         assistant_resp, chat_id = _parse_api_response(api_resp)
+        raw_summary = assistant_resp.get("answer_summary", "")
         summary = summary_with_tool_calls(
-            assistant_resp.get("answer_summary", ""),
+            raw_summary,
             assistant_resp.get("tool_call") or assistant_resp.get("tool_calls"),
         )
         files.extend(assistant_resp.get("source_files", []))
@@ -208,8 +217,9 @@ def run_tool_loop(
             attachments=attachments,
         )
         assistant_resp, chat_id = _parse_api_response(api_resp)
+        raw_summary = assistant_resp.get("answer_summary", "")
         summary = summary_with_tool_calls(
-            assistant_resp.get("answer_summary", ""),
+            raw_summary,
             assistant_resp.get("tool_call") or assistant_resp.get("tool_calls"),
         )
         files.extend(assistant_resp.get("source_files", []))
@@ -224,4 +234,11 @@ def run_tool_loop(
         seen_names.add(name)
         merged.append(entry)
 
-    return summary, merged, chat_id
+    # Append the final answer (never raw tool JSON) and return the merged
+    # single-bubble summary.
+    if looks_like_protocol_json(summary):
+        bubble.set_answer(_BUDGET_ANSWER_FALLBACK)
+    else:
+        bubble.set_answer(summary)
+
+    return bubble.render(), merged, chat_id

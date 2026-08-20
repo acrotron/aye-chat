@@ -296,6 +296,33 @@ def looks_like_protocol_json(summary: Optional[str]) -> bool:
     return "tool_calls" in text or "tool_call" in text
 
 
+def split_narration(summary: Optional[str]) -> str:
+    """Extract the agent's prose narration from a tool-request answer.
+
+    The model often writes a short line before requesting tools ("Ok, let me
+    check the file layout. {\"tool_calls\": [...]}"). That narration should be
+    shown in the chat bubble alongside the tool activity instead of being
+    swallowed by the JSON extraction.
+
+    Args:
+        summary: The model's raw ``answer_summary``.
+
+    Returns:
+        The text before the tool-call JSON, trimmed, or ``""`` when there is
+        no narration (pure JSON, plain prose, or empty).
+    """
+    if not summary or not summary.strip():
+        return ""
+    if not parse_tool_calls(summary):
+        return ""
+    text = summary.strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end <= start:
+        return ""
+    return text[:start].strip()
+
+
 # ---------------------------------------------------------------------------
 # Result formatting
 # ---------------------------------------------------------------------------

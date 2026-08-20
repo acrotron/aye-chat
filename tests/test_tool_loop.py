@@ -49,7 +49,7 @@ class TestReadRound:
             max_output_tokens=1000,
         )
 
-        assert summary == "the notes say hello world"
+        assert "the notes say hello world" in summary
         assert chat_id == 11
         assert "hello world" in calls[0]["message"]
 
@@ -212,7 +212,7 @@ class TestRoundBudget:
             source_files={},
             max_output_tokens=1000,
         )
-        assert summary == "final answer"
+        assert "final answer" in summary
         assert len(calls) == 1
 
     def test_round_budget_is_capped(self, tmp_path, monkeypatch):
@@ -242,7 +242,7 @@ class TestRoundBudget:
         forced = calls[-1]
         assert "tool call limit" in forced["message"].lower()
         assert forced["system_prompt"] == "sys"
-        assert summary == "done with the task"
+        assert "done with the task" in summary
         assert looks_like_protocol_json(summary) is False
 
     def test_default_budget_allows_multi_file_creation(self, tmp_path, monkeypatch):
@@ -265,7 +265,7 @@ class TestRoundBudget:
             source_files={},
             max_output_tokens=1000,
         )
-        assert summary == "created the files"
+        assert "created the files" in summary
         assert len(calls) > 5
 
 
@@ -293,7 +293,7 @@ class TestUpdatedFiles:
             max_output_tokens=1000,
         )
         assert [f["file_name"] for f in files] == ["a.py", "b.py"]
-        assert summary == "done"
+        assert "done" in summary
 
 class TestStubRetry:
     def test_stub_round_nudges_the_model_then_uses_tools(self, tmp_path, monkeypatch):
@@ -320,7 +320,7 @@ class TestStubRetry:
         assert len(calls) == 2
         assert "use the available tools now" in calls[0]["message"].lower()
         assert "fix the texture bug" in calls[0]["message"]
-        assert summary == "all clear"
+        assert "all clear" in summary
         assert chat_id == 3
 
     def test_stub_still_prose_when_model_refuses_to_call_tools(self, tmp_path, monkeypatch):
@@ -378,5 +378,43 @@ class TestStubRetry:
         assert "glob" in calls[0]["message"]
         assert "*.txt" in calls[0]["message"]
         assert "*.py" in calls[1]["message"]
-        assert summary == "done"
+        assert "done" in summary
         assert chat_id == 6
+
+
+class TestNarrationRendering:
+    def test_narration_and_tools_merge_into_single_summary(self, tmp_path, monkeypatch):
+        calls = []
+
+        def fake_cli_invoke(**kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return _resp(
+                    "Ok, let me check the layout. "
+                    + _tool_request("glob", {"pattern": "*.py"}),
+                    chat_id=1,
+                )
+            return _resp("Found 1 TODO, done.", chat_id=1)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        summary, _, _ = run_tool_loop(
+            initial_summary=_tool_request("glob", {"pattern": "*.txt"}),
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+            initial_raw_summary="Let me search for TODOs. "
+            + _tool_request("glob", {"pattern": "*.txt"}),
+        )
+        # Everything is merged into ONE bubble text: round-1 narration, the
+        # follow-up narration, the tool line, and the final answer.
+        assert "Let me search for TODOs." in summary
+        assert "Ok, let me check the layout." in summary
+        assert '✱ Glob "*.txt"' in summary
+        assert '✱ Glob "*.py"' in summary
+        assert "Found 1 TODO, done." in summary
+        assert looks_like_protocol_json(summary) is False
+        assert summary.count("```") == 0

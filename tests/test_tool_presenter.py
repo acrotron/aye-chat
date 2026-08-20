@@ -1,11 +1,11 @@
-"""Tests for the tool-call presenter (opencode-style one-liners + shell panel)."""
+"""Tests for the tool-call presenter (opencode-style one-liners + AgentBubble)."""
 
 from rich.console import Console
 
 from aye.model.tool_protocol import ToolCall
 from aye.presenter.tool_presenter import (
     SHELL_TOOL_NAMES,
-    ToolSession,
+    AgentBubble,
     _describe_call,
     present_tool_call,
     present_tool_result,
@@ -94,32 +94,47 @@ class TestPresentToolResult:
         assert "cmd" in SHELL_TOOL_NAMES
 
 
-class TestToolSession:
-    def test_empty_session_prints_nothing(self, capsys):
-        console = Console(force_terminal=False)
-        session = ToolSession()
-        assert session.is_empty() is True
-        session.render(console)
-        assert capsys.readouterr().out == ""
+class TestAgentBubble:
+    def test_empty_bubble_renders_nothing(self):
+        assert AgentBubble().render() == ""
 
-    def test_renders_collected_lines_in_one_panel(self, capsys):
-        console = Console(force_terminal=False)
-        session = ToolSession()
-        session.add_call_line(ToolCall(name="glob", arguments={"pattern": "*.py"}), "")
-        session.add_call_line(ToolCall(name="read", arguments={"path": "main.py"}), "")
-        assert session.is_empty() is False
-        session.render(console)
-        out = capsys.readouterr().out
-        assert '✱Glob "*.py"' in out
+    def test_merges_narration_tools_and_answer_into_one_text(self):
+        bubble = AgentBubble()
+        bubble.add_narration("Ok, let me check the layout.")
+        bubble.add_tool_call(ToolCall(name="glob", arguments={"pattern": "*.py"}), "")
+        bubble.add_tool_call(ToolCall(name="read", arguments={"path": "main.py"}), "")
+        bubble.set_answer("Found it: main.py is the entry point.")
+        out = bubble.render()
+        assert "Ok, let me check the layout." in out
+        assert '✱ Glob "*.py"' in out
         assert "Read main.py" in out
+        assert "Found it: main.py is the entry point." in out
+        assert out.index("Ok, let me") < out.index("Glob")
+        assert out.index("Glob") < out.index("Found it")
 
-    def test_shell_result_includes_output_panel(self, capsys):
-        console = Console(force_terminal=False)
-        session = ToolSession()
-        session.add_shell_result(
-            ToolCall(name="cmd", arguments={"command": "pytest -q"}), "2134 passed"
+    def test_shell_result_includes_fenced_output(self):
+        bubble = AgentBubble()
+        bubble.add_shell_result(
+            ToolCall(name="cmd", arguments={"command": "pytest -q"}),
+            "$ pytest -q\nexit code: 0\n--- stdout ---\n2134 passed",
         )
-        session.render(console)
-        out = capsys.readouterr().out
+        out = bubble.render()
         assert "cmd pytest -q" in out
+        assert "```text" in out
         assert "2134 passed" in out
+        assert "$ pytest -q" not in out  # command echo line is dropped
+
+    def test_blank_narration_is_ignored(self):
+        bubble = AgentBubble()
+        bubble.add_narration("   ")
+        assert bubble.is_empty() is True
+
+    def test_ascii_icons_on_legacy_console(self):
+        from types import SimpleNamespace
+
+        console = SimpleNamespace(encoding="cp1252")
+        bubble = AgentBubble(console=console)
+        bubble.add_tool_call(ToolCall(name="glob", arguments={"pattern": "*.py"}), "")
+        out = bubble.render()
+        assert '* Glob "*.py"' in out
+        assert "\u2731" not in out

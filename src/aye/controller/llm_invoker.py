@@ -564,8 +564,9 @@ def invoke_llm(
 
         # 3) Parse API response
         assistant_resp, new_chat_id = _parse_api_response(api_resp)
+        raw_round1_summary = assistant_resp.get("answer_summary", "")
         parsed_summary = summary_with_tool_calls(
-            assistant_resp.get("answer_summary", ""),
+            raw_round1_summary,
             assistant_resp.get("tool_call") or assistant_resp.get("tool_calls"),
         )
         updated_files = assistant_resp.get("source_files", [])
@@ -586,7 +587,8 @@ def invoke_llm(
             spinner.stop()
 
             # The streamed bubble already showed the raw tool-call JSON; clear
-            # it so the tool activity (rendered by the loop) is the only frame.
+            # it so the merged single-bubble summary (narration + tools +
+            # final answer) rendered by process_llm_response is the only frame.
             if streaming_display is not None and streaming_display.is_active():
                 streaming_display.discard()
 
@@ -604,6 +606,7 @@ def invoke_llm(
                 console=console,
                 stub_retry=not tool_requested,
                 max_rounds=_tool_round_budget(),
+                initial_raw_summary=raw_round1_summary,
             )
             return LLMResponse(
                 summary=_guard_summary(parsed_summary),

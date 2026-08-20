@@ -17,6 +17,7 @@ from aye.model.tool_protocol import (
     looks_like_protocol_json,
     looks_like_stub,
     parse_tool_calls,
+    split_narration,
     summary_with_tool_calls,
 )
 from aye.model.tools import (
@@ -708,6 +709,27 @@ class TestLooksLikeStub:
             )
             is False
         )
+
+
+class TestSplitNarration:
+    def test_extracts_prose_before_tool_json(self):
+        out = split_narration(
+            'Ok, let me check the layout. {"tool_calls":[{"name":"glob",'
+            '"arguments":{"pattern":"*.py"}}]}'
+        )
+        assert out == "Ok, let me check the layout."
+
+    def test_pure_json_has_no_narration(self):
+        assert split_narration('{"tool_calls":[{"name":"grep"}]}') == ""
+
+    def test_plain_prose_has_no_narration(self):
+        assert split_narration("Everything works now.") == ""
+        assert split_narration("") == ""
+        assert split_narration(None) == ""
+
+    def test_whitespace_narration_is_empty(self):
+        out = split_narration('   {"tool_calls":[{"name":"glob"}]}')
+        assert out == ""
 
 
 class TestLooksLikeProtocolJson:
