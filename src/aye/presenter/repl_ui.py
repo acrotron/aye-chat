@@ -171,8 +171,15 @@ def print_prompt():
     return "(\u30c4\u00bb "
 
 
-def print_assistant_response(summary: str):
-    """Render the assistant's response as Markdown inside a styled panel."""
+def print_assistant_response(summary: str, renderable=None):
+    """Render the assistant's response as Markdown inside a styled panel.
+
+    Args:
+        summary: The plain-text/markdown summary.
+        renderable: Optional pre-styled Rich renderable (e.g. the agent bubble
+            with coloured tool lines). When given, it is shown instead of
+            re-parsing *summary* as Markdown.
+    """
     set_last_assistant_response(summary)
 
     console.print()
@@ -183,7 +190,7 @@ def print_assistant_response(summary: str):
     grid.add_column()
     grid.add_column()
 
-    grid.add_row(pulse, Markdown(summary))
+    grid.add_row(pulse, renderable if renderable is not None else Markdown(summary))
 
     resonse_with_layout = Panel(
         grid,

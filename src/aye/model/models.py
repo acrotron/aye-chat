@@ -23,12 +23,16 @@ class LLMResponse:
         summary_already_printed: True if the summary text was already printed
             to the terminal via a streaming UI (so we should not print it again).
             This is still useful for commands like `raw` / `printraw`.
+        renderable: Optional styled Rich renderable for the summary (e.g. the
+            agent bubble with coloured tool lines). When set, the presenter
+            renders this instead of re-parsing the plain summary as Markdown.
     """
     summary: str
     updated_files: List[Dict[str, Any]]
     chat_id: Optional[int] = None
     source: LLMSource = LLMSource.API
     summary_already_printed: bool = False
+    renderable: Any = None
 
 
 @dataclass

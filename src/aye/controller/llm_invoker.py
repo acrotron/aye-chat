@@ -592,7 +592,7 @@ def invoke_llm(
             if streaming_display is not None and streaming_display.is_active():
                 streaming_display.discard()
 
-            parsed_summary, updated_files, new_chat_id = run_tool_loop(
+            loop_result = run_tool_loop(
                 initial_summary=parsed_summary,
                 updated_files=updated_files,
                 chat_id=new_chat_id,
@@ -609,11 +609,12 @@ def invoke_llm(
                 initial_raw_summary=raw_round1_summary,
             )
             return LLMResponse(
-                summary=_guard_summary(parsed_summary),
-                updated_files=updated_files,
-                chat_id=new_chat_id,
+                summary=_guard_summary(loop_result.summary),
+                updated_files=loop_result.updated_files,
+                chat_id=loop_result.chat_id,
                 source=LLMSource.API,
                 summary_already_printed=False,
+                renderable=loop_result.renderable,
             )
 
         # IMPORTANT:

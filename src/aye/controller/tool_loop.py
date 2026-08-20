@@ -9,7 +9,7 @@ until the model answers in prose or the round budget is exhausted.
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from rich.console import Console
 
@@ -27,6 +27,22 @@ from aye.model.tool_protocol import (
 from aye.model.tools import build_registry, execute_tool, needs_confirmation
 from aye.presenter.tool_presenter import SHELL_TOOL_NAMES, AgentBubble
 from aye.presenter.ui_utils import StoppableSpinner, DEFAULT_THINKING_MESSAGES
+
+
+class ToolLoopResult(NamedTuple):
+    """Result of :func:`run_tool_loop`.
+
+    Attributes:
+        summary: The merged single-bubble markdown text.
+        updated_files: Files the model wants written (deduplicated).
+        chat_id: Chat id the conversation continues in.
+        renderable: Styled Rich renderable of the bubble (coloured tool lines).
+    """
+
+    summary: str
+    updated_files: List[Dict[str, Any]]
+    chat_id: Optional[int]
+    renderable: Any = None
 
 # Upper bound on tool rounds per user request, so a stubborn model cannot spin
 # forever. Generous enough for long autonomous agent work (probe/read/edit/
@@ -241,4 +257,9 @@ def run_tool_loop(
     else:
         bubble.set_answer(summary)
 
-    return bubble.render(), merged, chat_id
+    return ToolLoopResult(
+        summary=bubble.render(),
+        updated_files=merged,
+        chat_id=chat_id,
+        renderable=bubble.to_renderable(),
+    )

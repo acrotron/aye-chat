@@ -138,3 +138,18 @@ class TestAgentBubble:
         out = bubble.render()
         assert '* Glob "*.py"' in out
         assert "\u2731" not in out
+
+    def test_to_renderable_keeps_tool_colours(self):
+        from io import StringIO
+
+        console = Console(force_terminal=True, file=StringIO())
+        bubble = AgentBubble()
+        bubble.add_tool_call(ToolCall(name="glob", arguments={"pattern": "*.py"}), "")
+        bubble.add_narration("Ok, checking.")
+        bubble.set_answer("Done.")
+        console.print(bubble.to_renderable())
+        rendered = console.file.getvalue()
+        assert 'Glob "*.py"' in rendered
+        assert "Ok, checking." in rendered
+        assert "Done." in rendered
+        assert "\x1b[" in rendered  # ANSI colours survived into the bubble

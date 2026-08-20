@@ -18,9 +18,10 @@ inline.
 """
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from rich.console import Console
+from rich.console import Console, Group
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
@@ -186,10 +187,12 @@ def _shell_excerpt(output: str) -> str:
 class AgentBubble:
     """Accumulate the agent's message content as a single chat bubble.
 
-    Narration lines and tool entries are collected as plain text blocks, then
-    :meth:`render` merges them with the final answer into one markdown string.
-    The tool loop returns that string as the assistant summary, so the whole
-    agent run appears inside the normal chat bubble — no separate tool panels.
+    Narration lines and tool entries are collected as typed blocks, then
+    :meth:`render` merges them with the final answer into one markdown string
+    while :meth:`to_renderable` produces a styled Rich renderable that keeps
+    each tool line's colour. The tool loop returns that renderable, so the
+    whole agent run appears inside the normal chat bubble — no separate tool
+    panels, and the tool calls keep their opencode-style colours.
 
     Args:
         console: Console the content will eventually be shown through; used to
@@ -198,28 +201,22 @@ class AgentBubble:
 
     def __init__(self, console: Optional[Console] = None):
         self._console = console
-        self._blocks: List[str] = []
+        self._blocks: List[Tuple[str, Any, Any]] = []
         self._answer = ""
 
     def add_narration(self, text: str) -> None:
         """Queue the agent's prose narration line before a tool round."""
         text = (text or "").strip()
-        if text and (not self._blocks or self._blocks[-1] != text):
-            self._blocks.append(text)
+        if text and (not self._blocks or self._blocks[-1][1] != text):
+            self._blocks.append(("text", text, None))
 
     def add_tool_call(self, call: ToolCall, output: str) -> None:
         """Queue a compact one-liner for *call* (non-shell tools)."""
-        icon = _icon_for(call.name, self._console)
-        self._blocks.append(f"{icon} {_describe_call(call, output)}")
+        self._blocks.append(("tool", call, output))
 
     def add_shell_result(self, call: ToolCall, output: str) -> None:
         """Queue a shell one-liner plus its fenced output excerpt."""
-        icon = _icon_for(call.name, self._console)
-        line = f"{icon} {_describe_call(call, output)}"
-        excerpt = _shell_excerpt(output)
-        if excerpt:
-            line += "\n\n" + excerpt
-        self._blocks.append(line)
+        self._blocks.append(("shell", call, output))
 
     def set_answer(self, text: str) -> None:
         """Set the final prose answer appended at the end of the bubble."""
@@ -231,10 +228,47 @@ class AgentBubble:
 
     def render(self) -> str:
         """Merge narration, tool entries, and the final answer into markdown."""
-        blocks = list(self._blocks)
+        blocks = []
+        for kind, call, output in self._blocks:
+            if kind == "text":
+                blocks.append(str(call))
+                continue
+            icon = _icon_for(call.name, self._console)
+            line = f"{icon} {_describe_call(call, output)}"
+            if kind == "shell":
+                excerpt = _shell_excerpt(output)
+                if excerpt:
+                    line += "\n\n" + excerpt
+            blocks.append(line)
         if self._answer:
             blocks.append(self._answer)
         return "\n\n".join(b for b in blocks if b)
+
+    def to_renderable(self) -> Group:
+        """Build a styled Rich renderable with coloured tool lines.
+
+        Returns:
+            A Rich ``Group``: narration as plain text, tool lines in their
+            per-family colours, shell output as a dimmed code block, and the
+            final answer rendered as markdown.
+        """
+        items = []
+        for kind, call, output in self._blocks:
+            if kind == "text":
+                items.append(Text(str(call)))
+            elif kind == "tool":
+                items.append(_line_renderable(call, output, self._console))
+            elif kind == "shell":
+                line = _line_renderable(call, output, self._console)
+                excerpt = _shell_excerpt(output)
+                if excerpt:
+                    items.append(Group(line, Markdown(excerpt)))
+                else:
+                    items.append(line)
+            items.append(Text(""))
+        if self._answer:
+            items.append(Markdown(self._answer))
+        return Group(*items)
 
 
 def present_tool_call(call: ToolCall, console: Console) -> None:

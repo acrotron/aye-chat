@@ -63,7 +63,11 @@ def process_llm_response(
 
         # Only print if it was not already rendered by streaming UI.
         if not getattr(response, "summary_already_printed", False):
-            print_assistant_response(response.summary)
+            renderable = getattr(response, "renderable", None)
+            if renderable is not None:
+                print_assistant_response(response.summary, renderable=renderable)
+            else:
+                print_assistant_response(response.summary)
 
     # Process file updates
     updated_files = response.updated_files or []
