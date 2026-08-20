@@ -255,16 +255,45 @@ def summary_with_tool_calls(summary: str, tool_calls: Any) -> str:
     shapes to the internal ``{"tool_calls": [...]}`` form so the rest of the
     pipeline is agnostic.
 
+    The structured field is only honored when it actually parses into usable
+    calls; a malformed field falls back to the plain summary so raw JSON never
+    reaches the UI as the answer.
+
     Args:
         summary: The model's ``answer_summary``.
         tool_calls: The structured ``tool_call`` / ``tool_calls`` field, if any.
 
     Returns:
-        The summary, or the tool-call JSON when the structured field is set.
+        The summary, or the tool-call JSON when the structured field is set
+        and valid.
     """
     if tool_calls:
-        return json.dumps({"tool_calls": tool_calls})
+        candidate = json.dumps({"tool_calls": tool_calls})
+        if parse_tool_calls(candidate):
+            return candidate
     return summary
+
+
+def looks_like_protocol_json(summary: Optional[str]) -> bool:
+    """Return True for a summary that is raw tool-protocol JSON, not prose.
+
+    A strict parse can miss malformed protocol objects (``{"tool_calls":
+    "oops"}`` parses to no calls but is still not user-facing text). This
+    catches any brace-leading object that mentions the tool protocol so the
+    caller can refuse to render it as a chat answer.
+
+    Args:
+        summary: Text to inspect.
+
+    Returns:
+        True when *summary* looks like a raw tool-call protocol object.
+    """
+    if not summary or not summary.strip():
+        return False
+    text = summary.strip()
+    if not text.startswith("{"):
+        return False
+    return "tool_calls" in text or "tool_call" in text
 
 
 # ---------------------------------------------------------------------------
@@ -309,8 +338,10 @@ def format_tool_results(
 
     blocks.append("---")
     blocks.append(
-        "Using these results, answer the original request. Request more tools "
-        "only if something essential is still missing."
+        "Work autonomously now: you may use any tool as many times as needed "
+        "to fully complete the original request. Do not stop after a partial "
+        "result or give a provisional answer. Only once everything the user "
+        "asked for is truly done, answer in plain prose with no more tool calls."
     )
     blocks.append("")
     blocks.append(f"Original request: {original_prompt}")

@@ -19,12 +19,33 @@ from aye.model.skills_system import SkillsResolver
 from aye.model.tool_protocol import (
     build_tools_prompt,
     is_tool_request,
+    looks_like_protocol_json,
     looks_like_stub,
     summary_with_tool_calls,
 )
 from aye.model.tools import build_registry
 
 import os
+
+
+_TOOL_JSON_FALLBACK = (
+    "The model kept requesting tools without producing a final answer. "
+    "Review the tool activity above or re-run the request."
+)
+
+
+def _guard_summary(summary: str) -> str:
+    """Never let raw tool-protocol JSON reach the UI as an answer.
+
+    Args:
+        summary: The summary about to be returned to the caller.
+
+    Returns:
+        A safe display string; raw protocol JSON is replaced with a note.
+    """
+    if looks_like_protocol_json(summary):
+        return _TOOL_JSON_FALLBACK
+    return summary
 
 
 def _is_verbose():
@@ -51,7 +72,7 @@ def _tool_round_budget() -> int:
         value = int(raw)
     except (TypeError, ValueError):
         return MAX_TOOL_ROUNDS
-    return max(2, min(value, 50))
+    return max(2, min(value, 100))
 
 
 def _get_int_env(name: str, default: int) -> int:
@@ -585,7 +606,7 @@ def invoke_llm(
                 max_rounds=_tool_round_budget(),
             )
             return LLMResponse(
-                summary=parsed_summary,
+                summary=_guard_summary(parsed_summary),
                 updated_files=updated_files,
                 chat_id=new_chat_id,
                 source=LLMSource.API,
@@ -596,7 +617,7 @@ def invoke_llm(
         # - Always return the parsed summary so other features (e.g. `raw`) can use it.
         # - Use summary_already_printed to prevent double-printing in process_llm_response.
         return LLMResponse(
-            summary=parsed_summary,
+            summary=_guard_summary(parsed_summary),
             updated_files=assistant_resp.get("source_files", []),
             chat_id=new_chat_id,
             source=LLMSource.API,
