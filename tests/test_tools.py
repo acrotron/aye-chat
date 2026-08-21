@@ -724,6 +724,66 @@ class TestLooksLikeStub:
             is False
         )
 
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            # The reply that shipped this fix: the model has glob/read but asks
+            # the user to run them, so nothing is investigated.
+            "I don't have the repository tool output yet. Please run the "
+            "glob/read tool so I can see the current components/ structure, "
+            "then I can create the components/AgentProgress.tsx file "
+            "appropriately.",
+            "Please provide the output of the read tool.",
+            "Could you please share the contents of components/?",
+            "I need you to run glob so I can see the structure.",
+            "You need to provide the file contents first.",
+            "You'll have to share the repo structure.",
+            "I do not have access to the repository contents yet.",
+            "I cannot see the files. Can you paste the directory structure?",
+            "I haven't received the grep results yet.",
+            "Waiting for the tool results before I can proceed.",
+        ],
+    )
+    def test_deflections_are_stubs(self, reply):
+        """Asking the user to supply tool output is a failure to call tools."""
+        assert looks_like_stub(reply) is True
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            # Mentions a tool, but reports work already done.
+            "I read hooks/useResearchStream.ts and it exposes a `stages` "
+            "array; the component maps over it.",
+            "I checked the tests and they pass.",
+            # "You need to run" pointing at the user's own verification step,
+            # not at fetching context for the model.
+            "You need to run pytest to confirm, but the fix is in place at "
+            "src/app.py:42.",
+            # Documentation-style prose that happens to name a tool.
+            "Please note that the write tool snapshots the previous state "
+            "automatically.",
+            "AgentProgress.tsx now renders a generic progress list driven by "
+            "the `stages` prop.",
+        ],
+    )
+    def test_real_answers_mentioning_tools_are_not_stubs(self, reply):
+        assert looks_like_stub(reply) is False
+
+    def test_deflection_with_tool_calls_is_not_a_stub(self):
+        assert (
+            looks_like_stub(
+                'I do not have the file contents. '
+                '{"tool_calls":[{"name":"read","arguments":{"path":"a.py"}}]}'
+            )
+            is False
+        )
+
+    def test_very_long_deflection_is_not_a_stub(self):
+        """A real answer can discuss missing context at length; only terse
+        deflections are nudged."""
+        long = "I do not have the repository contents. " + "detail " * 100
+        assert looks_like_stub(long) is False
+
 
 class TestLooksLikeProtocolJson:
     def test_valid_protocol_object_is_detected(self):
