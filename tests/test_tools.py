@@ -391,9 +391,24 @@ class TestPermissionMode:
 
 
 class TestShellApproval:
+    @pytest.fixture(autouse=True)
+    def _default_mode(self, monkeypatch):
+        """Pin the permission mode to ``default``.
+
+        ``permission_mode()`` falls back to the user's ``~/.ayecfg``, so a
+        developer with ``tool_permission = full`` would otherwise see these
+        tests fail for reasons unrelated to the code under test.
+        """
+        monkeypatch.delenv("AYE_TOOL_PERMISSION", raising=False)
+        monkeypatch.setattr(
+            "aye.model.tools.get_user_config",
+            lambda key, default=None: PERMISSION_DEFAULT if key == "tool_permission" else default,
+        )
+
     def test_shell_tools_prompt_in_default_mode(self, shell_registry):
         assert needs_confirmation("bash", shell_registry) is True
         assert needs_confirmation("cmd", shell_registry) is True
+
     def test_file_tools_never_prompt_in_default_mode(self, shell_registry):
         for name in ("read", "glob", "grep", "write"):
             assert needs_confirmation(name, shell_registry) is False
