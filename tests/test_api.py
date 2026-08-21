@@ -343,7 +343,9 @@ class TestModelApi(TestCase):
         result = api.cli_invoke(message="test", dry_run=False)
         self.assertEqual(result, {"final": "response"})
         self.assertEqual(mock_get.call_count, 2)
-        mock_get.assert_called_with("https://fake.url", timeout=api.TIMEOUT, verify=True)
+        mock_get.assert_called_with(
+            "https://fake.url", timeout=api.POLL_REQUEST_TIMEOUT, verify=True
+        )
 
     @patch("aye.model.api._ssl_verify", return_value=True)
     @patch("aye.model.api.time")
@@ -418,6 +420,62 @@ class TestModelApi(TestCase):
 
         with self.assertRaises(TimeoutError):
             api.cli_invoke(message="test", dry_run=False, poll_timeout=deadline)
+
+    @patch("aye.model.api._ssl_verify", return_value=True)
+    @patch("aye.model.api.time")
+    @patch("httpx.get")
+    @patch("httpx.Client")
+    @patch("aye.model.api._check_response")
+    @patch("aye.model.api._auth_headers")
+    def test_poll_uses_short_per_request_timeout(
+        self, mock_headers, mock_check, mock_client, mock_get, mock_time, mock_ssl_verify
+    ):
+        """Each poll must cap at POLL_REQUEST_TIMEOUT, not the loop deadline.
+
+        Reusing TIMEOUT (900s) here meant a single hung GET consumed the whole
+        poll budget, so the request failed outright instead of retrying.
+        """
+        mock_headers.return_value = {"Auth": "fake"}
+        mock_check.return_value = {"response_url": "https://fake.url"}
+        mock_time.time.side_effect = [0, 2]
+        mock_get.return_value = MagicMock(
+            status_code=200, json=lambda: {"final": "response"}
+        )
+
+        api.cli_invoke(message="test")
+
+        self.assertEqual(
+            mock_get.call_args.kwargs["timeout"], api.POLL_REQUEST_TIMEOUT
+        )
+        self.assertLess(api.POLL_REQUEST_TIMEOUT, api.TIMEOUT)
+
+    @patch("aye.model.api._ssl_verify", return_value=True)
+    @patch("aye.model.api.time")
+    @patch("httpx.get")
+    @patch("httpx.Client")
+    @patch("aye.model.api._check_response")
+    @patch("aye.model.api._auth_headers")
+    def test_poll_retries_after_a_read_timeout(
+        self, mock_headers, mock_check, mock_client, mock_get, mock_time, mock_ssl_verify
+    ):
+        """A timed-out poll is retried rather than failing the request.
+
+        httpx.ReadTimeout is a RequestError subclass, so the existing handler
+        catches it; this pins the retry so a hung poll cannot end the request.
+        """
+        mock_headers.return_value = {"Auth": "fake"}
+        mock_check.return_value = {"response_url": "https://fake.url"}
+        mock_time.sleep.return_value = None
+        mock_time.time.side_effect = [0, 2, 4]
+        mock_get.side_effect = [
+            httpx.ReadTimeout("poll hung"),
+            MagicMock(status_code=200, json=lambda: {"final": "response"}),
+        ]
+
+        result = api.cli_invoke(message="test")
+
+        self.assertEqual(result, {"final": "response"})
+        self.assertEqual(mock_get.call_count, 2)
 
     @patch("aye.model.api._ssl_verify", return_value=True)
     @patch("aye.model.api.time")

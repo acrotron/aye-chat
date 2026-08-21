@@ -226,23 +226,73 @@ _STUB_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The things a model asks the user for instead of fetching them itself.
+_DEFLECT_OBJECT = (
+    r"(?:tools?|glob|grep|read|files?|repo(?:sitory)?|code|contents?|"
+    r"structure|director(?:y|ies)|folders?|outputs?|results?)"
+)
+
+# Matches replies that refuse to act and ask the user to supply tool output.
+# The model *has* tools, so "please run glob" or "I don't have the file
+# contents yet" is a failure to call them, not a real answer. These read as
+# complete sentences (never as a tool-call JSON), so without this check they
+# are printed to the user as the final answer.
+_DEFLECTION_RE = re.compile(
+    r"(?:"
+    # "please run the glob tool", "could you share the file contents"
+    r"\b(?:please|could you|can you|would you|kindly)\b.{0,80}?"
+    r"\b(?:run|use|call|invoke|provide|share|paste|attach|send|give|show)\b"
+    r".{0,40}?" + _DEFLECT_OBJECT +
+    r"|"
+    # "I need you to run glob", "you'll have to provide the files"
+    r"\b(?:i need you to|you (?:need|have) to|you'?ll (?:need|have) to)\b.{0,40}?"
+    r"\b(?:run|use|call|invoke|provide|share|paste|attach|send|give|show)\b"
+    r".{0,40}?" + _DEFLECT_OBJECT +
+    r"|"
+    # "I don't have the repository tool output yet", "I can't see the files"
+    r"\bi\b.{0,20}?\b(?:do not|don'?t|cannot|can'?t|haven'?t|have not)\b"
+    r".{0,40}?\b(?:have|see|access|been given|received)\b.{0,40}?" + _DEFLECT_OBJECT +
+    r"|"
+    # "waiting for the tool results"
+    r"\bwait(?:ing)?\s+for\b.{0,40}?" + _DEFLECT_OBJECT +
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Proactive stubs are terse; deflections spell out what they want and so run
+# longer. Both caps keep a genuine prose answer from being misread as a stub.
+_STUB_MAX_CHARS = 200
+_DEFLECTION_MAX_CHARS = 400
+
 
 def looks_like_stub(summary: Optional[str]) -> bool:
-    """Return True if *summary* is a short 'I will investigate...' placeholder.
+    """Return True if *summary* promises or requests tool work instead of doing it.
 
-    Such replies promise tool work but never invoke a tool, so the caller can
-    nudge the model to actually use the available tools.
+    Two shapes are caught, both of which mean the model has tools available
+    but did not call them:
+
+    - Proactive placeholders: "Let me investigate the codebase."
+    - Deflections: "I don't have the file contents yet, please run read."
+
+    The caller nudges the model to actually use its tools instead of showing
+    either reply to the user.
 
     Args:
         summary: The model's ``answer_summary``.
 
     Returns:
-        True for short first-person intent replies that mention investigating.
+        True for placeholder or deflection replies that contain no tool call.
     """
     if not summary or not summary.strip():
         return False
     text = " ".join(summary.strip().split())
-    if len(text) > 200 or not _STUB_RE.search(text):
+
+    matched = (
+        len(text) <= _STUB_MAX_CHARS and _STUB_RE.search(text)
+    ) or (
+        len(text) <= _DEFLECTION_MAX_CHARS and _DEFLECTION_RE.search(text)
+    )
+    if not matched:
         return False
     return not parse_tool_calls(summary)
 
@@ -255,16 +305,45 @@ def summary_with_tool_calls(summary: str, tool_calls: Any) -> str:
     shapes to the internal ``{"tool_calls": [...]}`` form so the rest of the
     pipeline is agnostic.
 
+    The structured field is only honored when it actually parses into usable
+    calls; a malformed field falls back to the plain summary so raw JSON never
+    reaches the UI as the answer.
+
     Args:
         summary: The model's ``answer_summary``.
         tool_calls: The structured ``tool_call`` / ``tool_calls`` field, if any.
 
     Returns:
-        The summary, or the tool-call JSON when the structured field is set.
+        The summary, or the tool-call JSON when the structured field is set
+        and valid.
     """
     if tool_calls:
-        return json.dumps({"tool_calls": tool_calls})
+        candidate = json.dumps({"tool_calls": tool_calls})
+        if parse_tool_calls(candidate):
+            return candidate
     return summary
+
+
+def looks_like_protocol_json(summary: Optional[str]) -> bool:
+    """Return True for a summary that is raw tool-protocol JSON, not prose.
+
+    A strict parse can miss malformed protocol objects (``{"tool_calls":
+    "oops"}`` parses to no calls but is still not user-facing text). This
+    catches any brace-leading object that mentions the tool protocol so the
+    caller can refuse to render it as a chat answer.
+
+    Args:
+        summary: Text to inspect.
+
+    Returns:
+        True when *summary* looks like a raw tool-call protocol object.
+    """
+    if not summary or not summary.strip():
+        return False
+    text = summary.strip()
+    if not text.startswith("{"):
+        return False
+    return "tool_calls" in text or "tool_call" in text
 
 
 # ---------------------------------------------------------------------------
@@ -309,8 +388,10 @@ def format_tool_results(
 
     blocks.append("---")
     blocks.append(
-        "Using these results, answer the original request. Request more tools "
-        "only if something essential is still missing."
+        "Work autonomously now: you may use any tool as many times as needed "
+        "to fully complete the original request. Do not stop after a partial "
+        "result or give a provisional answer. Only once everything the user "
+        "asked for is truly done, answer in plain prose with no more tool calls."
     )
     blocks.append("")
     blocks.append(f"Original request: {original_prompt}")

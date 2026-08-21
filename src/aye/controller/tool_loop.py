@@ -28,10 +28,10 @@ from aye.presenter.ui_utils import StoppableSpinner, DEFAULT_THINKING_MESSAGES
 from aye.model.auth import get_user_config
 
 # Upper bound on tool rounds per user request, so a stubborn model cannot spin
-# forever. Generous enough for multi-file creation (glob/read probes plus a
-# write per file) while the last round's system prompt forbids further calls.
+# forever. Generous enough for long autonomous agent work (probe/read/edit/
+# test cycles) while the last round's system prompt forbids further calls.
 # Overridable per user via the `max_tool_rounds` config key / AYE_MAX_TOOL_ROUNDS.
-MAX_TOOL_ROUNDS = 15
+MAX_TOOL_ROUNDS = 40
 
 _DECLINED_SHELL_OUTPUT = "Error: the user declined to run this command."
 
@@ -149,9 +149,9 @@ def run_tool_loop(
                     session.add_call_line(call, output)
             followup = format_tool_results(prompt, results)
 
-        # Render tool activity for this round immediately, before the spinner
-        # Only print if verbose or debug is enabled
-        if not session.is_empty() and (_is_verbose() or _is_debug()):
+        # Render tool activity for this round immediately, before the spinner.
+        # Tool results are diagnostic output: show them on debug only.
+        if not session.is_empty() and _is_debug():
             session.render(console)
 
         is_final_round = round_index + 1 == max_rounds
@@ -181,6 +181,32 @@ def run_tool_loop(
             # Always stop the spinner after the API call completes
             spinner.stop()
 
+        assistant_resp, chat_id = _parse_api_response(api_resp)
+        summary = summary_with_tool_calls(
+            assistant_resp.get("answer_summary", ""),
+            assistant_resp.get("tool_call") or assistant_resp.get("tool_calls"),
+        )
+        files.extend(assistant_resp.get("source_files", []))
+
+    # The budget ran out while the model still requested tools. Never return
+    # the raw tool-call JSON as the answer: force one final prose round with
+    # the tools block removed so the model must answer directly.
+    if parse_tool_calls(summary):
+        followup = (
+            "The tool call limit for this request was reached. Give your "
+            "final answer now in prose. Do not request any more tools."
+        )
+        api_resp = cli_invoke(
+            chat_id=chat_id,
+            message=followup,
+            source_files=source_files,
+            model=conf.selected_model,
+            system_prompt=base_system_prompt,
+            max_output_tokens=max_output_tokens,
+            telemetry=None,
+            on_stream_update=None,
+            attachments=attachments,
+        )
         assistant_resp, chat_id = _parse_api_response(api_resp)
         summary = summary_with_tool_calls(
             assistant_resp.get("answer_summary", ""),
