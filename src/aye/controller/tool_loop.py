@@ -149,9 +149,9 @@ def run_tool_loop(
                     session.add_call_line(call, output)
             followup = format_tool_results(prompt, results)
 
-        # Render tool activity for this round immediately, before the spinner
-        # Only print if verbose or debug is enabled
-        if not session.is_empty() and (_is_verbose() or _is_debug()):
+        # Render tool activity for this round immediately, before the spinner.
+        # Tool results are diagnostic output: show them on debug only.
+        if not session.is_empty() and _is_debug():
             session.render(console)
 
         is_final_round = round_index + 1 == max_rounds
