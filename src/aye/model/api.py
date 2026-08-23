@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import time
 import sys
 from typing import Any, Dict, List, Optional, Callable
@@ -277,6 +278,13 @@ def _normalize_tool_calls_into_assistant_response(resp: Dict[str, Any]) -> Dict[
     return normalized
 
 
+# Start of a protocol object anywhere in a streamed chunk. The model often
+# narrates before emitting the tool request ("Let me look at the files.\n
+# {"tool_calls": ...}"), and a partial stream can cut off mid-key, so this
+# matches the opening brace plus the key rather than a complete object.
+_PROTOCOL_JSON_RE = re.compile(r"\{\s*\"tool_calls?\"", re.IGNORECASE)
+
+
 def _stream_content_looks_like_protocol_json(content: str) -> bool:
     """True for streamed protocol JSON that should not be rendered live.
 
@@ -284,13 +292,23 @@ def _stream_content_looks_like_protocol_json(content: str) -> bool:
     tool-call round is still being produced. Rendering those partial chunks is
     what causes raw ``{"tool_calls": ...}`` JSON to flash in the terminal.
 
-    We suppress JSON-shaped partial streams here, then either render the final
-    answer summary or skip rendering entirely when the final payload is a tool
-    call. This may disable live streaming for answers that intentionally begin
-    with a raw JSON object, but it avoids exposing protocol/tool JSON to users.
+    Two shapes are suppressed:
+
+    - A chunk that begins with ``{``: the bare protocol object, possibly still
+      truncated mid-key.
+    - A protocol object appearing after prose: models frequently narrate first
+      ("Let me look at the files."), which used to defeat a leading-brace-only
+      check and leak the JSON.
+
+    We suppress those partial streams here, then either render the final answer
+    summary or skip rendering entirely when the final payload is a tool call.
+    This may disable live streaming for answers that intentionally begin with a
+    raw JSON object, but it avoids exposing protocol/tool JSON to users.
     """
     text = _strip_streaming_json_fence(content).lstrip()
-    return text.startswith("{")
+    if text.startswith("{"):
+        return True
+    return bool(_PROTOCOL_JSON_RE.search(text))
 
 
 def _call_stream_update(on_stream_update: Optional[Callable[..., None]], content: str, *, is_final: bool) -> None:

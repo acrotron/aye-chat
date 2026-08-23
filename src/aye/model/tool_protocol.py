@@ -324,26 +324,32 @@ def summary_with_tool_calls(summary: str, tool_calls: Any) -> str:
     return summary
 
 
+# A protocol object appearing anywhere in the text, not only at the start.
+# Models often narrate before emitting the request ("Let me look.\n{...}"),
+# which a leading-brace-only check misses.
+_EMBEDDED_PROTOCOL_RE = re.compile(r"\{\s*\"tool_calls?\"", re.IGNORECASE)
+
+
 def looks_like_protocol_json(summary: Optional[str]) -> bool:
     """Return True for a summary that is raw tool-protocol JSON, not prose.
 
     A strict parse can miss malformed protocol objects (``{"tool_calls":
     "oops"}`` parses to no calls but is still not user-facing text). This
-    catches any brace-leading object that mentions the tool protocol so the
-    caller can refuse to render it as a chat answer.
+    catches such objects whether they lead the text or follow narration, so
+    the caller can refuse to render them as a chat answer.
 
     Args:
         summary: Text to inspect.
 
     Returns:
-        True when *summary* looks like a raw tool-call protocol object.
+        True when *summary* contains a raw tool-call protocol object.
     """
     if not summary or not summary.strip():
         return False
     text = summary.strip()
-    if not text.startswith("{"):
-        return False
-    return "tool_calls" in text or "tool_call" in text
+    if text.startswith("{"):
+        return "tool_calls" in text or "tool_call" in text
+    return bool(_EMBEDDED_PROTOCOL_RE.search(text))
 
 
 # ---------------------------------------------------------------------------
