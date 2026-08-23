@@ -36,6 +36,14 @@ if api_url:
 BASE_URL = api_url if api_url else "https://api.ayechat.ai"
 TIMEOUT = 900.0
 
+# Per-request ceiling for a single poll of the presigned response URL.
+#
+# The poll loop's own deadline is TIMEOUT, so reusing TIMEOUT here let one
+# hung GET consume the entire budget and fail the request outright instead of
+# retrying. A poll is a small object fetch: if it has not answered in this
+# long, dropping it and re-polling is strictly better than waiting.
+POLL_REQUEST_TIMEOUT = 30.0
+
 
 def _is_debug():
     return get_user_config("debug", "off").lower() == "on"
@@ -451,7 +459,7 @@ def cli_invoke(
             poll_count += 1
             if _is_debug():
                 print(f"[DEBUG] Poll attempt {poll_count}, status: {last_status}")
-            r = httpx.get(response_url, timeout=TIMEOUT, verify=verify)
+            r = httpx.get(response_url, timeout=POLL_REQUEST_TIMEOUT, verify=verify)
             last_status = r.status_code
             if _is_debug():
                 print(f"[DEBUG] Poll response status: {r.status_code}")

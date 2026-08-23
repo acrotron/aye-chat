@@ -89,12 +89,36 @@ class TestToolRoundBudget(TestCase):
     @patch('aye.controller.llm_invoker.get_user_config', return_value='5')
     def test_clamps_to_ceiling(self, mock_get_cfg):
         with patch.dict(os.environ, {"AYE_MAX_TOOL_ROUNDS": "999"}, clear=False):
-            self.assertEqual(llm_invoker._tool_round_budget(), 50)
+            self.assertEqual(llm_invoker._tool_round_budget(), 100)
 
     @patch('aye.controller.llm_invoker.get_user_config', return_value='not_a_number')
     def test_bad_config_falls_back(self, mock_get_cfg):
         with patch.dict(os.environ, {"AYE_MAX_TOOL_ROUNDS": "bad"}, clear=False):
-            self.assertEqual(llm_invoker._tool_round_budget(), 15)
+            self.assertEqual(llm_invoker._tool_round_budget(), 40)
+
+
+class TestGuardSummary(TestCase):
+    """Tests for the raw tool-JSON boundary guard."""
+
+    def test_prose_passes_through(self):
+        self.assertEqual(
+            llm_invoker._guard_summary("All files are created."),
+            "All files are created.",
+        )
+
+    def test_empty_summary_passes_through(self):
+        self.assertEqual(llm_invoker._guard_summary(""), "")
+
+    def test_valid_tool_json_is_replaced(self):
+        out = llm_invoker._guard_summary(
+            '{"tool_calls":[{"name":"grep","arguments":{"pattern":"x"}}]}'
+        )
+        self.assertNotIn("tool_calls", out)
+        self.assertNotIn("{", out)
+
+    def test_malformed_tool_json_is_replaced(self):
+        out = llm_invoker._guard_summary('{"tool_calls": "oops"}')
+        self.assertNotIn("tool_calls", out)
 
 
 class TestGetModelConfig(TestCase):
