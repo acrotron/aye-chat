@@ -35,6 +35,24 @@ MAX_TOOL_ROUNDS = 40
 
 _DECLINED_SHELL_OUTPUT = "Error: the user declined to run this command."
 
+# Returned instead of re-running a call the model already made this request.
+# parse_tool_calls() only deduplicates within a single round, so a model that
+# loses track across rounds would otherwise re-read the same file repeatedly,
+# burning the round budget. Replaying the earlier output is both cheaper and a
+# clearer signal than silently running it again.
+_REPEATED_CALL_NOTE = (
+    "You already called this tool with these exact arguments earlier in this "
+    "request. The previous result is repeated below; do not request it again.\n\n"
+)
+
+
+def _call_key(call: ToolCall) -> tuple:
+    """Return a hashable identity for *call* (name plus normalized arguments)."""
+    try:
+        return (call.name, json.dumps(call.arguments, sort_keys=True))
+    except (TypeError, ValueError):
+        return (call.name, str(call.arguments))
+
 # Sent when the model replied with a placeholder ("Let me investigate...")
 # instead of invoking a tool. One nudged round; if the model still refuses to
 # call tools, the loop breaks and its next reply is shown as the answer.
@@ -129,6 +147,10 @@ def run_tool_loop(
     root = Path(getattr(conf, "root", None) or Path.cwd())
     console = console if console is not None else Console()
 
+    # Outputs of calls already executed this request, keyed by name+arguments.
+    # parse_tool_calls() deduplicates within a round; this carries across them.
+    seen_calls: Dict[tuple, str] = {}
+
     for round_index in range(max_rounds):
         # Create a new session for this round to print immediately
         session = ToolSession()
@@ -141,7 +163,13 @@ def run_tool_loop(
             if not calls:
                 break
             for call in calls:
-                output = _execute(call, root, console=console)
+                key = _call_key(call)
+                if key in seen_calls:
+                    # Replay the earlier result rather than running it again.
+                    output = _REPEATED_CALL_NOTE + seen_calls[key]
+                else:
+                    output = _execute(call, root, console=console)
+                    seen_calls[key] = output
                 results.append((call, output))
                 if call.name in SHELL_TOOL_NAMES:
                     session.add_shell_result(call, output)
@@ -150,9 +178,13 @@ def run_tool_loop(
             followup = format_tool_results(prompt, results)
 
         # Render tool activity for this round immediately, before the spinner.
-        # Tool results are diagnostic output: show them on debug only.
-        if not session.is_empty() and _is_debug():
-            session.render(console)
+        # Verbose shows just the call lines ("that a tool ran"); the full shell
+        # output is diagnostic and stays on debug.
+        if not session.is_empty():
+            if _is_debug():
+                session.render(console)
+            elif _is_verbose():
+                session.render_call_lines(console)
 
         is_final_round = round_index + 1 == max_rounds
         system = _round_system_prompt(base_system_prompt, is_final_round)
