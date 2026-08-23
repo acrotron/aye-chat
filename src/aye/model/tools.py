@@ -856,6 +856,20 @@ FILE_TOOLS: List[ToolSpec] = [
         required=("pattern",),
         runner=run_grep,
     ),
+]
+
+# Not offered to the model yet, deliberately.
+#
+# For ordinary edits `write` is redundant: files returned in the final
+# response's ``source_files`` already go through apply_updates(), which reports
+# the changed files, shows diffs when autodiff is on, and snapshots for
+# `restore`. A second write path bypasses all of that reporting.
+#
+# Its real use is acting *within* one request -- write, run the tests, read the
+# failure, write again -- which is the planned sandboxed test-generation flow.
+# The implementation and its tests are kept intact and ready; re-enable this by
+# adding WRITE_TOOL to default_specs() once the sandbox exists.
+WRITE_TOOL: List[ToolSpec] = [
     ToolSpec(
         name="write",
         description=(
@@ -923,7 +937,10 @@ SHELL_TOOLS: List[ToolSpec] = [
     ),
 ]
 
-ALL_TOOLS: List[ToolSpec] = FILE_TOOLS + WEB_TOOLS + SHELL_TOOLS
+# Every tool that exists, including ones not currently offered to the model.
+# Tests and read_only_registry() use this; default_specs() is what the model
+# actually sees.
+ALL_TOOLS: List[ToolSpec] = FILE_TOOLS + WRITE_TOOL + WEB_TOOLS + SHELL_TOOLS
 
 
 def _platform_shell_tools() -> List[ToolSpec]:
@@ -944,6 +961,10 @@ def default_specs() -> List[ToolSpec]:
 
     Both permission modes offer the same set; they differ only in whether shell
     calls are confirmed with the user.
+
+    ``WRITE_TOOL`` is intentionally absent: edits arrive through the final
+    response's ``source_files`` instead. Add it here to re-enable the write
+    tool once the sandboxed test flow needs mid-request writes.
     """
     return FILE_TOOLS + WEB_TOOLS + _platform_shell_tools()
 
