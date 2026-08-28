@@ -76,7 +76,13 @@ class TestReadRound:
 
 
 class TestWriteRound:
-    def test_write_tool_creates_the_file(self, tmp_path, monkeypatch):
+    def test_write_tool_is_not_offered(self, tmp_path, monkeypatch):
+        """``write`` is withheld from the registry (see tools.WRITE_TOOL).
+
+        A model that requests it anyway gets the unknown-tool error fed back,
+        and no file is created. Re-enable via ``default_specs()`` when the
+        sandboxed test flow lands.
+        """
         calls = []
 
         def fake_cli_invoke(**kwargs):
@@ -96,8 +102,26 @@ class TestWriteRound:
             source_files={},
             max_output_tokens=1000,
         )
-        assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "data"
-        assert "out.txt" in calls[0]["message"]
+        assert not (tmp_path / "out.txt").exists()
+        assert "unknown tool 'write'" in calls[0]["message"]
+
+    def test_write_still_works_when_explicitly_registered(self, tmp_path, monkeypatch):
+        """The implementation is intact; only the default registry withholds it."""
+        from aye.model import snapshot
+        from aye.model.tools import ALL_TOOLS, build_registry, execute_tool
+
+        monkeypatch.chdir(tmp_path)
+        snapshot.reset_backend()
+        try:
+            execute_tool(
+                "write",
+                {"path": "out.txt", "content": "data"},
+                tmp_path,
+                registry=build_registry(ALL_TOOLS),
+            )
+            assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "data"
+        finally:
+            snapshot.reset_backend()
 
 
 class TestShellApproval:
@@ -379,4 +403,118 @@ class TestStubRetry:
         assert "*.txt" in calls[0]["message"]
         assert "*.py" in calls[1]["message"]
         assert summary == "done"
-        assert chat_id == 6
+
+
+class TestCrossRoundDedup:
+    """parse_tool_calls() deduplicates within a round; the loop must also
+    remember calls made in earlier rounds."""
+
+    def _loop(self, tmp_path, monkeypatch, rounds, executed):
+        """Drive the loop through *rounds* summaries, recording executions."""
+        calls = []
+
+        def fake_cli_invoke(**kwargs):
+            calls.append(kwargs)
+            nxt = rounds.pop(0) if rounds else "done"
+            return _resp(nxt, chat_id=1)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        monkeypatch.setattr(
+            "aye.controller.tool_loop.execute_tool",
+            lambda name, args, root: (
+                executed.append((name, args)) or f"RESULT[{name}]"
+            ),
+        )
+        return calls
+
+    def test_identical_call_runs_once_across_rounds(self, tmp_path, monkeypatch):
+        executed = []
+        request = _tool_request("read", {"path": "a.py"})
+        self._loop(tmp_path, monkeypatch, [request], executed)
+
+        run_tool_loop(
+            initial_summary=request,
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        assert executed == [("read", {"path": "a.py"})]
+
+    def test_repeat_is_told_to_the_model_with_the_old_output(
+        self, tmp_path, monkeypatch
+    ):
+        executed = []
+        request = _tool_request("read", {"path": "a.py"})
+        calls = self._loop(tmp_path, monkeypatch, [request], executed)
+
+        run_tool_loop(
+            initial_summary=request,
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        second = calls[1]["message"]
+        assert "already called this tool" in second
+        assert "RESULT[read]" in second
+
+    def test_different_arguments_still_execute(self, tmp_path, monkeypatch):
+        executed = []
+        self._loop(
+            tmp_path, monkeypatch, [_tool_request("read", {"path": "b.py"})], executed
+        )
+
+        run_tool_loop(
+            initial_summary=_tool_request("read", {"path": "a.py"}),
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        assert executed == [
+            ("read", {"path": "a.py"}),
+            ("read", {"path": "b.py"}),
+        ]
+
+    def test_argument_order_does_not_defeat_dedup(self, tmp_path, monkeypatch):
+        """Keys are normalized, so re-ordered arguments count as the same call."""
+        executed = []
+        reordered = json.dumps(
+            {
+                "tool_calls": [
+                    {"name": "grep", "arguments": {"include": "*.py", "pattern": "x"}}
+                ]
+            }
+        )
+        self._loop(tmp_path, monkeypatch, [reordered], executed)
+
+        run_tool_loop(
+            initial_summary=json.dumps(
+                {
+                    "tool_calls": [
+                        {
+                            "name": "grep",
+                            "arguments": {"pattern": "x", "include": "*.py"},
+                        }
+                    ]
+                }
+            ),
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        assert len(executed) == 1

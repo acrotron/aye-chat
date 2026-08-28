@@ -46,6 +46,36 @@ class TestModelApi(TestCase):
         os.environ["AYE_STREAM_DEBUG"] = "0"
         self.assertFalse(api._is_stream_debug())
 
+    def test_stream_protocol_json_detected_after_narration(self):
+        """A leading-brace-only check leaked tool JSON whenever the model
+        narrated first, which is the common case."""
+        for content in (
+            'Let me look at the files.\n{"tool_calls":[{"name":"read"}]}',
+            'I will check the structure.\n\n{"tool_calls": [',
+            'Sure.\n```json\n{"tool_calls":[{"name":"glob"}]}\n```',
+            'First I need to read it.\n{"tool_call": {"name": "read"}}',
+        ):
+            self.assertTrue(
+                api._stream_content_looks_like_protocol_json(content), content
+            )
+
+    def test_stream_protocol_json_detected_when_leading(self):
+        for content in ('{"tool_calls":[{"name":"read"}]}', "{", '  \n {"tool_calls"'):
+            self.assertTrue(
+                api._stream_content_looks_like_protocol_json(content), content
+            )
+
+    def test_stream_prose_is_still_rendered(self):
+        for content in (
+            "The bug is in src/app.py line 42.",
+            "I saw tool_calls mentioned in the log output.",
+            'Use {"a": 1} as the config literal.',
+            "",
+        ):
+            self.assertFalse(
+                api._stream_content_looks_like_protocol_json(content), content
+            )
+
     @patch("aye.model.api.get_user_config")
     def test_ssl_verify_parsing(self, mock_get_user_config):
         for value in ("0", "false", "off", "no", " OFF "):
