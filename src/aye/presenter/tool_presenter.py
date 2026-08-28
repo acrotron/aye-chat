@@ -141,12 +141,17 @@ def _shell_panel(call: ToolCall, output: str) -> Panel:
 
 
 class ToolSession:
-    """Accumulate a request's tool activity and render it as one chat bubble.
+    """Accumulate a request's tool activity for rendering.
 
-    Each executed tool adds a compact one-liner; shell commands also add their
-    output panel. Calling :meth:`render` prints everything inside a single
-    rounded panel matching the chat message style, so the tool activity reads
-    as part of the conversation instead of loose lines under the prompt.
+    Activity is kept in two layers so callers can pick a verbosity:
+
+    - Call lines: one compact line per executed tool ("Read a.py"). Enough to
+      show *that* a tool ran, cheap to display, suitable for verbose mode.
+    - Full output: the bordered panels carrying shell command output. Useful
+      when diagnosing, noisy otherwise, so this is debug-only.
+
+    :meth:`render` prints both; :meth:`render_call_lines` prints only the
+    former.
 
     Args:
         title: Panel title shown above the collected activity.
@@ -155,34 +160,42 @@ class ToolSession:
     def __init__(self, title: str = " tools "):
         self._title = title
         self._items: List[RenderableType] = []
+        self._call_lines: List[RenderableType] = []
 
     def add_call_line(self, call: ToolCall, output: str) -> None:
         """Queue the compact one-liner for *call* (non-shell tools)."""
-        self._items.append(_line_renderable(call, output))
+        line = _line_renderable(call, output)
+        self._items.append(line)
+        self._call_lines.append(line)
 
     def add_shell_result(self, call: ToolCall, output: str) -> None:
         """Queue a shell one-liner plus its full output panel."""
-        self._items.append(_line_renderable(call, output))
+        line = _line_renderable(call, output)
+        self._items.append(line)
+        self._call_lines.append(line)
         self._items.append(_shell_panel(call, output))
 
     def is_empty(self) -> bool:
         """True when no tool activity has been queued."""
         return not self._items
 
-    def render(self, console: Console) -> None:
-        """Print all queued activity inside one rounded chat-style panel."""
-        if not self._items:
+    @staticmethod
+    def _print(console: Console, items: List[RenderableType]) -> None:
+        """Print *items* as a single renderable."""
+        if not items:
             return
-        body: RenderableType
-        if len(self._items) == 1:
-            body = self._items[0]
-        else:
-            body = Group(*self._items)
-
         # Just plain printout: no need for a panel:
         # tool invocation is nice concept for development
         # but no need to tell users about it: it's just a utility to achieve results
-        console.print(body)
+        console.print(items[0] if len(items) == 1 else Group(*items))
+
+    def render(self, console: Console) -> None:
+        """Print every queued item, including full shell output."""
+        self._print(console, self._items)
+
+    def render_call_lines(self, console: Console) -> None:
+        """Print only the one-line-per-tool summary, omitting shell output."""
+        self._print(console, self._call_lines)
 
 
 def present_tool_call(call: ToolCall, console: Console) -> None:

@@ -251,7 +251,12 @@ class TestMatchesInclude:
 
 class TestRunWrite:
     """``write`` goes through apply_updates(), so the snapshot backend is
-    reset per test to keep snapshots inside tmp_path."""
+    reset per test to keep snapshots inside tmp_path.
+
+    ``write`` is not in ``default_specs()`` (see WRITE_TOOL), so these tests
+    dispatch through an explicit registry containing every tool. The
+    implementation stays covered while the tool is withheld from the model.
+    """
 
     @pytest.fixture(autouse=True)
     def _isolate_backend(self, project, monkeypatch):
@@ -262,17 +267,20 @@ class TestRunWrite:
         yield
         snapshot.reset_backend()
 
-    def test_creates_a_new_file(self, project):
-        out = execute_tool(
-            "write", {"path": "new.py", "content": "x = 1\n"}, project
+    @staticmethod
+    def write(arguments, root):
+        """Dispatch a write through the full registry."""
+        return execute_tool(
+            "write", arguments, root, registry=build_registry(ALL_TOOLS)
         )
+
+    def test_creates_a_new_file(self, project):
+        out = self.write({"path": "new.py", "content": "x = 1\n"}, project)
         assert "Created new.py" in out
         assert (project / "new.py").read_text(encoding="utf-8") == "x = 1\n"
 
     def test_updates_an_existing_file(self, project):
-        out = execute_tool(
-            "write", {"path": "src/main.py", "content": "replaced\n"}, project
-        )
+        out = self.write({"path": "src/main.py", "content": "replaced\n"}, project)
         assert "Updated src/main.py" in out
         assert (project / "src" / "main.py").read_text(encoding="utf-8") == "replaced\n"
 
@@ -281,60 +289,52 @@ class TestRunWrite:
         from aye.model.snapshot import list_all_snapshots
 
         before = len(list_all_snapshots())
-        execute_tool("write", {"path": "src/main.py", "content": "new\n"}, project)
+        self.write({"path": "src/main.py", "content": "new\n"}, project)
         assert len(list_all_snapshots()) == before + 1
 
     def test_mentions_restore_in_the_result(self, project):
-        out = execute_tool("write", {"path": "a.py", "content": "y = 2\n"}, project)
+        out = self.write({"path": "a.py", "content": "y = 2\n"}, project)
         assert "restore" in out
 
     def test_creates_parent_directories(self, project):
-        execute_tool(
-            "write", {"path": "deep/nested/f.py", "content": "pass\n"}, project
-        )
+        self.write({"path": "deep/nested/f.py", "content": "pass\n"}, project)
         assert (project / "deep" / "nested" / "f.py").is_file()
 
     def test_empty_content_is_allowed(self, project):
         """An empty file is a legitimate write, so presence is checked, not truth."""
-        out = execute_tool("write", {"path": "empty.py", "content": ""}, project)
+        out = self.write({"path": "empty.py", "content": ""}, project)
         assert "Error" not in out
         assert (project / "empty.py").read_text(encoding="utf-8") == ""
 
     def test_missing_content_is_an_error(self, project):
-        out = execute_tool("write", {"path": "a.py"}, project)
+        out = self.write({"path": "a.py"}, project)
         assert "requires" in out and "content" in out
 
     def test_non_string_content_is_an_error(self, project):
-        out = execute_tool("write", {"path": "a.py", "content": 42}, project)
+        out = self.write({"path": "a.py", "content": 42}, project)
         assert "content must be a string" in out
 
     def test_oversized_content_is_refused(self, project):
-        out = execute_tool(
-            "write", {"path": "a.py", "content": "x" * (MAX_WRITE_BYTES + 1)}, project
+        out = self.write(
+            {"path": "a.py", "content": "x" * (MAX_WRITE_BYTES + 1)}, project
         )
         assert "over the" in out
         assert not (project / "a.py").exists()
 
     def test_traversal_is_refused(self, project):
-        out = execute_tool(
-            "write", {"path": "../escape.txt", "content": "bad\n"}, project
-        )
+        out = self.write({"path": "../escape.txt", "content": "bad\n"}, project)
         assert "escapes the project root" in out
         assert not (project.parent / "escape.txt").exists()
 
     def test_strict_mode_blocks_ignored_files(self, project, monkeypatch):
         monkeypatch.setenv("AYE_BLOCK_IGNORED_FILE_WRITES", "on")
-        out = execute_tool(
-            "write", {"path": "secret.txt", "content": "leak\n"}, project
-        )
+        out = self.write({"path": "secret.txt", "content": "leak\n"}, project)
         assert "strict mode is on" in out
         assert "leak" not in (project / "secret.txt").read_text(encoding="utf-8")
 
     def test_ignored_files_allowed_when_not_strict(self, project, monkeypatch):
         monkeypatch.setenv("AYE_BLOCK_IGNORED_FILE_WRITES", "off")
-        out = execute_tool(
-            "write", {"path": "secret.txt", "content": "changed\n"}, project
-        )
+        out = self.write({"path": "secret.txt", "content": "changed\n"}, project)
         assert "Error" not in out
 
 
@@ -515,27 +515,31 @@ class TestFormatShellResult:
 # ---------------------------------------------------------------------------
 
 class TestRegistry:
-    def test_default_registry_offers_every_tool(self, monkeypatch):
+    def test_default_registry_omits_the_write_tool(self, monkeypatch):
+        """``write`` is withheld pending the sandboxed test flow (WRITE_TOOL)."""
         monkeypatch.delenv("AYE_TOOL_PERMISSION", raising=False)
-        expected = {"read", "glob", "grep", "write", "cmd", "web_search"}
-        if platform.system() != "Windows":
-            expected = {"read", "glob", "grep", "write", "bash", "web_search"}
-        assert set(build_registry()) == expected
+        shell = "cmd" if platform.system() == "Windows" else "bash"
+        assert set(build_registry()) == {"read", "glob", "grep", shell, "web_search"}
+
+    def test_write_still_exists_and_is_dispatchable(self):
+        """The implementation is kept intact, just not offered to the model."""
+        assert "write" in {spec.name for spec in ALL_TOOLS}
+        assert "write" in build_registry(ALL_TOOLS)
 
     def test_read_only_registry_drops_mutating_tools(self):
         assert set(read_only_registry()) == {"read", "glob", "grep", "web_search"}
 
     def test_write_and_shell_are_the_mutating_tools(self):
-        mutating = {s.name for s in FILE_TOOLS + SHELL_TOOLS if s.mutating}
+        mutating = {s.name for s in ALL_TOOLS if s.mutating}
         assert mutating == {"write", "bash", "cmd"}
 
     def test_every_required_param_is_declared(self):
-        for spec in FILE_TOOLS + SHELL_TOOLS:
+        for spec in ALL_TOOLS:
             for name in spec.required:
                 assert name in spec.parameters, f"{spec.name}.{name} undocumented"
 
     def test_tool_names_are_unique(self):
-        names = [s.name for s in FILE_TOOLS + SHELL_TOOLS]
+        names = [s.name for s in ALL_TOOLS]
         assert len(names) == len(set(names))
 
 
@@ -799,6 +803,22 @@ class TestLooksLikeProtocolJson:
 
     def test_non_brace_text_mentioning_tool_calls_is_not_protocol(self):
         assert looks_like_protocol_json("I saw tool_calls in the output.") is False
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            'Let me investigate.\n{"tool_calls":[{"name":"grep"}]}',
+            'I will read it.\n{"tool_call": {"name":"read"}}',
+            'First, the structure.\n\n{"tool_calls": [',
+        ],
+    )
+    def test_protocol_object_after_narration_is_detected(self, summary):
+        """Models narrate before emitting the request; a leading-brace-only
+        check let that JSON reach the user as an answer."""
+        assert looks_like_protocol_json(summary) is True
+
+    def test_json_literal_in_prose_is_not_protocol(self):
+        assert looks_like_protocol_json('Use {"a": 1} as the config.') is False
 
 
 class TestSummaryWithToolCalls:

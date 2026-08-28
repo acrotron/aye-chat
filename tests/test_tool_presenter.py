@@ -123,3 +123,22 @@ class TestToolSession:
         out = capsys.readouterr().out
         assert "cmd pytest -q" in out
         assert "2134 passed" in out
+
+    def test_render_call_lines_omits_shell_output(self, capsys):
+        """Verbose mode shows that a tool ran, not what it printed."""
+        console = Console(force_terminal=False)
+        session = ToolSession()
+        session.add_call_line(ToolCall(name="read", arguments={"path": "a.py"}), "")
+        session.add_shell_result(
+            ToolCall(name="cmd", arguments={"command": "pytest -q"}), "2134 passed"
+        )
+        session.render_call_lines(console)
+        out = capsys.readouterr().out
+        assert "Read a.py" in out
+        assert "cmd pytest -q" in out
+        assert "2134 passed" not in out
+
+    def test_render_call_lines_on_empty_session_prints_nothing(self, capsys):
+        console = Console(force_terminal=False)
+        ToolSession().render_call_lines(console)
+        assert capsys.readouterr().out == ""
