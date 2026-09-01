@@ -1152,7 +1152,8 @@ def default_specs() -> List[ToolSpec]:
     response's ``source_files`` instead. Add it here to re-enable the write
     tool once the sandboxed test flow needs mid-request writes.
     """
-    return FILE_TOOLS + WEB_TOOLS + _platform_shell_tools()
+    #return FILE_TOOLS + WEB_TOOLS + _platform_shell_tools()
+    return []
 
 
 def build_registry(specs: Optional[List[ToolSpec]] = None) -> Dict[str, ToolSpec]:

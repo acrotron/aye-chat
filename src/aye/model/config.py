@@ -164,7 +164,7 @@ MODELS = [
     # context truncation issue, need to troubleshoot: 
     {"id": "deepseek/deepseek-v4-pro", "name": "DeepSeek: DeepSeek V4 Pro", "max_prompt_kb": 120, "max_output_tokens": 16000, "context_target_kb": 250},
     {"id": "moonshotai/kimi-k2.6", "name": "MoonshotAI: Kimi K2.6", "max_prompt_kb": 170, "max_output_tokens": 32000, "context_target_kb": 150},
-    {"id": "moonshotai/kimi-k3", "name": "MoonshotAI: Kimi K3", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250},
+    {"id": "moonshotai/kimi-k3", "name": "MoonshotAI: Kimi K3", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250, "supports_images": True},
     {"id": "google/gemini-3.1-pro-preview", "name": "Google: Gemini 3.1 Pro Preview", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250, "supports_images": True},
     {"id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250, "supports_images": True},
     {"id": "anthropic/claude-sonnet-4.6", "name": "Anthropic: Claude Sonnet 4.6", "max_prompt_kb": 340, "max_output_tokens": 24000, "context_target_kb": 250, "supports_images": True},
