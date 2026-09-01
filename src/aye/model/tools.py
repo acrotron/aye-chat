@@ -1142,6 +1142,18 @@ def _platform_shell_tools() -> List[ToolSpec]:
     return [spec for spec in SHELL_TOOLS if spec.name == "bash"]
 
 
+def tools_enabled() -> bool:
+    """Return True unless tools are switched off via config or environment.
+
+    ``tools = off`` in ~/.ayecfg, or ``AYE_TOOLS=off``, disables the whole
+    tool set in one place. This replaces the hard registry shutdown that
+    was used while the tool loop was unstable: the kill-switch stays, but
+    as a supported setting instead of a code edit.
+    """
+    raw = os.environ.get("AYE_TOOLS") or get_user_config("tools", "on")
+    return str(raw).strip().lower() not in {"off", "0", "false", "no", "disabled"}
+
+
 def default_specs() -> List[ToolSpec]:
     """Return the tool specs offered to the model.
 
@@ -1152,8 +1164,9 @@ def default_specs() -> List[ToolSpec]:
     response's ``source_files`` instead. Add it here to re-enable the write
     tool once the sandboxed test flow needs mid-request writes.
     """
-    #return FILE_TOOLS + WEB_TOOLS + _platform_shell_tools()
-    return []
+    if not tools_enabled():
+        return []
+    return FILE_TOOLS + WEB_TOOLS + _platform_shell_tools()
 
 
 def build_registry(specs: Optional[List[ToolSpec]] = None) -> Dict[str, ToolSpec]:

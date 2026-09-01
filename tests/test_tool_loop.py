@@ -28,7 +28,7 @@ def _tool_request(name, arguments):
 
 
 class TestReadRound:
-    def TODO_test_read_then_prose(self, tmp_path, monkeypatch):
+    def test_read_then_prose(self, tmp_path, monkeypatch):
         (tmp_path / "notes.txt").write_text("hello world", encoding="utf-8")
         calls = []
 
