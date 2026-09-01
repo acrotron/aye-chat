@@ -68,7 +68,13 @@ class TestGetIntEnv(TestCase):
 
 
 class TestToolRoundBudget(TestCase):
-    """Tests for the tool round budget helper."""
+    """Tests for the optional tool round cap helper."""
+
+    @patch('aye.controller.llm_invoker.get_user_config', return_value='')
+    def test_default_is_unlimited(self, mock_get_cfg):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AYE_MAX_TOOL_ROUNDS", None)
+            self.assertIsNone(llm_invoker._tool_round_budget())
 
     @patch('aye.controller.llm_invoker.get_user_config', return_value='10')
     def test_reads_config(self, mock_get_cfg):
@@ -88,13 +94,13 @@ class TestToolRoundBudget(TestCase):
 
     @patch('aye.controller.llm_invoker.get_user_config', return_value='5')
     def test_clamps_to_ceiling(self, mock_get_cfg):
-        with patch.dict(os.environ, {"AYE_MAX_TOOL_ROUNDS": "999"}, clear=False):
-            self.assertEqual(llm_invoker._tool_round_budget(), 100)
+        with patch.dict(os.environ, {"AYE_MAX_TOOL_ROUNDS": "5000"}, clear=False):
+            self.assertEqual(llm_invoker._tool_round_budget(), 1000)
 
     @patch('aye.controller.llm_invoker.get_user_config', return_value='not_a_number')
-    def test_bad_config_falls_back(self, mock_get_cfg):
+    def test_bad_config_means_unlimited(self, mock_get_cfg):
         with patch.dict(os.environ, {"AYE_MAX_TOOL_ROUNDS": "bad"}, clear=False):
-            self.assertEqual(llm_invoker._tool_round_budget(), 40)
+            self.assertIsNone(llm_invoker._tool_round_budget())
 
 
 class TestGuardSummary(TestCase):
@@ -119,6 +125,22 @@ class TestGuardSummary(TestCase):
     def test_malformed_tool_json_is_replaced(self):
         out = llm_invoker._guard_summary('{"tool_calls": "oops"}')
         self.assertNotIn("tool_calls", out)
+
+    def test_mixed_response_keeps_its_narration(self):
+        out = llm_invoker._guard_summary(
+            'Let me check the config.\n'
+            '{"tool_calls":[{"name":"read","arguments":{"path":"cfg.py"}}]}'
+        )
+        self.assertEqual(out, "Let me check the config.")
+
+    def test_half_streamed_json_prefix_is_stripped(self):
+        """A dangling '{"tool_c' prefix defeats the detector, not the guard."""
+        out = llm_invoker._guard_summary('Partial answer.\n{"tool_c')
+        self.assertEqual(out, "Partial answer.")
+
+    def test_prose_with_unrelated_json_is_untouched(self):
+        prose = 'The config is {"a": 1, "b": [2]} as requested.'
+        self.assertEqual(llm_invoker._guard_summary(prose), prose)
 
 
 class TestGetModelConfig(TestCase):
@@ -583,6 +605,21 @@ class TestParseApiResponse(TestCase):
         self.assertEqual(parsed["answer_summary"], "just plain text")
         self.assertEqual(parsed["source_files"], [])
 
+    @patch('aye.controller.llm_invoker.is_truncated_json', return_value=False)
+    def test_malformed_envelope_is_not_shown_as_the_answer(self, mock_trunc):
+        """A broken envelope must not leak raw JSON to the user."""
+        resp = {
+            "assistant_response": '{"answer_summary": "hi", "source_files": [}',
+            "chat_id": 321,
+        }
+        parsed, chat_id = llm_invoker._parse_api_response(resp)
+        self.assertEqual(
+            parsed["answer_summary"],
+            "The assistant response was malformed. Please re-run the request.",
+        )
+        self.assertEqual(parsed["source_files"], [])
+        self.assertEqual(chat_id, 321)
+
     def test_server_error_in_response(self):
         resp = {
             "assistant_response": "An error occurred",
@@ -1000,6 +1037,29 @@ class TestLlmInvoker(TestCase):
         self.assertEqual(response.source, LLMSource.LOCAL)
         self.assertEqual(response.summary, "local summary")
         self.assertEqual(len(response.updated_files), 1)
+
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_local_model_tool_json_is_guarded(
+        self, mock_collect_sources, mock_build_skills
+    ):
+        """Local models get the tools prompt, so their replies are guarded too."""
+        mock_collect_sources.return_value = self.source_files
+        self.plugin_manager.handle_command.return_value = {
+            "summary": '{"tool_calls":[{"name":"glob","arguments":{"pattern":"*.py"}}]}',
+            "updated_files": [],
+        }
+
+        response = llm_invoker.invoke_llm(
+            prompt="test prompt",
+            conf=self.conf,
+            console=self.console,
+            plugin_manager=self.plugin_manager,
+        )
+
+        self.assertEqual(response.source, LLMSource.LOCAL)
+        self.assertNotIn("tool_calls", response.summary)
+        self.assertNotIn("{", response.summary)
 
     @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())

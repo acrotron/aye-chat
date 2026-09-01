@@ -3,7 +3,7 @@
 import json
 from types import SimpleNamespace
 
-from aye.controller.tool_loop import MAX_TOOL_ROUNDS, run_tool_loop
+from aye.controller.tool_loop import run_tool_loop
 from aye.model.tool_protocol import looks_like_protocol_json
 
 
@@ -244,8 +244,13 @@ class TestRoundBudget:
 
         def fake_cli_invoke(**kwargs):
             calls.append(kwargs)
+            # A fresh request every round: real progress, so only the
+            # budget can end the loop (the stall guard never fires).
             if len(calls) < 5:
-                return _resp(_tool_request("glob", {"pattern": "*.py"}), chat_id=1)
+                return _resp(
+                    _tool_request("glob", {"pattern": f"*.{len(calls)}.py"}),
+                    chat_id=1,
+                )
             return _resp("done with the task", chat_id=1)
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
@@ -269,13 +274,22 @@ class TestRoundBudget:
         assert summary == "done with the task"
         assert looks_like_protocol_json(summary) is False
 
-    def test_default_budget_allows_multi_file_creation(self, tmp_path, monkeypatch):
+    def test_rounds_are_unlimited_by_default(self, tmp_path, monkeypatch):
+        """No default cap: a long task simply runs until it is done.
+
+        The old fixed budget (40) cut long agent tasks short; only an
+        explicit ``max_rounds`` or the all-replay stall guard ends the loop
+        early now.
+        """
         calls = []
 
         def fake_cli_invoke(**kwargs):
             calls.append(kwargs)
-            if len(calls) < MAX_TOOL_ROUNDS:
-                return _resp(_tool_request("write", {"path": "f.tsx", "content": "x"}), chat_id=1)
+            if len(calls) < 60:
+                return _resp(
+                    _tool_request("write", {"path": "f.tsx", "content": "x"}),
+                    chat_id=1,
+                )
             return _resp("created the files", chat_id=1)
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
@@ -283,14 +297,51 @@ class TestRoundBudget:
             initial_summary=_tool_request("write", {"path": "a.tsx", "content": "x"}),
             updated_files=[],
             chat_id=1,
-            prompt="create 6 tsx files",
+            prompt="create many tsx files",
             conf=_conf(tmp_path),
             base_system_prompt="sys",
             source_files={},
             max_output_tokens=1000,
         )
         assert summary == "created the files"
-        assert len(calls) > 5
+        assert len(calls) == 60
+
+
+class TestStallGuard:
+    """Unlimited rounds still must not spin on repeated calls forever."""
+
+    def test_all_replay_rounds_force_a_prose_answer(self, tmp_path, monkeypatch):
+        executed = []
+        calls = []
+        request = _tool_request("read", {"path": "a.py"})
+
+        def fake_cli_invoke(**kwargs):
+            calls.append(kwargs)
+            if len(calls) >= 4:
+                return _resp("here is the answer", chat_id=1)
+            return _resp(request, chat_id=1)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        monkeypatch.setattr(
+            "aye.controller.tool_loop.execute_tool",
+            lambda name, args, root: executed.append(name) or "RESULT",
+        )
+        summary, _, _ = run_tool_loop(
+            initial_summary=request,
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        # Round 0 runs the call once; rounds 1-3 replay it, then the guard
+        # fires and forces the final prose round.
+        assert executed == ["read"]
+        assert len(calls) == 4
+        assert "same tool calls" in calls[3]["message"]
+        assert summary == "here is the answer"
 
 
 class TestUpdatedFiles:
@@ -403,6 +454,182 @@ class TestStubRetry:
         assert "*.txt" in calls[0]["message"]
         assert "*.py" in calls[1]["message"]
         assert summary == "done"
+
+
+class TestMixedNarrationAndCalls:
+    """Narration travelling with a tool request must be acked, not lost."""
+
+    def test_narration_is_acked_in_the_followup(self, tmp_path, monkeypatch):
+        (tmp_path / "notes.txt").write_text("hello", encoding="utf-8")
+        calls = []
+
+        def fake_cli_invoke(**kwargs):
+            calls.append(kwargs)
+            return _resp("done", chat_id=1)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        run_tool_loop(
+            initial_summary="Let me check the notes.\n"
+            + _tool_request("read", {"path": "notes.txt"}),
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        assert "Let me check the notes." in calls[0]["message"]
+        assert "hello" in calls[0]["message"]
+
+    def test_followup_carries_only_this_rounds_results(self, tmp_path, monkeypatch):
+        (tmp_path / "a.txt").write_text("AAA", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("BBB", encoding="utf-8")
+        calls = []
+
+        def fake_cli_invoke(**kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return _resp(_tool_request("read", {"path": "b.txt"}), chat_id=1)
+            return _resp("done", chat_id=1)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        run_tool_loop(
+            initial_summary=_tool_request("read", {"path": "a.txt"}),
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        second = calls[1]["message"]
+        assert "AAA" not in second
+        assert "BBB" in second
+
+    def test_dropped_calls_are_reported_to_the_model(self, tmp_path, monkeypatch):
+        calls = []
+
+        def fake_cli_invoke(**kwargs):
+            calls.append(kwargs)
+            return _resp("done", chat_id=1)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        eight_reads = json.dumps(
+            {
+                "tool_calls": [
+                    {"name": "read", "arguments": {"path": f"f{i}.txt"}}
+                    for i in range(8)
+                ]
+            }
+        )
+        run_tool_loop(
+            initial_summary=eight_reads,
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        assert "were dropped" in calls[0]["message"]
+        assert "Re-request" in calls[0]["message"]
+
+    def test_structured_tool_call_narration_is_acked(self, tmp_path, monkeypatch):
+        """A structured field hides the prose it arrived with; ack it anyway.
+
+        summary_with_tool_calls() swaps the prose answer for JSON, so without
+        recovering the prose the model never learns its note was delivered
+        and re-sends it on the next round.
+        """
+        calls = []
+
+        def fake_cli_invoke(**kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return {
+                    "assistant_response": json.dumps(
+                        {
+                            "answer_summary": "Found the tests directory.",
+                            "tool_call": [
+                                {"name": "read", "arguments": {"path": "t.py"}}
+                            ],
+                        }
+                    ),
+                    "chat_id": 5,
+                }
+            return _resp("done", chat_id=6)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        summary, _, _ = run_tool_loop(
+            initial_summary=_tool_request("glob", {"pattern": "*.py"}),
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        # The follow-up after the structured round must ack the hidden prose.
+        assert "Found the tests directory." in calls[1]["message"]
+        assert "Do not repeat it" in calls[1]["message"]
+        assert summary == "done"
+
+    def test_initial_narration_is_acked_without_reprinting(self, tmp_path, monkeypatch):
+        """Round-1 prose from a structured swap is acked, not echoed again."""
+        calls = []
+
+        def fake_cli_invoke(**kwargs):
+            calls.append(kwargs)
+            return _resp("done", chat_id=1)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        run_tool_loop(
+            initial_summary=_tool_request("glob", {"pattern": "*.py"}),
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+            initial_narration="Checking the project layout.",
+            initial_narration_shown=True,
+        )
+        assert "Checking the project layout." in calls[0]["message"]
+
+    def test_identical_call_reruns_after_a_mutating_command(self, tmp_path, monkeypatch):
+        """A shell command may change files, so cached results go stale."""
+        executed = []
+        read_req = _tool_request("read", {"path": "a.py"})
+        cmd_req = _tool_request("cmd", {"command": "touch a.py"})
+        rounds = [cmd_req, read_req]
+
+        def fake_cli_invoke(**kwargs):
+            return _resp(rounds.pop(0) if rounds else "done", chat_id=1)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        monkeypatch.setattr(
+            "aye.controller.tool_loop.needs_confirmation", lambda name, registry: False
+        )
+        monkeypatch.setattr(
+            "aye.controller.tool_loop.execute_tool",
+            lambda name, args, root: executed.append((name, args)) or "ran",
+        )
+        run_tool_loop(
+            initial_summary=read_req,
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        assert executed.count(("read", {"path": "a.py"})) == 2
 
 
 class TestCrossRoundDedup:

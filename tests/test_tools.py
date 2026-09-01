@@ -36,8 +36,10 @@ from aye.model.tools import (
     needs_confirmation,
     permission_mode,
     read_only_registry,
+    run_fetch_url,
     run_glob,
     run_grep,
+    run_ls,
     run_read,
     run_web_search,
     _format_shell_result,
@@ -519,7 +521,9 @@ class TestRegistry:
         """``write`` is withheld pending the sandboxed test flow (WRITE_TOOL)."""
         monkeypatch.delenv("AYE_TOOL_PERMISSION", raising=False)
         shell = "cmd" if platform.system() == "Windows" else "bash"
-        assert set(build_registry()) == {"read", "glob", "grep", shell, "web_search"}
+        assert set(build_registry()) == {
+            "read", "glob", "grep", "ls", shell, "web_search", "fetch_url",
+        }
 
     def test_write_still_exists_and_is_dispatchable(self):
         """The implementation is kept intact, just not offered to the model."""
@@ -527,7 +531,9 @@ class TestRegistry:
         assert "write" in build_registry(ALL_TOOLS)
 
     def test_read_only_registry_drops_mutating_tools(self):
-        assert set(read_only_registry()) == {"read", "glob", "grep", "web_search"}
+        assert set(read_only_registry()) == {
+            "read", "glob", "grep", "ls", "web_search", "fetch_url",
+        }
 
     def test_write_and_shell_are_the_mutating_tools(self):
         mutating = {s.name for s in ALL_TOOLS if s.mutating}
@@ -974,3 +980,135 @@ class TestRunWebSearch:
         assert "web_search" in registry
         assert registry["web_search"].mutating is False
         assert registry["web_search"].prompts_by_default is False
+
+
+class TestRunLs:
+    def test_lists_directories_first_and_hides_ignored(self, project):
+        out = run_ls({}, project)
+        lines = out.splitlines()
+        assert lines[0].startswith(". (") or lines[0].startswith("(")
+        assert "src/" in lines
+        assert "README.md" in lines
+        # build/ is gitignored and .gitignore is dot-prefixed: both hidden
+        assert "build/" not in out
+        assert ".gitignore" not in out
+        # directories sort before files
+        assert lines.index("src/") < lines.index("README.md")
+
+    def test_depth_walks_subdirectories_indented(self, project):
+        out = run_ls({"depth": 2}, project)
+        assert "src/" in out
+        assert "  main.py" in out
+        assert "  util.py" in out
+
+    def test_missing_directory_is_reported(self, project):
+        with pytest.raises(ToolError, match="directory not found"):
+            run_ls({"path": "nope"}, project)
+
+    def test_file_path_is_rejected(self, project):
+        with pytest.raises(ToolError, match="not a directory"):
+            run_ls({"path": "README.md"}, project)
+
+    def test_path_outside_root_is_refused(self, project):
+        with pytest.raises(ToolError, match="escapes the project root"):
+            run_ls({"path": "../elsewhere"}, project)
+
+    def test_registry_entry_is_read_only(self):
+        registry = build_registry()
+        assert "ls" in registry
+        assert registry["ls"].mutating is False
+        assert registry["ls"].prompts_by_default is False
+
+
+class TestRunFetchUrl:
+    def test_html_is_reduced_to_readable_text(self, tmp_path, monkeypatch):
+        html = (
+            "<html><head><style>body{color:red}</style></head>"
+            "<body><h1>Title</h1><p>First &amp; only paragraph.</p>"
+            "<script>alert('nope')</script></body></html>"
+        )
+
+        class FakeResponse:
+            status_code = 200
+            text = html
+            headers = {"content-type": "text/html; charset=utf-8"}
+
+        monkeypatch.setattr(
+            "aye.model.tools.httpx.get", lambda *a, **k: FakeResponse()
+        )
+        out = run_fetch_url({"url": "https://example.com/doc"}, tmp_path)
+        assert "Title" in out
+        assert "First & only paragraph." in out
+        assert "alert" not in out
+        assert "color:red" not in out
+
+    def test_plain_text_passes_through(self, tmp_path, monkeypatch):
+        class FakeResponse:
+            status_code = 200
+            text = "plain body"
+            headers = {"content-type": "text/plain"}
+
+        monkeypatch.setattr(
+            "aye.model.tools.httpx.get", lambda *a, **k: FakeResponse()
+        )
+        out = run_fetch_url({"url": "https://example.com/a.txt"}, tmp_path)
+        assert out == "plain body"
+
+    def test_non_http_scheme_is_rejected(self, tmp_path):
+        with pytest.raises(ToolError, match="only http"):
+            run_fetch_url({"url": "file:///etc/passwd"}, tmp_path)
+
+    def test_missing_url_is_rejected(self, tmp_path):
+        with pytest.raises(ToolError, match="url is required"):
+            run_fetch_url({}, tmp_path)
+
+    def test_http_error_is_reported(self, tmp_path, monkeypatch):
+        def fail(*args, **kwargs):
+            raise httpx.ConnectError("no network")
+
+        monkeypatch.setattr("aye.model.tools.httpx.get", fail)
+        with pytest.raises(ToolError, match="request failed"):
+            run_fetch_url({"url": "https://example.com"}, tmp_path)
+
+    def test_non_200_status_is_reported(self, tmp_path, monkeypatch):
+        class FakeResponse:
+            status_code = 404
+            text = ""
+            headers = {"content-type": "text/html"}
+
+        monkeypatch.setattr(
+            "aye.model.tools.httpx.get", lambda *a, **k: FakeResponse()
+        )
+        with pytest.raises(ToolError, match="HTTP 404"):
+            run_fetch_url({"url": "https://example.com/missing"}, tmp_path)
+
+    def test_long_bodies_are_truncated(self, tmp_path, monkeypatch):
+        class FakeResponse:
+            status_code = 200
+            text = "x" * 20_000
+            headers = {"content-type": "text/plain"}
+
+        monkeypatch.setattr(
+            "aye.model.tools.httpx.get", lambda *a, **k: FakeResponse()
+        )
+        out = run_fetch_url({"url": "https://example.com/big"}, tmp_path)
+        assert "truncated" in out
+        assert len(out) < 20_000
+
+    def test_binary_content_type_is_rejected(self, tmp_path, monkeypatch):
+        class FakeResponse:
+            status_code = 200
+            text = "\x00\x01 binary garbage"
+            headers = {"content-type": "image/png"}
+
+        monkeypatch.setattr(
+            "aye.model.tools.httpx.get", lambda *a, **k: FakeResponse()
+        )
+        with pytest.raises(ToolError, match="no text content"):
+            run_fetch_url({"url": "https://example.com/pic.png"}, tmp_path)
+
+    def test_registry_entry_is_read_only(self):
+        registry = build_registry()
+        assert "fetch_url" in registry
+        assert registry["fetch_url"].mutating is False
+        assert registry["fetch_url"].prompts_by_default is False

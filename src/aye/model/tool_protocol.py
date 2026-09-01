@@ -23,8 +23,9 @@ from typing import Any, Dict, List, Optional
 from aye.model.tools import ToolSpec
 
 # Cap on how many calls are honored from a single model turn. Bounds the work
-# one response can trigger while still allowing useful parallelism.
-MAX_CALLS_PER_ROUND = 4
+# one response can trigger while still allowing useful parallelism; anything
+# past it is reported back to the model so it can re-request the remainder.
+MAX_CALLS_PER_ROUND = 6
 
 # Strips a ```json ... ``` fence, which models add despite instructions.
 _FENCE_RE = re.compile(
@@ -61,12 +62,16 @@ def build_tools_prompt(specs: List[ToolSpec], is_final_round: bool = False) -> s
     lines = [
         "\n\n--- TOOLS",
         "",
-        "You are an agentic coding assistant working in a terminal. "
-        "Investigate before you answer: when the request touches this "
-        "codebase, find the relevant files with glob/grep, read them, and "
-        "run tests or builds with bash/cmd when useful. Do not answer from "
-        "memory when the code is right here; only answer directly for "
-        "general knowledge that needs no tool.",
+        "You are an autonomous coding AGENT running inside the user's "
+        "terminal, on their real machine, with this project as your working "
+        "directory. You are not a chat page in a browser: you act, you don't "
+        "just advise. Investigate before you answer -- learn the layout with "
+        "ls/glob, read the relevant files, grep for symbols, and run "
+        "builds, tests, and git with the shell whenever that is more "
+        "reliable than reasoning from memory. Work in as many tool rounds "
+        "as the task needs: call tools, inspect the results, call again. "
+        "Only answer in prose once the work is actually done, and never ask "
+        "the user to run something you can run yourself.",
         "",
         "Available tools:",
     ]
@@ -98,6 +103,8 @@ def build_tools_prompt(specs: List[ToolSpec], is_final_round: bool = False) -> s
         "- `web_search` is available, but it defaults to DuckDuckGo (no API "
         "key) and can fail or return nothing. Never invent results or URLs; "
         "if the search errors or comes back empty, say so plainly.",
+        "- `fetch_url` reads one web page as text; use it to follow up on "
+        "search results or online docs instead of guessing their content.",
         "- The project is your only source of truth; ground every answer in "
         "what the tools actually returned, not in memory.",
         "- Shell output is truncated for display, so prefer commands with "
@@ -130,44 +137,138 @@ def build_tools_prompt(specs: List[ToolSpec], is_final_round: bool = False) -> s
 # Response parsing
 # ---------------------------------------------------------------------------
 
-def parse_tool_calls(summary: Optional[str]) -> List[ToolCall]:
-    """Extract tool calls from a model response.
+# Opening of a protocol object anywhere in the text. Models narrate before
+# emitting the request ("Let me look at the files.\n{"tool_calls": ...}"),
+# and that narration can itself contain braces (code snippets, f-strings),
+# so a first-{ to-last-} slice misextracts. Matching the brace plus the
+# "tool_calls" key keeps prose braces from being mistaken for protocol.
+_PROTOCOL_OBJECT_START_RE = re.compile(r'\{\s*"tool_calls?"\s*:', re.IGNORECASE)
+
+_JSON_DECODER = json.JSONDecoder()
+
+# A fence-marker line immediately around a protocol object (```json ... ```).
+_OPENING_FENCE_BEFORE = re.compile(
+    r"(?:^|\n)([ \t]*(`{3,}|~{3,})[ \t]*\w*[ \t]*)$", re.MULTILINE
+)
+_CLOSING_FENCE_AFTER = re.compile(r"[ \t]*\n[ \t]*(`{3,}|~{3,})[ \t]*(?=\n|$)")
+
+
+@dataclass(frozen=True)
+class ParsedSummary:
+    """A model response split into its prose and tool-request parts.
+
+    Attributes:
+        narration: The prose with every protocol-shaped object removed --
+        parseable requests and unparseable blobs alike, so no tool JSON
+        ever reaches the user. Empty when the response was a bare tool
+        request.
+        calls: Requested calls, deduplicated and capped.
+        requested: Number of unique calls before the cap; ``requested -
+            len(calls)`` is how many were silently dropped.
+    """
+
+    narration: str
+    calls: List[ToolCall]
+    requested: int
+
+
+def _balanced_object_span(text: str, start: int) -> Optional[tuple]:
+    """Extent of the brace-balanced object starting at *start*, or None.
+
+    Used for protocol-shaped blobs that do not parse (``{"tool_calls":
+    oops}``): they carry no calls, but they are still machine traffic that
+    must not reach the user, so their extent is removed from the narration.
+    String literals are respected so braces inside them do not count.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return (start, index + 1)
+    return None
+
+
+def _extract_protocol_spans(text: str) -> List[tuple]:
+    """Find every protocol object in *text*.
 
     Args:
-        summary: The model's ``answer_summary``.
+        text: Response text to scan.
 
     Returns:
-        Requested calls in order, deduplicated and capped. Empty when the
-        response is a normal prose answer.
+        ``(start, end, payload)`` spans in document order. ``payload`` is
+        the decoded object for parseable ones and ``None`` for
+        protocol-shaped blobs that do not parse (removal-only spans).
     """
-    if not summary or not summary.strip():
-        return []
+    spans: List[tuple] = []
+    pos = 0
+    while True:
+        match = _PROTOCOL_OBJECT_START_RE.search(text, pos)
+        if not match:
+            return spans
+        try:
+            payload, end = _JSON_DECODER.raw_decode(text, match.start())
+        except json.JSONDecodeError:
+            balanced = _balanced_object_span(text, match.start())
+            if balanced:
+                spans.append((match.start(), balanced[1], None))
+                pos = balanced[1]
+            else:
+                pos = match.end()
+            continue
+        if isinstance(payload, dict) and (
+            "tool_calls" in payload or "tool_call" in payload
+        ):
+            spans.append((match.start(), end, payload))
+            pos = end
+        else:
+            pos = match.end()
 
-    text = summary.strip()
 
-    # Cheap reject: a prose answer will not start with a brace, and stripping
-    # a fence only matters when it wraps a JSON object.
-    fence = _FENCE_RE.match(text)
+def _expand_span_over_fence(text: str, start: int, end: int) -> tuple:
+    """Widen an object span to swallow a code fence wrapping just it.
+
+    Models sometimes fence only the JSON (```json ... ```); removing the object
+    alone would leave orphan fence markers in the narration.
+
+    Args:
+        text: The full response text.
+        start: Index of the object's opening brace.
+        end: Index just past the object's closing brace.
+
+    Returns:
+        The widened ``(start, end)`` span.
+    """
+    widened_start = start
+    fence = _OPENING_FENCE_BEFORE.search(text[:start])
     if fence:
-        text = fence.group("body").strip()
-    if not text.startswith("{"):
-        # Last resort: models sometimes wrap the JSON in a sentence or two.
-        # Extraction can only succeed when the object carries tool_calls,
-        # so a code snippet containing braces cannot be misread as a call.
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end <= start:
-            return []
-        text = text[start : end + 1]
+        widened_start = fence.start(1)
 
-    try:
-        payload = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        return []
+    widened_end = end
+    closing = _CLOSING_FENCE_AFTER.match(text, end)
+    if closing:
+        widened_end = closing.end()
 
-    if not isinstance(payload, dict):
-        return []
+    return (widened_start, widened_end)
 
+
+def _entries_from_payload(payload: Dict[str, Any]) -> List[ToolCall]:
+    """Read ToolCall entries from one decoded protocol object."""
     raw = payload.get("tool_calls")
 
     # Tolerate the singular form; models reach for it despite the schema.
@@ -182,9 +283,7 @@ def parse_tool_calls(summary: Optional[str]) -> List[ToolCall]:
     if not isinstance(raw, list):
         return []
 
-    calls: List[ToolCall] = []
-    seen = set()
-
+    entries: List[ToolCall] = []
     for entry in raw:
         if not isinstance(entry, dict):
             continue
@@ -197,20 +296,142 @@ def parse_tool_calls(summary: Optional[str]) -> List[ToolCall]:
         if not isinstance(arguments, dict):
             arguments = {}
 
-        # Identical calls in one round would duplicate work for no gain.
+        entries.append(ToolCall(name=name, arguments=arguments))
+    return entries
+
+
+def _tidy_narration(text: str) -> str:
+    """Collapse the whitespace holes left by removed protocol objects."""
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _cut_trailing_partial_protocol(text: str) -> str:
+    """Drop a protocol object that is truncated at the end of *text*.
+
+    A streamed reply can end mid-object (``{"tool_calls": [{"name": "gre``);
+    it will never parse into calls, but leaving the fragment in the
+    narration would show raw JSON to the user. Only genuinely unbalanced
+    braces are cut: complete-but-garbage snippets in prose (balanced) stay.
+    """
+    cut_at = None
+    for match in _PROTOCOL_OBJECT_START_RE.finditer(text):
         try:
-            key = (name, json.dumps(arguments, sort_keys=True))
+            _JSON_DECODER.raw_decode(text, match.start())
+        except json.JSONDecodeError:
+            cut_at = match.start()
+    if cut_at is None:
+        return text
+    fragment = text[cut_at:]
+    if fragment.count("{") > fragment.count("}"):
+        return text[:cut_at].rstrip()
+    return text
+
+
+_DANGLING_OBJECT_RE = re.compile(r"\{[^{}]*$")
+
+
+def _rstrip_dangling_object_prefix(text: str) -> str:
+    """Drop a trailing unterminated object prefix that looks like JSON.
+
+    While a protocol object streams in, its opening brace can arrive before
+    the "tool_calls" key is complete (``{"to``), a window the key-anchored
+    cut misses. A dangling ``{`` fragment containing a quote or colon is
+    JSON starting to arrive, not prose, so it is cut as well.
+    """
+    match = _DANGLING_OBJECT_RE.search(text)
+    if not match:
+        return text
+    fragment = match.group(0)
+    if '"' in fragment or ":" in fragment:
+        return text[: match.start()].rstrip()
+    return text
+
+
+def split_summary(summary: Optional[str]) -> ParsedSummary:
+    """Split a response into its narration prose and requested tool calls.
+
+    Narration and tool JSON arrive mixed in one ``answer_summary`` on
+    streaming backends ("I'll check the tests.\\n{"tool_calls": ...}"), so
+    the two concerns must be separable: the narration is user-facing text,
+    while the objects are the machine-readable request. Every parseable
+    protocol object is lifted out wherever it appears; what remains is the
+    narration.
+
+    Args:
+        summary: The model's ``answer_summary``.
+
+    Returns:
+        A :class:`ParsedSummary`; ``calls`` is empty for a prose answer.
+    """
+    if not summary or not summary.strip():
+        return ParsedSummary("", [], 0)
+
+    text = summary.strip()
+
+    # A fence wrapping the whole body is unwrapped up front; fences around
+    # only the JSON object are consumed per-span below.
+    fence = _FENCE_RE.match(text)
+    if fence:
+        text = fence.group("body").strip()
+
+    entries: List[ToolCall] = []
+    pieces: List[str] = []
+    pos = 0
+    for start, end, payload in _extract_protocol_spans(text):
+        span_start, span_end = _expand_span_over_fence(text, start, end)
+        if payload is not None:
+            entries.extend(_entries_from_payload(payload))
+        pieces.append(text[pos:span_start])
+        pos = span_end
+    pieces.append(text[pos:])
+
+    narration = _tidy_narration(
+        _rstrip_dangling_object_prefix(_cut_trailing_partial_protocol("".join(pieces)))
+    )
+
+    # Identical calls in one round would duplicate work for no gain.
+    unique: List[ToolCall] = []
+    seen = set()
+    for call in entries:
+        try:
+            key = (call.name, json.dumps(call.arguments, sort_keys=True))
         except (TypeError, ValueError):
-            key = (name, str(arguments))
+            key = (call.name, str(call.arguments))
         if key in seen:
             continue
         seen.add(key)
+        unique.append(call)
 
-        calls.append(ToolCall(name=name, arguments=arguments))
-        if len(calls) >= MAX_CALLS_PER_ROUND:
-            break
+    return ParsedSummary(
+        narration=narration,
+        calls=unique[:MAX_CALLS_PER_ROUND],
+        requested=len(unique),
+    )
 
-    return calls
+
+def parse_tool_calls(summary: Optional[str]) -> List[ToolCall]:
+    """Extract tool calls from a model response.
+
+    Args:
+        summary: The model's ``answer_summary``.
+
+    Returns:
+        Requested calls in order, deduplicated and capped. Empty when the
+        response is a normal prose answer.
+    """
+    return split_summary(summary).calls
+
+
+def strip_tool_protocol(summary: Optional[str]) -> str:
+    """Return *summary* with every protocol-shaped object removed.
+
+    The inverse of :func:`parse_tool_calls` for display: a mixed response
+    ("Let me check.\\n{"tool_calls": ...}") yields "Let me check." while a
+    bare tool request yields an empty string. Unparseable protocol blobs
+    (``{"tool_calls": oops}``) are removed too -- they carry no calls but
+    are still machine traffic the user must not see.
+    """
+    return split_summary(summary).narration
 
 
 def is_tool_request(summary: Optional[str]) -> bool:
