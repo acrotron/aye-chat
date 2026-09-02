@@ -1061,6 +1061,42 @@ class TestLlmInvoker(TestCase):
         self.assertNotIn("tool_calls", response.summary)
         self.assertNotIn("{", response.summary)
 
+    @patch.dict(os.environ, {"AYE_TOOLS": "off"})
+    @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
+    @patch('aye.controller.llm_invoker.create_streaming_callback')
+    @patch('aye.controller.llm_invoker.StreamingResponseDisplay')
+    @patch('aye.controller.llm_invoker.StoppableSpinner')
+    @patch('aye.controller.llm_invoker.cli_invoke')
+    @patch('aye.controller.llm_invoker.collect_sources')
+    def test_invoke_llm_tools_disabled_skips_the_loop(
+        self, mock_collect_sources, mock_cli_invoke, mock_spinner_class,
+        mock_streaming_display_class, mock_create_stream_callback,
+        mock_build_skills,
+    ):
+        """AYE_TOOLS=off: a tool request is guarded, no loop rounds run."""
+        mock_collect_sources.return_value = self.source_files
+        self.plugin_manager.handle_command.return_value = None
+        mock_cli_invoke.return_value = {
+            "assistant_response": json.dumps(
+                {
+                    "answer_summary": '{"tool_calls":[{"name":"glob","arguments":{"pattern":"*.py"}}]}',
+                    "source_files": [],
+                }
+            ),
+            "chat_id": 9,
+        }
+
+        response = llm_invoker.invoke_llm(
+            prompt="test prompt",
+            conf=self.conf,
+            console=self.console,
+            plugin_manager=self.plugin_manager,
+        )
+
+        self.assertEqual(response.source, LLMSource.API)
+        self.assertEqual(mock_cli_invoke.call_count, 1)
+        self.assertNotIn("tool_calls", response.summary)
+
     @patch('aye.controller.llm_invoker._build_system_prompt_with_skills', return_value=SYSTEM_PROMPT)
     @patch('aye.controller.llm_invoker.create_streaming_callback', return_value=MagicMock())
     @patch('aye.controller.llm_invoker.StreamingResponseDisplay')

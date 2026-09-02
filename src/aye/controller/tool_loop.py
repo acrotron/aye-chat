@@ -264,6 +264,10 @@ def run_tool_loop(
 
     # Whether the summary currently held was already rendered by a stream.
     narration_shown = initial_narration_shown
+    # Defensive: with no tools registered (AYE_TOOLS=off) there is nothing to
+    # run, and each round would only feed the model unknown-tool errors.
+    if not build_registry():
+        return initial_summary, list(updated_files), chat_id
     # Prose hidden inside a structured-field round: summary_with_tool_calls()
     # replaces the answer text with JSON, so the prose is recovered here and
     # acked with the next follow-up instead of being lost.

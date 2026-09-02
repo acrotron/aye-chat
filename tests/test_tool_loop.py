@@ -307,6 +307,37 @@ class TestRoundBudget:
         assert len(calls) == 60
 
 
+class TestToolsDisabled:
+    """With no tools registered the loop must not run at all."""
+
+    def test_empty_registry_returns_summary_without_rounds(self, tmp_path, monkeypatch):
+        calls = []
+
+        def fake_cli_invoke(**kwargs):
+            calls.append(kwargs)
+            return _resp("done", chat_id=1)
+
+        monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
+        monkeypatch.setattr("aye.controller.tool_loop.build_registry", lambda: {})
+
+        summary, files, chat_id = run_tool_loop(
+            initial_summary=_tool_request("read", {"path": "a.py"}),
+            updated_files=[],
+            chat_id=1,
+            prompt="q",
+            conf=_conf(tmp_path),
+            base_system_prompt="sys",
+            source_files={},
+            max_output_tokens=1000,
+        )
+        # No follow-up was sent; the raw request is handed back for the
+        # invoker's guard to sanitize.
+        assert calls == []
+        assert summary == _tool_request("read", {"path": "a.py"})
+        assert files == []
+        assert chat_id == 1
+
+
 class TestStallGuard:
     """Unlimited rounds still must not spin on repeated calls forever."""
 

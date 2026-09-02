@@ -1049,22 +1049,36 @@ class TestRunLs:
         assert registry["ls"].prompts_by_default is False
 
 
+class _FakeStream:
+    """Stands in for httpx.stream() responses in fetch_url tests."""
+
+    def __init__(self, text, status_code=200, content_type="text/html"):
+        self.status_code = status_code
+        self.headers = {"content-type": content_type}
+        self._chunks = [text.encode("utf-8")]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def iter_bytes(self):
+        yield from self._chunks
+
+
 class TestRunFetchUrl:
+    def _stream(self, *args, **kwargs):
+        return self._response
+
     def test_html_is_reduced_to_readable_text(self, tmp_path, monkeypatch):
         html = (
             "<html><head><style>body{color:red}</style></head>"
             "<body><h1>Title</h1><p>First &amp; only paragraph.</p>"
             "<script>alert('nope')</script></body></html>"
         )
-
-        class FakeResponse:
-            status_code = 200
-            text = html
-            headers = {"content-type": "text/html; charset=utf-8"}
-
-        monkeypatch.setattr(
-            "aye.model.tools.httpx.get", lambda *a, **k: FakeResponse()
-        )
+        self._response = _FakeStream(html)
+        monkeypatch.setattr("aye.model.tools.httpx.stream", self._stream)
         out = run_fetch_url({"url": "https://example.com/doc"}, tmp_path)
         assert "Title" in out
         assert "First & only paragraph." in out
@@ -1072,14 +1086,8 @@ class TestRunFetchUrl:
         assert "color:red" not in out
 
     def test_plain_text_passes_through(self, tmp_path, monkeypatch):
-        class FakeResponse:
-            status_code = 200
-            text = "plain body"
-            headers = {"content-type": "text/plain"}
-
-        monkeypatch.setattr(
-            "aye.model.tools.httpx.get", lambda *a, **k: FakeResponse()
-        )
+        self._response = _FakeStream("plain body", content_type="text/plain")
+        monkeypatch.setattr("aye.model.tools.httpx.stream", self._stream)
         out = run_fetch_url({"url": "https://example.com/a.txt"}, tmp_path)
         assert out == "plain body"
 
@@ -1092,47 +1100,44 @@ class TestRunFetchUrl:
             run_fetch_url({}, tmp_path)
 
     def test_http_error_is_reported(self, tmp_path, monkeypatch):
-        def fail(*args, **kwargs):
-            raise httpx.ConnectError("no network")
+        class FailingStream:
+            def __enter__(self):
+                raise httpx.ConnectError("no network")
 
-        monkeypatch.setattr("aye.model.tools.httpx.get", fail)
+            def __exit__(self, *exc):
+                return False
+
+        monkeypatch.setattr("aye.model.tools.httpx.stream", lambda *a, **k: FailingStream())
         with pytest.raises(ToolError, match="request failed"):
             run_fetch_url({"url": "https://example.com"}, tmp_path)
 
     def test_non_200_status_is_reported(self, tmp_path, monkeypatch):
-        class FakeResponse:
-            status_code = 404
-            text = ""
-            headers = {"content-type": "text/html"}
-
-        monkeypatch.setattr(
-            "aye.model.tools.httpx.get", lambda *a, **k: FakeResponse()
-        )
+        self._response = _FakeStream("", status_code=404)
+        monkeypatch.setattr("aye.model.tools.httpx.stream", self._stream)
         with pytest.raises(ToolError, match="HTTP 404"):
             run_fetch_url({"url": "https://example.com/missing"}, tmp_path)
 
     def test_long_bodies_are_truncated(self, tmp_path, monkeypatch):
-        class FakeResponse:
-            status_code = 200
-            text = "x" * 20_000
-            headers = {"content-type": "text/plain"}
-
-        monkeypatch.setattr(
-            "aye.model.tools.httpx.get", lambda *a, **k: FakeResponse()
-        )
+        self._response = _FakeStream("x" * 20_000, content_type="text/plain")
+        monkeypatch.setattr("aye.model.tools.httpx.stream", self._stream)
         out = run_fetch_url({"url": "https://example.com/big"}, tmp_path)
         assert "truncated" in out
         assert len(out) < 20_000
 
-    def test_binary_content_type_is_rejected(self, tmp_path, monkeypatch):
-        class FakeResponse:
-            status_code = 200
-            text = "\x00\x01 binary garbage"
-            headers = {"content-type": "image/png"}
+    def test_oversized_download_is_refused(self, tmp_path, monkeypatch):
+        from aye.model.tools import MAX_FETCH_BYTES
 
-        monkeypatch.setattr(
-            "aye.model.tools.httpx.get", lambda *a, **k: FakeResponse()
-        )
+        class BigStream(_FakeStream):
+            def iter_bytes(self):
+                yield b"x" * (MAX_FETCH_BYTES + 1)
+
+        monkeypatch.setattr("aye.model.tools.httpx.stream", lambda *a, **k: BigStream(""))
+        with pytest.raises(ToolError, match="download cap"):
+            run_fetch_url({"url": "https://example.com/huge"}, tmp_path)
+
+    def test_binary_content_type_is_rejected(self, tmp_path, monkeypatch):
+        self._response = _FakeStream("\x00\x01 binary garbage", content_type="image/png")
+        monkeypatch.setattr("aye.model.tools.httpx.stream", self._stream)
         with pytest.raises(ToolError, match="no text content"):
             run_fetch_url({"url": "https://example.com/pic.png"}, tmp_path)
 

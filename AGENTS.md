@@ -372,6 +372,8 @@ Core dependencies (see `pyproject.toml`):
 | `AYE_SSLVERIFY` | SSL certificate verification | `on` |
 | `AYE_STREAM_DEBUG` | Enable streaming debug output | `off` |
 | `AYE_STREAM_VIEWPORT_HEIGHT` | Streaming viewport lines | `15` |
+| `AYE_TOOLS` | Disable all agent tools (`off`) | `on` |
+| `AYE_MAX_TOOL_ROUNDS` | Optional cap on tool rounds per request | unlimited |
 
 ## AGENTS.md Discovery
 

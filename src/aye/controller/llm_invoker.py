@@ -618,9 +618,12 @@ def invoke_llm(
         # "Let me investigate..." also enters the loop so the model is nudged
         # to actually use its tools. The final prose was never shown by the
         # streaming UI (round 1 streamed the tool-call JSON), so
-        # summary_already_printed is False.
-        tool_requested = is_tool_request(parsed_summary)
-        if tool_requested or looks_like_stub(parsed_summary):
+        # summary_already_printed is False. With tools disabled there is
+        # nothing to run: the request is answered from the (guarded) summary
+        # instead of burning rounds on unknown-tool errors.
+        tools_available = bool(build_registry())
+        tool_requested = tools_available and is_tool_request(parsed_summary)
+        if tool_requested or (tools_available and looks_like_stub(parsed_summary)):
             from aye.controller.tool_loop import run_tool_loop
 
             # On the non-streaming path the spinner is never stopped by first

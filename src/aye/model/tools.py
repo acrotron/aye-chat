@@ -887,6 +887,10 @@ _FETCH_BLOCK_RE = re.compile(
 _FETCH_BREAK_RE = re.compile(
     r"<(?:br|/p|/div|/li|/tr|/h[1-6])\s*/?>", re.IGNORECASE
 )
+# Hard download ceiling. The body is streamed and read only up to this many
+# bytes, so a runaway URL (an agent following a link to a huge file) cannot
+# exhaust memory the way an eager response.text would.
+MAX_FETCH_BYTES = 2_000_000
 
 
 def run_fetch_url(arguments: Dict[str, Any], root: Path) -> str:
@@ -905,7 +909,8 @@ def run_fetch_url(arguments: Dict[str, Any], root: Path) -> str:
 
     Raises:
         ToolError: On a missing or non-http URL, a failed request, a
-            non-200 status, or a body with no text at all.
+            non-200 status, a body larger than the download ceiling, or a
+            body with no text at all.
     """
     url = str(arguments.get("url", "")).strip()
     if not url:
@@ -919,28 +924,48 @@ def run_fetch_url(arguments: Dict[str, Any], root: Path) -> str:
     )
 
     try:
-        response = httpx.get(
+        with httpx.stream(
+            "GET",
             url,
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=_WEB_TIMEOUT,
             follow_redirects=True,
-        )
+        ) as response:
+            if response.status_code != 200:
+                raise ToolError(f"HTTP {response.status_code} for {url}")
+
+            content_type = (
+                response.headers.get("content-type", "")
+                .split(";")[0]
+                .strip()
+                .lower()
+            )
+            if content_type.split("/")[0] in {"image", "audio", "video"} or (
+                content_type
+                in {"application/octet-stream", "application/pdf", "application/zip"}
+            ):
+                raise ToolError(
+                    f"no text content at {url} (content-type {content_type!r})"
+                )
+
+            chunks: List[bytes] = []
+            downloaded = 0
+            oversized = False
+            for chunk in response.iter_bytes():
+                downloaded += len(chunk)
+                if downloaded > MAX_FETCH_BYTES:
+                    oversized = True
+                    break
+                chunks.append(chunk)
     except httpx.HTTPError as exc:
         raise ToolError(f"request failed: {exc}") from exc
 
-    if response.status_code != 200:
-        raise ToolError(f"HTTP {response.status_code} for {url}")
+    if oversized:
+        raise ToolError(
+            f"content at {url} exceeds the {MAX_FETCH_BYTES}-byte download cap"
+        )
 
-    content_type = (
-        response.headers.get("content-type", "").split(";")[0].strip().lower()
-    )
-    if content_type.split("/")[0] in {"image", "audio", "video"} or content_type in {
-        "application/octet-stream",
-        "application/pdf",
-        "application/zip",
-    }:
-        raise ToolError(f"no text content at {url} (content-type {content_type!r})")
-    body = response.text
+    body = b"".join(chunks).decode("utf-8", errors="replace")
 
     if "html" in content_type:
         body = _FETCH_BLOCK_RE.sub(" ", body)
