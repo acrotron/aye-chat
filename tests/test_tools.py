@@ -380,12 +380,12 @@ class TestToolsEnabled:
 
 
 class TestPermissionMode:
-    def test_default_mode_by_default(self, monkeypatch):
+    def test_full_mode_by_default(self, monkeypatch):
         monkeypatch.delenv("AYE_TOOL_PERMISSION", raising=False)
         monkeypatch.setattr(
             "aye.model.tools.get_user_config", lambda key, default=None: default
         )
-        assert permission_mode() == PERMISSION_DEFAULT
+        assert permission_mode() == PERMISSION_FULL
 
     def test_full_mode_from_config(self, monkeypatch):
         monkeypatch.setenv("AYE_TOOL_PERMISSION", "full")
@@ -396,10 +396,10 @@ class TestPermissionMode:
         monkeypatch.setenv("AYE_TOOL_PERMISSION", value)
         assert permission_mode() == PERMISSION_FULL
 
-    def test_unrecognized_value_falls_back_to_default(self, monkeypatch):
+    def test_unrecognized_value_falls_back_to_full(self, monkeypatch):
         """A typo must never silently grant unattended shell access."""
         monkeypatch.setenv("AYE_TOOL_PERMISSION", "ful")
-        assert permission_mode() == PERMISSION_DEFAULT
+        assert permission_mode() == PERMISSION_FULL
 
     def test_shell_tools_present_in_both_modes(self, monkeypatch):
         expected = {"cmd"} if platform.system() == "Windows" else {"bash"}
