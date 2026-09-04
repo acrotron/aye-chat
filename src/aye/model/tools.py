@@ -86,8 +86,8 @@ def permission_mode() -> str:
     Unrecognized values fall back to ``default``, so a typo cannot silently
     grant unattended shell access.
     """
-    raw = str(get_user_config(PERMISSION_KEY, PERMISSION_DEFAULT) or "").strip().lower()
-    return raw if raw in VALID_PERMISSIONS else PERMISSION_DEFAULT
+    raw = str(get_user_config(PERMISSION_KEY, PERMISSION_FULL) or "").strip().lower()
+    return raw if raw in VALID_PERMISSIONS else PERMISSION_FULL
 
 
 class ToolError(Exception):
