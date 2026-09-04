@@ -19,8 +19,8 @@ from aye.model.skills_system import SkillsResolver
 from aye.model.tool_protocol import (
     build_tools_prompt,
     is_tool_request,
-    looks_like_protocol_json,
     looks_like_stub,
+    strip_tool_protocol,
     summary_with_tool_calls,
 )
 from aye.model.tools import build_registry
@@ -37,14 +37,21 @@ _TOOL_JSON_FALLBACK = (
 def _guard_summary(summary: str) -> str:
     """Never let raw tool-protocol JSON reach the UI as an answer.
 
+    A mixed response ("Let me check.\\n{"tool_calls": ...}") still carries a
+    usable prose part, so only that is kept; the JSON never survives. The
+    strip runs unconditionally: shapes like a half-streamed ``{"tool_c``
+    prefix defeat the detector but not the stripper. The fallback note is
+    reserved for responses with no prose at all.
+
     Args:
         summary: The summary about to be returned to the caller.
 
     Returns:
         A safe display string; raw protocol JSON is replaced with a note.
     """
-    if looks_like_protocol_json(summary):
-        return _TOOL_JSON_FALLBACK
+    narration = strip_tool_protocol(summary)
+    if narration != summary:
+        return narration or _TOOL_JSON_FALLBACK
     return summary
 
 
@@ -56,23 +63,24 @@ def _is_debug():
     return get_user_config("debug", "off").lower() == "on"
 
 
-def _tool_round_budget() -> int:
-    """Return the tool round budget from config/env, with a sane floor.
+def _tool_round_budget() -> Optional[int]:
+    """Return the optional tool round cap from config/env.
 
-    Reads ``max_tool_rounds`` from user config; ``AYE_MAX_TOOL_ROUNDS``
-    overrides it. Values below the module floor are clamped so a typo cannot
-    leave the model without any budget.
+    Tool rounds are unlimited by default (None). Setting ``max_tool_rounds``
+    in ~/.ayecfg, or the ``AYE_MAX_TOOL_ROUNDS`` environment variable,
+    imposes a hard cap; invalid values are ignored, and the effective value
+    is clamped to 2..1000 so a typo cannot wedge the loop shut.
     """
-    from aye.controller.tool_loop import MAX_TOOL_ROUNDS
-
     raw = os.environ.get("AYE_MAX_TOOL_ROUNDS") or get_user_config(
-        "max_tool_rounds", str(MAX_TOOL_ROUNDS)
+        "max_tool_rounds", ""
     )
+    if raw is None or not str(raw).strip():
+        return None
     try:
-        value = int(raw)
+        value = int(str(raw).strip())
     except (TypeError, ValueError):
-        return MAX_TOOL_ROUNDS
-    return max(2, min(value, 100))
+        return None
+    return max(2, min(value, 1000))
 
 
 def _get_int_env(name: str, default: int) -> int:
@@ -342,7 +350,25 @@ def _parse_api_response(resp: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[
                 "This may be a temporary issue with the model provider. Please try again."
             ) from e
 
-        parsed = {"answer_summary": assistant_resp_str, "source_files": []}
+        # A malformed envelope that still looks like an object must not be
+        # shown to the user as the answer: it is machine traffic. Plain
+        # (non-JSON) text stays, since some backends return the summary bare.
+        stripped = assistant_resp_str.strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            if _is_debug():
+                print(
+                    f"[DEBUG] Malformed assistant_response payload: "
+                    f"{stripped[:500]}"
+                )
+            parsed = {
+                "answer_summary": (
+                    "The assistant response was malformed. "
+                    "Please re-run the request."
+                ),
+                "source_files": [],
+            }
+        else:
+            parsed = {"answer_summary": assistant_resp_str, "source_files": []}
 
     return parsed, chat_id
 
@@ -523,9 +549,11 @@ def invoke_llm(
         if local_response is not None:
             # Extract token usage if present (for printing after spinner stops)
             token_usage = local_response.get("token_usage")
-            
+
+            # Local models receive the tools prompt too, so their reply can
+            # be (or contain) a tool request; the same JSON guard applies.
             return LLMResponse(
-                summary=local_response.get("summary", ""),
+                summary=_guard_summary(local_response.get("summary", "")),
                 updated_files=local_response.get("updated_files", []),
                 chat_id=None,
                 source=LLMSource.LOCAL,
@@ -539,7 +567,11 @@ def invoke_llm(
         telemetry_payload = telemetry.build_payload(top_n=20) if telemetry.is_enabled() else None
 
         streaming_display = StreamingResponseDisplay(on_first_content=stop_spinner)
-        stream_callback = create_streaming_callback(streaming_display)
+        # The callback is the authority on whether it rendered the final
+        # content; the API's `_streamed_summary` marker only says the final
+        # render was *attempted* (the callback may have discarded tool JSON).
+        stream_state: Dict[str, Any] = {}
+        stream_callback = create_streaming_callback(streaming_display, state=stream_state)
 
         api_resp = cli_invoke(
             message=prompt,
@@ -559,16 +591,26 @@ def invoke_llm(
         if _is_debug():
             print(f"[DEBUG] Chat message processed, response keys: {api_resp.keys() if api_resp else 'None'}")
 
-        # If streaming UI already printed the summary, the API includes a marker.
-        streamed_summary = bool(api_resp.get("_streamed_summary")) if isinstance(api_resp, dict) else False
+        # Whether the streaming callback already rendered the final content.
+        # The API's `_streamed_summary` marker only says the final render was
+        # attempted; the callback may have discarded tool JSON instead.
+        streamed_summary = bool(stream_state.get("rendered_final"))
 
         # 3) Parse API response
         assistant_resp, new_chat_id = _parse_api_response(api_resp)
-        parsed_summary = summary_with_tool_calls(
-            assistant_resp.get("answer_summary", ""),
-            assistant_resp.get("tool_call") or assistant_resp.get("tool_calls"),
+        answer_text = assistant_resp.get("answer_summary", "")
+        structured_field = (
+            assistant_resp.get("tool_call") or assistant_resp.get("tool_calls")
         )
+        parsed_summary = summary_with_tool_calls(answer_text, structured_field)
         updated_files = assistant_resp.get("source_files", [])
+        # When a structured tool-call field wins, the prose it arrived with is
+        # hidden inside the JSON swap; keep it so the loop can ack it.
+        initial_narration = (
+            strip_tool_protocol(answer_text).strip()
+            if (structured_field and parsed_summary != answer_text)
+            else ""
+        )
 
         # 3b) Agentic tool loop: when the model answers with a tool-call JSON
         # (or a structured tool_call field), run the tools and continue the
@@ -576,20 +618,37 @@ def invoke_llm(
         # "Let me investigate..." also enters the loop so the model is nudged
         # to actually use its tools. The final prose was never shown by the
         # streaming UI (round 1 streamed the tool-call JSON), so
-        # summary_already_printed is False.
-        tool_requested = is_tool_request(parsed_summary)
-        if tool_requested or looks_like_stub(parsed_summary):
+        # summary_already_printed is False. With tools disabled there is
+        # nothing to run: the request is answered from the (guarded) summary
+        # instead of burning rounds on unknown-tool errors.
+        tools_available = bool(build_registry())
+        tool_requested = tools_available and is_tool_request(parsed_summary)
+        if tool_requested or (tools_available and looks_like_stub(parsed_summary)):
             from aye.controller.tool_loop import run_tool_loop
 
             # On the non-streaming path the spinner is never stopped by first
             # content; stop it before the loop so tool lines print cleanly.
             spinner.stop()
 
-            # The streamed bubble already showed the raw tool-call JSON; clear
-            # it so the tool activity (rendered by the loop) is the only frame.
-            if streaming_display is not None and streaming_display.is_active():
-                streaming_display.discard()
+            # The backend skips the final stream render for tool rounds, so a
+            # live frame may still hold the narration the user watched stream
+            # in. Finalize that prose into the scrollback and drop only the
+            # JSON; discarding the frame wholesale made the narration vanish.
+            narration_shown = False
+            if streaming_display is not None:
+                if streaming_display.is_active():
+                    narration = strip_tool_protocol(
+                        streaming_display.content or parsed_summary
+                    )
+                    if narration.strip():
+                        streaming_display.update(narration, is_final=True)
+                    else:
+                        streaming_display.discard()
+                # Either the callback finalized the narration at is_final, or
+                # the rescue just did; either way the user has seen it.
+                narration_shown = streaming_display.has_received_content()
 
+            loop_state: Dict[str, Any] = {}
             parsed_summary, updated_files, new_chat_id = run_tool_loop(
                 initial_summary=parsed_summary,
                 updated_files=updated_files,
@@ -604,13 +663,19 @@ def invoke_llm(
                 console=console,
                 stub_retry=not tool_requested,
                 max_rounds=_tool_round_budget(),
+                stream=streaming_display is not None,
+                initial_narration_shown=narration_shown,
+                initial_narration=initial_narration,
+                state=loop_state,
             )
             return LLMResponse(
                 summary=_guard_summary(parsed_summary),
                 updated_files=updated_files,
                 chat_id=new_chat_id,
                 source=LLMSource.API,
-                summary_already_printed=False,
+                summary_already_printed=bool(
+                    loop_state.get("summary_already_printed")
+                ),
             )
 
         # IMPORTANT:

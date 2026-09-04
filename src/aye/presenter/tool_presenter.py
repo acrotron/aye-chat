@@ -27,7 +27,7 @@ from rich.text import Text
 from aye.model.tool_protocol import ToolCall
 
 SHELL_TOOL_NAMES = frozenset({"bash", "cmd"})
-_GLOB_TOOLS = frozenset({"glob", "grep", "web_search"})
+_GLOB_TOOLS = frozenset({"glob", "grep", "web_search", "fetch_url"})
 _RESULT_PANEL_TOOLS = frozenset({"bash", "cmd"})
 
 # Border colour for the chat-style tool bubble; matches the `ui.border` value
@@ -71,6 +71,16 @@ def _describe_call(call: ToolCall, output: str) -> str:
             parts.append(f"({max_results})")
         return " ".join(parts)
 
+    if name == "fetch_url":
+        return f'Fetch_url "{args.get("url", "")}"'
+
+    if name == "ls":
+        text = f"Ls {args.get('path') or '.'}"
+        depth = args.get("depth")
+        if depth not in (None, "", 1):
+            text += f" [depth={depth}]"
+        return text
+
     if name == "grep":
         parts = [f'Grep "{args.get("pattern", "")}"']
         include = args.get("include")
@@ -106,7 +116,7 @@ def _line_style(name: str) -> str:
     """Colour for the one-line tool entry per family."""
     if name in _GLOB_TOOLS:
         return "bold yellow"
-    if name == "read":
+    if name in ("read", "ls"):
         return "bold green"
     if name == "write":
         return "bold magenta"

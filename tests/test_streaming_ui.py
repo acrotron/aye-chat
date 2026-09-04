@@ -519,6 +519,59 @@ class TestStreamingResponseDisplay(unittest.TestCase):
         display.discard.assert_called_once_with()
         display.update.assert_not_called()
 
+    def test_final_mixed_narration_and_tool_json_keeps_narration(self):
+        """Prose around a tool request is real output; only the JSON goes."""
+        display = MagicMock()
+        cb = streaming_ui.create_streaming_callback(display)
+        cb(
+            'Let me check the files.\n'
+            '{"tool_calls":[{"name":"glob","arguments":{"pattern":"*.py"}}]}',
+            is_final=True,
+        )
+        display.update.assert_called_once_with(
+            "Let me check the files.", is_final=True
+        )
+        display.discard.assert_not_called()
+
+    def test_final_empty_protocol_object_is_discarded(self):
+        display = MagicMock()
+        cb = streaming_ui.create_streaming_callback(display)
+        cb('{"tool_calls": []}', is_final=True)
+        display.discard.assert_called_once_with()
+        display.update.assert_not_called()
+
+    def test_final_prose_strips_malformed_protocol_blob(self):
+        """An unparseable tool_calls blob must never reach the screen."""
+        display = MagicMock()
+        cb = streaming_ui.create_streaming_callback(display)
+        cb('Here you go.\n{"tool_calls": oops}', is_final=True)
+        display.update.assert_called_once_with("Here you go.", is_final=True)
+        display.discard.assert_not_called()
+
+    def test_final_truncated_protocol_tail_is_stripped(self):
+        display = MagicMock()
+        cb = streaming_ui.create_streaming_callback(display)
+        cb('Answer text.\n{"tool_calls": [{"name"', is_final=True)
+        display.update.assert_called_once_with("Answer text.", is_final=True)
+        display.discard.assert_not_called()
+
+    def test_final_render_records_state(self):
+        display = MagicMock()
+        state = {}
+        cb = streaming_ui.create_streaming_callback(display, state=state)
+        cb("the answer", is_final=True)
+        assert state.get("rendered_final") is True
+
+    def test_final_discard_leaves_state_unset(self):
+        display = MagicMock()
+        state = {}
+        cb = streaming_ui.create_streaming_callback(display, state=state)
+        cb(
+            '{"tool_calls":[{"name":"glob","arguments":{"pattern":"*.py"}}]}',
+            is_final=True,
+        )
+        assert "rendered_final" not in state
+
     def test_create_streaming_callback_discards_stub(self):
         display = MagicMock()
         cb = streaming_ui.create_streaming_callback(display)

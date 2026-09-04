@@ -48,6 +48,8 @@ MAX_GLOB_RESULTS = 100
 MAX_GREP_MATCHES = 60
 MAX_GREP_FILE_BYTES = 1_000_000   # skip files larger than this when searching
 MAX_LINE_CHARS = 300
+MAX_LS_ENTRIES = 200
+MAX_FETCH_CHARS = 12_000
 
 # A single tool-driven write is bounded so a runaway response cannot fill a disk.
 MAX_WRITE_BYTES = 400_000
@@ -377,6 +379,79 @@ def _matches_include(rel_path: str, include: str) -> bool:
     if "/" not in include:
         return fnmatch.fnmatch(Path(rel_path).name, include)
     return False
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# ls
+# ---------------------------------------------------------------------------
+
+def run_ls(arguments: Dict[str, Any], root: Path) -> str:
+    """List one directory's entries, directories first.
+
+    Dot-prefixed and ignore-rule-excluded entries are hidden, matching what
+    the other file tools can see, so the model is never shown paths it then
+    fails to read.
+
+    Args:
+        arguments: ``path`` (optional, defaults to the project root) and
+            ``depth`` (optional, 1-3; deeper levels come back indented).
+        root: Project root.
+
+    Returns:
+        One entry per line, directories marked with a trailing slash.
+
+    Raises:
+        ToolError: If the path is missing, not a directory, or excluded.
+    """
+    raw = str(arguments.get("path", "")).strip() or "."
+    path = _resolve_in_root(raw, root)
+
+    if not path.exists():
+        raise ToolError(f"directory not found: {_relative(path, root)}")
+    if not path.is_dir():
+        raise ToolError(f"not a directory: {_relative(path, root)}")
+
+    spec = load_ignore_patterns(root)
+    if _is_ignored(path, root, spec):
+        raise ToolError(f"path is excluded by ignore rules: {_relative(path, root)}")
+
+    depth = min(_coerce_int(arguments.get("depth"), default=1, minimum=1), 3)
+
+    lines: List[str] = []
+    truncated = False
+
+    def walk(directory: Path, level: int) -> None:
+        nonlocal truncated
+        if truncated:
+            return
+        try:
+            entries = sorted(
+                directory.iterdir(),
+                key=lambda p: (p.is_file(), p.name.lower()),
+            )
+        except OSError as exc:
+            lines.append("  " * level + f"(could not list: {exc})")
+            return
+        for entry in entries:
+            if _is_ignored(entry, root, spec):
+                continue
+            if len(lines) >= MAX_LS_ENTRIES:
+                truncated = True
+                return
+            lines.append("  " * level + entry.name + ("/" if entry.is_dir() else ""))
+            if entry.is_dir() and level < depth:
+                walk(entry, level + 1)
+
+    walk(path, 0)
+
+    label = _relative(path, root) or "."
+    if not lines:
+        return f"{label} is empty"
+    header = f"{label} ({len(lines)} entries)"
+    if truncated:
+        header += f" (capped at {MAX_LS_ENTRIES})"
+    return header + "\n" + "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -800,6 +875,114 @@ def run_web_search(arguments: Dict[str, Any], root: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
+# fetch_url
+# ---------------------------------------------------------------------------
+
+_FETCH_URL_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
+# Script/style bodies carry no readable text and dwarf the page otherwise.
+_FETCH_BLOCK_RE = re.compile(
+    r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL
+)
+# Block-level ends become line breaks so the text keeps its paragraph shape.
+_FETCH_BREAK_RE = re.compile(
+    r"<(?:br|/p|/div|/li|/tr|/h[1-6])\s*/?>", re.IGNORECASE
+)
+# Hard download ceiling. The body is streamed and read only up to this many
+# bytes, so a runaway URL (an agent following a link to a huge file) cannot
+# exhaust memory the way an eager response.text would.
+MAX_FETCH_BYTES = 2_000_000
+
+
+def run_fetch_url(arguments: Dict[str, Any], root: Path) -> str:
+    """Fetch one http(s) URL and return its readable text.
+
+    HTML pages are reduced to text (script/style dropped, tags stripped,
+    entities unescaped); plain-text and JSON bodies come back as-is. Use it
+    to follow up on a ``web_search`` result or read online documentation.
+
+    Args:
+        arguments: ``url`` (required), optional ``max_chars`` (500-12000).
+        root: Unused; kept for the common runner signature.
+
+    Returns:
+        The page text, character-capped.
+
+    Raises:
+        ToolError: On a missing or non-http URL, a failed request, a
+            non-200 status, a body larger than the download ceiling, or a
+            body with no text at all.
+    """
+    url = str(arguments.get("url", "")).strip()
+    if not url:
+        raise ToolError("url is required")
+    if not _FETCH_URL_SCHEME_RE.match(url):
+        raise ToolError(f"only http(s) URLs are supported: {url!r}")
+
+    max_chars = min(
+        _coerce_int(arguments.get("max_chars"), default=8_000, minimum=500),
+        MAX_FETCH_CHARS,
+    )
+
+    try:
+        with httpx.stream(
+            "GET",
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=_WEB_TIMEOUT,
+            follow_redirects=True,
+        ) as response:
+            if response.status_code != 200:
+                raise ToolError(f"HTTP {response.status_code} for {url}")
+
+            content_type = (
+                response.headers.get("content-type", "")
+                .split(";")[0]
+                .strip()
+                .lower()
+            )
+            if content_type.split("/")[0] in {"image", "audio", "video"} or (
+                content_type
+                in {"application/octet-stream", "application/pdf", "application/zip"}
+            ):
+                raise ToolError(
+                    f"no text content at {url} (content-type {content_type!r})"
+                )
+
+            chunks: List[bytes] = []
+            downloaded = 0
+            oversized = False
+            for chunk in response.iter_bytes():
+                downloaded += len(chunk)
+                if downloaded > MAX_FETCH_BYTES:
+                    oversized = True
+                    break
+                chunks.append(chunk)
+    except httpx.HTTPError as exc:
+        raise ToolError(f"request failed: {exc}") from exc
+
+    if oversized:
+        raise ToolError(
+            f"content at {url} exceeds the {MAX_FETCH_BYTES}-byte download cap"
+        )
+
+    body = b"".join(chunks).decode("utf-8", errors="replace")
+
+    if "html" in content_type:
+        body = _FETCH_BLOCK_RE.sub(" ", body)
+        body = _FETCH_BREAK_RE.sub("\n", body)
+        body = unescape(re.sub(r"<[^>]+>", "", body))
+        kept = [" ".join(line.split()) for line in body.splitlines()]
+        body = "\n".join(line for line in kept if line)
+
+    if len(body) > max_chars:
+        body = body[:max_chars] + f"\n... truncated at {max_chars} characters"
+
+    if not body.strip():
+        raise ToolError(f"no text content at {url} (content-type {content_type!r})")
+    return body
+
+
+# ---------------------------------------------------------------------------
 # Coercion helpers
 # ---------------------------------------------------------------------------
 # Coercion helpers
@@ -856,6 +1039,20 @@ FILE_TOOLS: List[ToolSpec] = [
         required=("pattern",),
         runner=run_grep,
     ),
+    ToolSpec(
+        name="ls",
+        description=(
+            "List a directory's entries, directories first (dot and ignored "
+            "entries hidden). Use it to learn the project layout before "
+            "reading files."
+        ),
+        parameters={
+            "path": "string, optional - directory relative to the project root (default '.')",
+            "depth": "integer, optional - recursion depth, 1-3 (default 1)",
+        },
+        required=(),
+        runner=run_ls,
+    ),
 ]
 
 # Not offered to the model yet, deliberately.
@@ -905,6 +1102,20 @@ WEB_TOOLS: List[ToolSpec] = [
         },
         required=("query",),
         runner=run_web_search,
+    ),
+    ToolSpec(
+        name="fetch_url",
+        description=(
+            "Fetch one http(s) URL and return its readable text (HTML tags "
+            "stripped). Use it to read documentation or APIs found via "
+            "web_search."
+        ),
+        parameters={
+            "url": "string - the full http(s) URL",
+            "max_chars": "integer, optional - character cap (default 8000)",
+        },
+        required=("url",),
+        runner=run_fetch_url,
     ),
 ]
 
@@ -956,6 +1167,18 @@ def _platform_shell_tools() -> List[ToolSpec]:
     return [spec for spec in SHELL_TOOLS if spec.name == "bash"]
 
 
+def tools_enabled() -> bool:
+    """Return True unless tools are switched off via config or environment.
+
+    ``tools = off`` in ~/.ayecfg, or ``AYE_TOOLS=off``, disables the whole
+    tool set in one place. This replaces the hard registry shutdown that
+    was used while the tool loop was unstable: the kill-switch stays, but
+    as a supported setting instead of a code edit.
+    """
+    raw = os.environ.get("AYE_TOOLS") or get_user_config("tools", "on")
+    return str(raw).strip().lower() not in {"off", "0", "false", "no", "disabled"}
+
+
 def default_specs() -> List[ToolSpec]:
     """Return the tool specs offered to the model.
 
@@ -966,8 +1189,9 @@ def default_specs() -> List[ToolSpec]:
     response's ``source_files`` instead. Add it here to re-enable the write
     tool once the sandboxed test flow needs mid-request writes.
     """
-    #return FILE_TOOLS + WEB_TOOLS + _platform_shell_tools()
-    return []
+    if not tools_enabled():
+        return []
+    return FILE_TOOLS + WEB_TOOLS + _platform_shell_tools()
 
 
 def build_registry(specs: Optional[List[ToolSpec]] = None) -> Dict[str, ToolSpec]:

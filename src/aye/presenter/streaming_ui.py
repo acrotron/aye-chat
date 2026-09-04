@@ -19,7 +19,7 @@ Tailing (viewport follow):
   so the user can scroll back through the entire answer.
 - Controlled via the AYE_STREAM_TAIL env var (default: on).
 """
-from aye.model.tool_protocol import looks_like_stub, parse_tool_calls
+from aye.model.tool_protocol import looks_like_stub, parse_tool_calls, strip_tool_protocol
 from aye.presenter.repl_ui import deep_ocean_theme
 
 import os
@@ -720,12 +720,47 @@ def _should_discard(content: str) -> bool:
     return bool(parse_tool_calls(content)) or looks_like_stub(content)
 
 
-def create_streaming_callback(display: StreamingResponseDisplay):
-    """Create a callback function for use with cli_invoke."""
+def create_streaming_callback(
+    display: StreamingResponseDisplay,
+    state: Optional[dict] = None,
+):
+    """Create a callback function for use with cli_invoke.
+
+    Args:
+        display: The live display to render through.
+        state: Optional out-dict; ``state["rendered_final"]`` is set to True
+            when the final callback rendered user-visible content, so callers
+            can avoid printing the summary a second time.
+    """
 
     def callback(content: str, is_final: bool = False) -> None:
-        if is_final and _should_discard(content):
-            display.discard()
+        if is_final:
+            narration = strip_tool_protocol(content)
+            if parse_tool_calls(content):
+                # A tool request: the JSON is machine traffic, but prose the
+                # model sent around it is real output -- keep the narration
+                # and drop only the object. Discarding everything made the
+                # streamed narration vanish mid-request.
+                if narration.strip():
+                    display.update(narration, is_final=True)
+                    if state is not None:
+                        state["rendered_final"] = True
+                else:
+                    display.discard()
+                return
+            if _should_discard(content):
+                display.discard()
+                return
+            if not narration.strip():
+                # Protocol-shaped junk only (e.g. {"tool_calls": []} or a
+                # malformed object): no calls, nothing user-facing either.
+                display.discard()
+                return
+            # Prose answer -- rendered post-strip so an unparseable
+            # protocol blob riding along can never reach the screen.
+            display.update(narration, is_final=is_final)
+            if state is not None:
+                state["rendered_final"] = True
             return
         display.update(content, is_final=is_final)
 
