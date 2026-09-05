@@ -92,7 +92,7 @@ def get_last_assistant_response() -> Optional[str]:
 
 def print_welcome_message():
     """Display the welcome message for the Aye Chat REPL."""
-    console.print("Aye Chat \u2013 type `help` for available commands, `exit` or Ctrl+D to quit", style="ui.welcome")
+    console.print("Aye Chat – type `help` for available commands, `exit` or Ctrl+D to quit", style="ui.welcome")
 
 
 def print_help_message():
@@ -139,6 +139,12 @@ def print_help_message():
         (r"  verbose \[on|off]", "Toggle verbose mode to increase or decrease chattiness (on/off, persists between sessions)"),
         (r"  autodiff \[on|off]", "Toggle automatic diff display after LLM file updates (off by default, persists between sessions)"),
         (r"  completion \[readline|multi]", "Switch auto-completion style (readline or multi, persists between sessions)"),
+        ("", ""),
+
+        ("Agentic", ""),
+        (r"  tools \[on|off]", "Toggle model-initiated tools (experimental feature; off by default, persists between sessions)"),
+        (r"  autotest \[on|off]", "Toggle auto-test after AI file updates (off by default, persists between sessions)"),
+        ("  autotest rounds <1-10>", "Set auto-test repair-round budget"),
         ("  Shift+Tab", "Toggle permission mode: default (shell commands ask first) <-> full (run without asking)"),
         ("", ""),
 
@@ -168,7 +174,7 @@ def print_help_message():
 
 def print_prompt():
     """Return the prompt symbol for user input."""
-    return "(\u30c4\u00bb "
+    return "(ツ» "
 
 
 def print_assistant_response(summary: str):
@@ -177,7 +183,7 @@ def print_assistant_response(summary: str):
 
     console.print()
 
-    pulse = "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]\u25cf[/] [ui.response_symbol.waves]))[/]"
+    pulse = "[ui.response_symbol.waves](([/] [ui.response_symbol.pulse]●[/] [ui.response_symbol.waves]))[/]"
 
     grid = Table.grid(padding=(0, 1))
     grid.add_column()
@@ -238,7 +244,7 @@ def print_attachment_summary(name: str, mime: str, size_bytes: int) -> None:
 
     Format (per ``issue.md`` Section 1.4)::
 
-        \U0001f4ce attached: screenshot.png (image/png, 142 KB)
+        📎 attached: screenshot.png (image/png, 142 KB)
     """
     try:
         size_str = _format_image_size(int(size_bytes))
@@ -249,5 +255,5 @@ def print_attachment_summary(name: str, mime: str, size_bytes: int) -> None:
     safe_mime = mime or "application/octet-stream"
 
     console.print(
-        f"[ui.attachment]\U0001f4ce attached: {safe_name} ({safe_mime}, {size_str})[/]"
+        f"[ui.attachment]📎 attached: {safe_name} ({safe_mime}, {size_str})[/]"
     )

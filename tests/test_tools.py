@@ -72,6 +72,12 @@ def project(tmp_path):
     return tmp_path
 
 
+@pytest.fixture
+def enabled_tools(monkeypatch):
+    """Enable experimental model-initiated tools for registry tests."""
+    monkeypatch.setenv("AYE_TOOLS", "on")
+
+
 # ---------------------------------------------------------------------------
 # Path sandboxing
 # ---------------------------------------------------------------------------
@@ -353,13 +359,17 @@ def shell_registry():
 
 
 class TestToolsEnabled:
-    """The supported kill-switch that replaces the hard registry shutdown."""
+    """The supported kill-switch for experimental model-initiated tools."""
 
-    def test_default_is_on(self, monkeypatch):
+    def test_default_is_off(self, monkeypatch):
         monkeypatch.delenv("AYE_TOOLS", raising=False)
         monkeypatch.setattr(
             "aye.model.tools.get_user_config", lambda key, default=None: default
         )
+        assert tools_enabled() is False
+
+    def test_env_on_enables(self, monkeypatch):
+        monkeypatch.setenv("AYE_TOOLS", "on")
         assert tools_enabled() is True
 
     def test_env_off_disables(self, monkeypatch):
@@ -401,13 +411,13 @@ class TestPermissionMode:
         monkeypatch.setenv("AYE_TOOL_PERMISSION", "ful")
         assert permission_mode() == PERMISSION_FULL
 
-    def test_shell_tools_present_in_both_modes(self, monkeypatch):
+    def test_shell_tools_present_in_both_modes(self, monkeypatch, enabled_tools):
         expected = {"cmd"} if platform.system() == "Windows" else {"bash"}
         for value in (PERMISSION_DEFAULT, PERMISSION_FULL):
             monkeypatch.setenv("AYE_TOOL_PERMISSION", value)
             assert expected <= set(build_registry())
 
-    def test_only_the_current_platform_shell_is_offered(self):
+    def test_only_the_current_platform_shell_is_offered(self, enabled_tools):
         if platform.system() == "Windows":
             assert "cmd" in build_registry()
             assert "bash" not in build_registry()
@@ -546,7 +556,7 @@ class TestFormatShellResult:
 # ---------------------------------------------------------------------------
 
 class TestRegistry:
-    def test_default_registry_omits_the_write_tool(self, monkeypatch):
+    def test_default_registry_omits_the_write_tool(self, monkeypatch, enabled_tools):
         """``write`` is withheld pending the sandboxed test flow (WRITE_TOOL)."""
         monkeypatch.delenv("AYE_TOOL_PERMISSION", raising=False)
         shell = "cmd" if platform.system() == "Windows" else "bash"
@@ -579,18 +589,18 @@ class TestRegistry:
 
 
 class TestExecuteTool:
-    def test_unknown_tool_lists_alternatives(self, project):
+    def test_unknown_tool_lists_alternatives(self, project, enabled_tools):
         out = execute_tool("bogus", {}, project)
         assert "unknown tool" in out
         assert "grep" in out
 
-    def test_missing_required_argument_is_reported(self, project):
+    def test_missing_required_argument_is_reported(self, project, enabled_tools):
         assert "requires" in execute_tool("read", {}, project)
 
-    def test_non_dict_arguments_are_tolerated(self, project):
+    def test_non_dict_arguments_are_tolerated(self, project, enabled_tools):
         assert "requires" in execute_tool("read", "not a dict", project)
 
-    def test_tool_error_is_returned_not_raised(self, project):
+    def test_tool_error_is_returned_not_raised(self, project, enabled_tools):
         out = execute_tool("read", {"path": "missing.py"}, project)
         assert out.startswith("Error:")
 
@@ -893,7 +903,7 @@ class TestDescribeCall:
 
     def test_long_values_are_clipped(self):
         out = describe_call(ToolCall("grep", {"pattern": "x" * 200}))
-        assert "\u2026" in out
+        assert "…" in out
         assert len(out) < 120
 
 
@@ -1004,7 +1014,7 @@ class TestRunWebSearch:
         with pytest.raises(ToolError, match="brave_api_key is not set"):
             run_web_search({"query": "example"}, tmp_path)
 
-    def test_registry_includes_web_search(self):
+    def test_registry_includes_web_search(self, enabled_tools):
         registry = build_registry()
         assert "web_search" in registry
         assert registry["web_search"].mutating is False
@@ -1042,7 +1052,7 @@ class TestRunLs:
         with pytest.raises(ToolError, match="escapes the project root"):
             run_ls({"path": "../elsewhere"}, project)
 
-    def test_registry_entry_is_read_only(self):
+    def test_registry_entry_is_read_only(self, enabled_tools):
         registry = build_registry()
         assert "ls" in registry
         assert registry["ls"].mutating is False
@@ -1141,7 +1151,7 @@ class TestRunFetchUrl:
         with pytest.raises(ToolError, match="no text content"):
             run_fetch_url({"url": "https://example.com/pic.png"}, tmp_path)
 
-    def test_registry_entry_is_read_only(self):
+    def test_registry_entry_is_read_only(self, enabled_tools):
         registry = build_registry()
         assert "fetch_url" in registry
         assert registry["fetch_url"].mutating is False

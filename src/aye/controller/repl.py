@@ -52,6 +52,8 @@ from aye.controller.command_handlers import (
     handle_blog_command,
     handle_llm_command,
     handle_autodiff_command,
+    handle_autotest_command,
+    handle_tools_command,
     handle_shellcap_command,
     handle_printraw_command,
     handle_paste_image_command,
@@ -89,7 +91,7 @@ _URL_RE = re.compile(r'https?://[^\s]+', re.IGNORECASE)
 def _is_clipboard_paste_enabled(conf: Any = None) -> bool:
     """Return True if the experimental Ctrl+V clipboard image paste is enabled.
 
-    Reads the ``clipboard_image_paste`` config key.  Also supports the
+    Reads the ``clipboard_image_paste`` config key. Also supports the
     ``AYE_CLIPBOARD_IMAGE_PASTE`` environment variable via the standard
     ``get_user_config`` override mechanism.
 
@@ -261,7 +263,7 @@ def create_key_bindings(conf: Any = None) -> KeyBindings:
     """Create custom key bindings for the prompt session.
 
     Args:
-        conf: Optional REPL config object.  When provided **and** the
+        conf: Optional REPL config object. When provided **and** the
             ``clipboard_image_paste`` config flag is enabled, a ``Ctrl+V``
             binding is registered that reads a clipboard image, stages it
             as a pending attachment, and inserts a safe marker into the
@@ -301,7 +303,7 @@ def create_key_bindings(conf: Any = None) -> KeyBindings:
             """Read a clipboard image, stage it, and insert a marker.
 
             On any failure (no image, clipboard unavailable, oversized)
-            the keystroke is silently consumed.  Users who need
+            the keystroke is silently consumed. Users who need
             diagnostic feedback should use the ``paste-image`` command
             instead.
 
@@ -406,7 +408,7 @@ def _execute_forced_shell_command(command: str, args: List[str], conf: Any) -> N
 def chat_repl(conf: Any) -> None:
     is_first_run = run_first_time_tutorial_if_needed()
 
-    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "shellcap", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm", "printraw", "raw", "paste-image", "clear-attachments"]
+    BUILTIN_COMMANDS = ["with", "blog", "new", "history", "diff", "restore", "undo", "keep", "model", "verbose", "debug", "autodiff", "autotest", "tools", "shellcap", "completion", "exit", "quit", ":q", "help", "cd", "db", "llm", "printraw", "raw", "paste-image", "clear-attachments"]
 
     completion_style = get_user_config("completion_style", "readline").lower()
 
@@ -466,7 +468,7 @@ def chat_repl(conf: Any) -> None:
                 prompt_str = print_prompt()
                 if index_manager and index_manager.is_indexing() and conf.verbose:
                     progress = index_manager.get_progress_display()
-                    prompt_str = f"(\u30c4 ({progress}) \u00bb "
+                    prompt_str = f"(ツ ({progress}) » "
 
                 prompt = session.prompt(prompt_str, reserve_space_for_menu=6)
 
@@ -535,6 +537,12 @@ def chat_repl(conf: Any) -> None:
                 elif lowered_first == "autodiff":
                     telemetry.record_command("autodiff", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_autodiff_command(tokens)
+                elif lowered_first == "autotest":
+                    telemetry.record_command("autotest", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
+                    handle_autotest_command(tokens)
+                elif lowered_first == "tools":
+                    telemetry.record_command("tools", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
+                    handle_tools_command(tokens)
                 elif lowered_first == "shellcap":
                     telemetry.record_command("shellcap", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     handle_shellcap_command(tokens)
@@ -604,7 +612,7 @@ def chat_repl(conf: Any) -> None:
                     chat_id_file.unlink(missing_ok=True)
                     chat_id = -1
                     conf.plugin_manager.handle_command("new_chat", {"root": conf.root})
-                    console.print("[green]\u2705 New chat session started.[/]")
+                    console.print("[green]✅ New chat session started.[/]")
                 elif lowered_first == "help":
                     telemetry.record_command("help", has_args=len(tokens) > 1, prefix=_AYE_PREFIX)
                     print_help_message()
