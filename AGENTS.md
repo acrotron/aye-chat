@@ -374,6 +374,8 @@ Core dependencies (see `pyproject.toml`):
 | `AYE_STREAM_VIEWPORT_HEIGHT` | Streaming viewport lines | `15` |
 | `AYE_TOOLS` | Disable all agent tools (`off`) | `on` |
 | `AYE_MAX_TOOL_ROUNDS` | Optional cap on tool rounds per request | unlimited |
+| `AYE_AUTO_TEST` | Auto-test loop after generated code (`on`) | `off` |
+| `AYE_AUTO_TEST_MAX_ROUNDS` | Auto-test repair-round budget (1-10) | `3` |
 
 ## AGENTS.md Discovery
 

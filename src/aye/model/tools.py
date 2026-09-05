@@ -34,7 +34,7 @@ import subprocess
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib import parse
 
 import httpx
@@ -617,6 +617,44 @@ def _format_shell_result(command: str, code: int, stdout: str, stderr: str) -> s
         parts.append("(no output)")
 
     return "\n".join(parts)
+
+
+def run_test_command(command: str, root: Path) -> Tuple[int, str]:
+    """Run *command* from *root* and return ``(exit_code, combined_output)``.
+
+    The auto-test loop needs the numeric exit code rather than the formatted
+    tool report. Same timeout and output caps as the shell tool; runs under
+    the platform's default shell (``shell=True``), which is enough for
+    ``python -m pytest ...`` style commands.
+    """
+    command = str(command or "").strip()
+    if not command:
+        raise ToolError("command is required")
+
+    try:
+        completed = subprocess.run(
+            command,
+            shell=True,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=SHELL_TIMEOUT_SECONDS,
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        raise ToolError(
+            f"command exceeded the {SHELL_TIMEOUT_SECONDS}s timeout and was killed"
+        ) from None
+    except OSError as exc:
+        raise ToolError(f"could not run command: {exc}") from None
+
+    output = ((completed.stdout or "") + "\n" + (completed.stderr or "")).strip()
+    if len(output) > MAX_SHELL_OUTPUT_BYTES:
+        output = (
+            output[:MAX_SHELL_OUTPUT_BYTES]
+            + f"\n... truncated at {MAX_SHELL_OUTPUT_BYTES} characters"
+        )
+    return completed.returncode, output
 
 
 def run_bash(arguments: Dict[str, Any], root: Path) -> str:
