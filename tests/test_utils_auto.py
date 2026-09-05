@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 import pytest
 
-from aye.utils import (
+from aye.model.utils import (
     DEFAULT_INPUT_FORMATS,
     _run_examples,
     convert_date,

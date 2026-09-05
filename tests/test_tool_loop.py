@@ -1,7 +1,10 @@
 """Tests for the agentic tool loop (tool_loop.py)."""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from aye.controller.tool_loop import run_tool_loop
 from aye.model.tool_protocol import looks_like_protocol_json
@@ -25,6 +28,63 @@ def _conf(tmp_path):
 
 def _tool_request(name, arguments):
     return json.dumps({"tool_calls": [{"name": name, "arguments": arguments}]})
+
+
+@pytest.fixture(autouse=True)
+def enabled_tool_loop(monkeypatch):
+    """Keep these unit tests focused on tool_loop behavior.
+
+    The production registry can be disabled or filtered by configuration. These
+    tests exercise the loop itself, so provide a small deterministic registry
+    and fake tool executor. Individual tests still override these patches when
+    they need to assert confirmation or execution details.
+    """
+    registry = {
+        name: SimpleNamespace(name=name)
+        for name in ("read", "glob", "grep", "bash", "cmd", "web_search", "fetch_url")
+    }
+
+    def fake_execute_tool(name, args, root):
+        if name not in registry:
+            return f"Error: unknown tool '{name}'."
+
+        root = Path(root)
+        if name == "read":
+            path = root / str(args.get("path", ""))
+            try:
+                return path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                return f"Error: file not found: {args.get('path', '')}"
+
+        if name == "glob":
+            pattern = str(args.get("pattern", "*"))
+            return "\n".join(sorted(p.relative_to(root).as_posix() for p in root.glob(pattern)))
+
+        if name == "grep":
+            pattern = str(args.get("pattern", ""))
+            include = str(args.get("include", "*"))
+            matches = []
+            for path in root.glob(include):
+                if path.is_file():
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    if pattern in text:
+                        matches.append(path.relative_to(root).as_posix())
+            return "\n".join(matches)
+
+        if name in {"bash", "cmd"}:
+            return "ran"
+
+        return f"RESULT[{name}]"
+
+    monkeypatch.setattr("aye.controller.tool_loop.build_registry", lambda: registry)
+    monkeypatch.setattr(
+        "aye.controller.tool_loop.build_tools_prompt",
+        lambda tools, is_final_round=False: "\n\nTOOLS",
+    )
+    monkeypatch.setattr(
+        "aye.controller.tool_loop.needs_confirmation", lambda name, registry: False
+    )
+    monkeypatch.setattr("aye.controller.tool_loop.execute_tool", fake_execute_tool)
 
 
 class TestReadRound:
@@ -174,7 +234,9 @@ class TestShellApproval:
         )
         monkeypatch.setattr(
             "aye.controller.tool_loop.execute_tool",
-            lambda name, args, root: (_ for _ in ()).throw(AssertionError("should not run")),
+            lambda name, args, root: (_ for _ in ()).throw(
+                AssertionError("should not run")
+            ),
         )
 
         run_tool_loop(
@@ -287,14 +349,14 @@ class TestRoundBudget:
             calls.append(kwargs)
             if len(calls) < 60:
                 return _resp(
-                    _tool_request("write", {"path": "f.tsx", "content": "x"}),
+                    _tool_request("glob", {"pattern": f"*.{len(calls)}.tsx"}),
                     chat_id=1,
                 )
             return _resp("created the files", chat_id=1)
 
         monkeypatch.setattr("aye.controller.tool_loop.cli_invoke", fake_cli_invoke)
         summary, _, _ = run_tool_loop(
-            initial_summary=_tool_request("write", {"path": "a.tsx", "content": "x"}),
+            initial_summary=_tool_request("glob", {"pattern": "*.0.tsx"}),
             updated_files=[],
             chat_id=1,
             prompt="create many tsx files",
@@ -401,6 +463,7 @@ class TestUpdatedFiles:
         assert [f["file_name"] for f in files] == ["a.py", "b.py"]
         assert summary == "done"
 
+
 class TestStubRetry:
     def test_stub_round_nudges_the_model_then_uses_tools(self, tmp_path, monkeypatch):
         calls = []
@@ -485,6 +548,7 @@ class TestStubRetry:
         assert "*.txt" in calls[0]["message"]
         assert "*.py" in calls[1]["message"]
         assert summary == "done"
+        assert chat_id == 6
 
 
 class TestMixedNarrationAndCalls:
@@ -665,7 +729,8 @@ class TestMixedNarrationAndCalls:
 
 class TestCrossRoundDedup:
     """parse_tool_calls() deduplicates within a round; the loop must also
-    remember calls made in earlier rounds."""
+    remember calls made in earlier rounds.
+    """
 
     def _loop(self, tmp_path, monkeypatch, rounds, executed):
         """Drive the loop through *rounds* summaries, recording executions."""

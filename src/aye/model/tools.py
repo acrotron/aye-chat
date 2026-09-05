@@ -1,5 +1,11 @@
 """Tool implementations available to the LLM during a chat turn.
 
+Experimental feature
+--------------------
+Model-initiated tools are experimental and disabled by default. Enable them
+explicitly with ``tools=on`` in ``~/.ayecfg`` or ``AYE_TOOLS=on`` for the
+current process.
+
 Each tool is a small function over the project tree. Results are returned as
 plain text ready to paste back into a prompt.
 
@@ -1206,22 +1212,26 @@ def _platform_shell_tools() -> List[ToolSpec]:
 
 
 def tools_enabled() -> bool:
-    """Return True unless tools are switched off via config or environment.
+    """Return True only when experimental tools are explicitly switched on.
+
+    ``tools = on`` in ~/.ayecfg, or ``AYE_TOOLS=on``, enables the experimental
+    model-initiated tool set. Tools are disabled by default while the feature
+    remains experimental.
 
     ``tools = off`` in ~/.ayecfg, or ``AYE_TOOLS=off``, disables the whole
-    tool set in one place. This replaces the hard registry shutdown that
-    was used while the tool loop was unstable: the kill-switch stays, but
-    as a supported setting instead of a code edit.
+    tool set in one place. Environment variable values take precedence over
+    ~/.ayecfg for the current process.
     """
-    raw = os.environ.get("AYE_TOOLS") or get_user_config("tools", "on")
+    raw = os.environ.get("AYE_TOOLS") or get_user_config("tools", "off")
     return str(raw).strip().lower() not in {"off", "0", "false", "no", "disabled"}
 
 
 def default_specs() -> List[ToolSpec]:
     """Return the tool specs offered to the model.
 
-    Both permission modes offer the same set; they differ only in whether shell
-    calls are confirmed with the user.
+    Tools are experimental and disabled by default. Both permission modes offer
+    the same set once tools are enabled; they differ only in whether shell calls
+    are confirmed with the user.
 
     ``WRITE_TOOL`` is intentionally absent: edits arrive through the final
     response's ``source_files`` instead. Add it here to re-enable the write

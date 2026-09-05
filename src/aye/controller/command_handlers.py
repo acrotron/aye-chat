@@ -10,10 +10,23 @@ from rich.console import Console
 from aye.model.auth import get_user_config, set_user_config, delete_user_config
 from aye.model.config import MODELS
 from aye.model.attachments import IMAGE_EXTENSIONS
+from aye.model.tools import tools_enabled
 from aye.presenter.repl_ui import print_error, print_attachment_summary
 from aye.controller.llm_invoker import invoke_llm
 from aye.controller.llm_handler import process_llm_response, handle_llm_error
 from aye.controller.shell_capture import maybe_attach_shell_result, SHELLCAP_KEY
+
+# Config keys for the auto-test loop.  These must match the keys read by
+# aye.controller.test_loop (auto_test_enabled / auto_test_max_rounds).
+AUTO_TEST_KEY = "auto_test"
+AUTO_TEST_MAX_ROUNDS_KEY = "auto_test_max_rounds"
+
+# Matches the clamp applied in test_loop.auto_test_max_rounds().
+AUTO_TEST_MIN_ROUNDS = 1
+AUTO_TEST_MAX_ROUNDS = 10
+
+# Config key for the LLM tool kill-switch. This matches aye.model.tools.tools_enabled().
+TOOLS_KEY = "tools"
 
 
 def handle_cd_command(tokens: list[str], conf: Any) -> bool:
@@ -164,6 +177,113 @@ def handle_autodiff_command(tokens: list):
         current = get_user_config("autodiff", "off")
         rprint(f"[yellow]Autodiff is {current.title()}[/]")
         rprint("[dim]When on, diffs are shown automatically after each LLM file update.[/]")
+
+
+def handle_autotest_command(tokens: list) -> None:
+    """Handle the 'autotest' command for the auto-test loop.
+
+    Consolidates what was previously config-file-only into the same command
+    shape as ``verbose`` / ``debug`` / ``autodiff`` (boolean toggle) plus a
+    value sub-command for the repair-round budget, like ``shellcap``.
+
+    Usage:
+        autotest                 - Show current state and round budget
+        autotest on|off          - Enable/disable the auto-test loop
+        autotest rounds <1-10>   - Set the repair-round budget
+
+    Config keys written (read by aye.controller.test_loop):
+        auto_test
+        auto_test_max_rounds
+
+    Environment variables (AYE_AUTO_TEST, AYE_AUTO_TEST_MAX_ROUNDS) still take
+    precedence for the current session; the user is told when that is the case.
+    """
+    from aye.controller.test_loop import auto_test_enabled, auto_test_max_rounds
+
+    def _usage() -> None:
+        rprint("[red]Usage: autotest on|off[/]")
+        rprint(f"[red]       autotest rounds <{AUTO_TEST_MIN_ROUNDS}-{AUTO_TEST_MAX_ROUNDS}>[/]")
+
+    if len(tokens) > 1:
+        val = tokens[1].lower()
+
+        if val in ("on", "off"):
+            set_user_config(AUTO_TEST_KEY, val)
+            rprint(f"[green]Auto-test set to {val.title()}[/]")
+            if os.environ.get("AYE_AUTO_TEST"):
+                rprint(
+                    "[yellow]Note: AYE_AUTO_TEST is set and overrides this "
+                    "setting for the current session.[/]"
+                )
+            return
+
+        if val == "rounds":
+            if len(tokens) < 3 or not tokens[2].isdigit():
+                _usage()
+                return
+
+            num = int(tokens[2])
+            if not AUTO_TEST_MIN_ROUNDS <= num <= AUTO_TEST_MAX_ROUNDS:
+                rprint(
+                    f"[red]Error:[/] rounds must be between "
+                    f"{AUTO_TEST_MIN_ROUNDS} and {AUTO_TEST_MAX_ROUNDS}."
+                )
+                return
+
+            set_user_config(AUTO_TEST_MAX_ROUNDS_KEY, str(num))
+            rprint(f"[green]Auto-test repair rounds set to {num}[/]")
+            if os.environ.get("AYE_AUTO_TEST_MAX_ROUNDS"):
+                rprint(
+                    "[yellow]Note: AYE_AUTO_TEST_MAX_ROUNDS is set and "
+                    "overrides this setting for the current session.[/]"
+                )
+            return
+
+        _usage()
+        return
+
+    current = "On" if auto_test_enabled() else "Off"
+    rprint(f"[yellow]Auto-test is {current}[/]")
+    rprint(f"[yellow]Auto-test repair rounds: {auto_test_max_rounds()}[/]")
+    rprint(
+        "[dim]When on, tests are generated and run automatically after the AI "
+        "writes code, and failures are repaired until green or the round "
+        "budget is spent.[/]"
+    )
+
+
+def handle_tools_command(tokens: list) -> None:
+    """Handle the 'tools' command for the LLM tool kill-switch.
+
+    Usage:
+        tools         - Show whether model-initiated tools are enabled
+        tools on|off  - Enable/disable model-initiated tools
+
+    This writes the ``tools`` config key consumed by ``aye.model.tools.tools_enabled``.
+    ``AYE_TOOLS`` still takes precedence for the current process.
+    """
+    if len(tokens) > 1:
+        val = tokens[1].lower()
+        if val in ("on", "off"):
+            set_user_config(TOOLS_KEY, val)
+            rprint(f"[green]Tools set to {val.title()}[/]")
+            if os.environ.get("AYE_TOOLS"):
+                rprint(
+                    "[yellow]Note: AYE_TOOLS is set and overrides this "
+                    "setting for the current session.[/]"
+                )
+        else:
+            rprint("[red]Usage: tools on|off[/]")
+        return
+
+    current = "On" if tools_enabled() else "Off"
+    rprint(f"[yellow]Tools are {current}[/]")
+    if os.environ.get("AYE_TOOLS"):
+        rprint("[dim]Effective value is from AYE_TOOLS, which overrides ~/.ayecfg.[/]")
+    rprint(
+        "[dim]When off, no model-initiated tools are offered. Shell permission "
+        "mode is controlled separately by Shift+Tab / tool_permission.[/]"
+    )
 
 
 def handle_shellcap_command(tokens: list):
@@ -349,7 +469,7 @@ def handle_paste_image_command(conf: Any) -> None:
     attachment on ``conf``.  It is **not** sent to the LLM until the
     user submits a normal AI prompt.
 
-    Multiple calls accumulate images.  Each staged image is sent
+    Multiple calls accumulate images. Each staged image is sent
     together with the next normal prompt.
 
     This handler must:
@@ -415,7 +535,7 @@ def handle_clear_attachments_command(conf: Any) -> None:
     """Handle the ``clear-attachments`` command: clear all staged clipboard images.
 
     Removes all pending clipboard image attachments from the session
-    state.  Prints a confirmation with the number of cleared images,
+    state. Prints a confirmation with the number of cleared images,
     or a note if nothing was staged.
 
     Args:
