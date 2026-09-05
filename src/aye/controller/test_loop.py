@@ -36,6 +36,7 @@ from aye.model.api import cli_invoke
 from aye.model.auth import get_user_config
 from aye.model.config import SYSTEM_PROMPT, DEFAULT_MAX_OUTPUT_TOKENS, MODELS
 from aye.model.tools import ToolError, run_test_command
+from aye.presenter.repl_ui import print_files_updated
 from aye.presenter.ui_utils import StoppableSpinner
 
 # Per-file and total clipping for prompt embedding; a repair round gets a
@@ -254,6 +255,9 @@ def run_auto_test_loop(
         files = [f for f in files if f.get("file_name")]
         if files:
             apply_updates(files, prompt, root=root.resolve())
+            # Same one-liner the main flow prints; users liked knowing the
+            # auto-test files landed ("Files updated: tests/...").
+            print_files_updated(console, [str(f.get("file_name")) for f in files])
         return [str(f.get("file_name")) for f in files]
 
     console_print = console.print

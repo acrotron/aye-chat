@@ -112,9 +112,12 @@ class TestRunLoop:
         assert result is not None and result.ok
         assert result.rounds == 1
         assert result.test_files == ["tests/test_calc_auto.py"]
-        # Less chatty: exactly one user-visible line, the green status.
-        assert console.print.call_count == 1
+        # Minimal output: the "Files updated" line plus the green status.
+        assert console.print.call_count == 2
         assert "passed" in console.print.call_args.args[0]
+        first = console.print.call_args_list[0].args[0]
+        first_text = getattr(first, "renderable", first)
+        assert "Files updated" in str(first_text)
         # The generation prompt carries the change context and intent.
         assert "calc.py" in calls[0]["message"]
         assert "def add" in calls[0]["message"]
@@ -151,8 +154,8 @@ class TestRunLoop:
 
         assert result is not None and result.ok
         assert result.rounds == 2
-        # Exactly one final line even with a repair round in between.
-        assert console.print.call_count == 1
+        # Files-updated lines for both writes, then one final status line.
+        assert console.print.call_count == 3
         # The repair round carries the failure output and current file state.
         repair_prompt = calls[1]["message"]
         assert "AUTO-TEST round 1" in repair_prompt
@@ -192,7 +195,8 @@ class TestRunLoop:
         # One initial run plus one per repair round.
         assert result.rounds == 3
         assert len(calls) == 3
-        assert console.print.call_count == 1
+        # Three Files-updated lines (generation + two repairs) + final status.
+        assert console.print.call_count == 4
         assert "failed" in console.print.call_args.args[0]
 
     def test_skips_when_pytest_is_missing(self, tmp_path, monkeypatch):
