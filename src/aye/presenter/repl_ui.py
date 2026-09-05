@@ -143,7 +143,7 @@ def print_help_message():
 
         ("Agentic", ""),
         (r"  tools \[on|off]", "Toggle model-initiated tools (experimental feature; off by default, persists between sessions)"),
-        (r"  autotest \[on|off]", "Toggle auto-test after AI file updates (off by default, persists between sessions)"),
+        (r"  autotest \[on|off]", "Toggle auto-test after AI file updates (experimental feature; off by default, persists between sessions)"),
         ("  autotest rounds <1-10>", "Set auto-test repair-round budget"),
         ("  Shift+Tab", "Toggle permission mode: default (shell commands ask first) <-> full (run without asking)"),
         ("", ""),
