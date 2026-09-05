@@ -40,6 +40,7 @@ from aye.presenter import cli_ui, diff_presenter
 from aye.controller.tutorial import run_first_time_tutorial_if_needed
 from aye.controller.llm_invoker import invoke_llm, _model_supports_images
 from aye.controller.llm_handler import process_llm_response, handle_llm_error
+from aye.controller.test_loop import auto_test_enabled
 from aye.controller import commands
 from aye.controller.command_handlers import (
     handle_cd_command,
@@ -762,6 +763,24 @@ def chat_repl(conf: Any) -> None:
                             new_chat_id = process_llm_response(response=llm_response, conf=conf, console=console, prompt=cleaned_prompt, chat_id_file=chat_id_file if llm_response.chat_id else None)
                             if new_chat_id is not None:
                                 chat_id = new_chat_id
+
+                            # --- Step 9: opt-in auto-test loop ---
+                            # When code was just written and auto_test is on,
+                            # generate tests, run them, and iterate to green.
+                            if llm_response.updated_files and auto_test_enabled():
+                                from aye.controller.test_loop import run_auto_test_loop
+
+                                try:
+                                    run_auto_test_loop(
+                                        changed_files=llm_response.updated_files,
+                                        original_prompt=cleaned_prompt,
+                                        conf=conf,
+                                        console=console,
+                                        plugin_manager=conf.plugin_manager,
+                                        chat_id=chat_id,
+                                    )
+                                except Exception as test_exc:
+                                    handle_llm_error(test_exc)
                         else:
                             rprint("[yellow]No response from LLM.[/]")
             except Exception as exc:
